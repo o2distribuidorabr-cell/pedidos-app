@@ -10,7 +10,32 @@ type StoreRow = {
   city: string | null;
   state: string | null;
   active: boolean | null;
+  freight_fee: number | null;
 };
+
+function parseBRMoneyToNumber(input: string): number | null {
+  // Aceita: "65", "65.00", "65,00", "R$ 65,00"
+  const s = (input ?? "")
+    .trim()
+    .replace(/\s/g, "")
+    .replace("R$", "")
+    .replace(/\./g, "") // remove separador de milhar
+    .replace(",", "."); // troca decimal BR para ponto
+
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+function formatBRL(n: number | null | undefined) {
+  if (n === null || n === undefined) return "-";
+  try {
+    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  } catch {
+    return `R$ ${n.toFixed(2)}`;
+  }
+}
 
 export default function AdmLojasPage() {
   const router = useRouter();
@@ -28,6 +53,7 @@ export default function AdmLojasPage() {
   const [city, setCity] = useState("");
   const [stateUf, setStateUf] = useState("");
   const [active, setActive] = useState(true);
+  const [freightFee, setFreightFee] = useState(""); // string para aceitar vírgula
 
   async function requireAuth() {
     const { data } = await supabase.auth.getUser();
@@ -45,7 +71,7 @@ export default function AdmLojasPage() {
 
     const { data, error } = await supabase
       .from("stores")
-      .select("id,name,city,state,active")
+      .select("id,name,city,state,active,freight_fee")
       .order("name", { ascending: true });
 
     if (error) {
@@ -81,6 +107,7 @@ export default function AdmLojasPage() {
     setCity("");
     setStateUf("");
     setActive(true);
+    setFreightFee("");
   }
 
   function startEdit(s: StoreRow) {
@@ -89,6 +116,9 @@ export default function AdmLojasPage() {
     setCity(s.city ?? "");
     setStateUf((s.state ?? "").toUpperCase());
     setActive(s.active ?? true);
+
+    const ff = s.freight_fee ?? null;
+    setFreightFee(ff === null ? "" : String(ff).replace(".", ",")); // mostra em BR
     setMsg("");
   }
 
@@ -103,11 +133,24 @@ export default function AdmLojasPage() {
       return;
     }
 
+    const ff = parseBRMoneyToNumber(freightFee);
+    if (ff === null) {
+      setWorking(false);
+      setMsg("Preencha o frete (ex.: 65,00).");
+      return;
+    }
+    if (ff < 0) {
+      setWorking(false);
+      setMsg("O frete não pode ser negativo.");
+      return;
+    }
+
     const payload = {
       name: nm,
       city: city.trim() || null,
       state: stateUf.trim().toUpperCase() || null,
       active: !!active,
+      freight_fee: ff, // ✅ salva na stores.freight_fee
     };
 
     if (editingId) {
@@ -176,21 +219,53 @@ export default function AdmLojasPage() {
             </div>
 
             <label style={styles.label}>Nome</label>
-            <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Loja Shopping Cidade" />
+            <input
+              style={styles.input}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Ex.: Loja Shopping Cidade"
+            />
 
             <div style={styles.grid2inner}>
               <div>
                 <label style={styles.label}>Cidade</label>
-                <input style={styles.input} value={city} onChange={(e) => setCity(e.target.value)} placeholder="Belo Horizonte" />
+                <input
+                  style={styles.input}
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  placeholder="Belo Horizonte"
+                />
               </div>
               <div>
                 <label style={styles.label}>UF</label>
-                <input style={styles.input} value={stateUf} onChange={(e) => setStateUf(e.target.value)} placeholder="MG" maxLength={2} />
+                <input
+                  style={styles.input}
+                  value={stateUf}
+                  onChange={(e) => setStateUf(e.target.value)}
+                  placeholder="MG"
+                  maxLength={2}
+                />
               </div>
             </div>
 
+            <label style={styles.label}>Frete padrão (R$)</label>
+            <input
+              style={styles.input}
+              value={freightFee}
+              onChange={(e) => setFreightFee(e.target.value)}
+              placeholder="Ex.: 65,00"
+              inputMode="decimal"
+            />
+            <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>
+              Dica: pode digitar <b>65</b>, <b>65,00</b> ou <b>R$ 65,00</b>.
+            </div>
+
             <label style={styles.label}>Ativa?</label>
-            <select style={styles.select} value={active ? "true" : "false"} onChange={(e) => setActive(e.target.value === "true")}>
+            <select
+              style={styles.select}
+              value={active ? "true" : "false"}
+              onChange={(e) => setActive(e.target.value === "true")}
+            >
               <option value="true">Sim</option>
               <option value="false">Não</option>
             </select>
@@ -236,9 +311,15 @@ export default function AdmLojasPage() {
                       <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {s.name}
                       </div>
+
                       <div style={{ fontSize: 12, opacity: 0.75 }}>
                         {(s.city ?? "-")}{s.state ? `/${s.state}` : ""} · {s.active ? "Ativa" : "Inativa"}
                       </div>
+
+                      <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
+                        Frete: <b>{formatBRL(s.freight_fee)}</b>
+                      </div>
+
                       <div style={{ fontSize: 12, opacity: 0.55, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {s.id}
                       </div>
