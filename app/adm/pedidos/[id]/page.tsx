@@ -22,6 +22,8 @@ type OrderRow = {
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
+
+  credit_applied: number | null;
 };
 
 type ProductEmbed = { sku: string | null; name: string | null; unit: string | null };
@@ -41,7 +43,7 @@ const PAY_METHODS = ["PIX", "CARTAO", "BOLETO"] as const;
 const DELIVERY_OPTIONS = ["RETIRADA", "FRETE"] as const;
 
 function fmtBRL(v: number) {
-  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(v ?? 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 function fmtDT(v: string | null | undefined) {
   if (!v) return "-";
@@ -81,6 +83,12 @@ export default function AdmPedidoDetalhePage() {
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
 
+  const [creditBalance, setCreditBalance] = useState<number>(0);
+
+  const [creditModalOpen, setCreditModalOpen] = useState(false);
+  const [creditAmount, setCreditAmount] = useState<string>("");
+  const [creditNote, setCreditNote] = useState<string>("");
+
   const totalItens = useMemo(() => {
     return items.reduce((acc, it) => {
       const unitCost = Number(it.unit_cost ?? 0);
@@ -95,6 +103,12 @@ export default function AdmPedidoDetalhePage() {
   }, [order]);
 
   const totalComFrete = useMemo(() => totalItens + frete, [totalItens, frete]);
+
+  const creditApplied = useMemo(() => Number(order?.credit_applied ?? 0), [order?.credit_applied]);
+
+  const totalLiquido = useMemo(() => {
+    return Math.max(totalComFrete - creditApplied, 0);
+  }, [totalComFrete, creditApplied]);
 
   useEffect(() => {
     (async () => {
@@ -114,17 +128,32 @@ export default function AdmPedidoDetalhePage() {
       }
 
       await loadAll(orderId);
-
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
+  async function loadCreditBalance(storeId: string) {
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("balance")
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn("loadCreditBalance error:", error.message);
+      setCreditBalance(0);
+      return;
+    }
+
+    setCreditBalance(Number((data as any)?.balance ?? 0));
+  }
+
   async function loadAll(id: string) {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied"
       )
       .eq("id", id)
       .maybeSingle();
@@ -133,13 +162,21 @@ export default function AdmPedidoDetalhePage() {
       setMsg(oErr?.message || "Pedido não encontrado.");
       setOrder(null);
       setItems([]);
+      setCreditBalance(0);
       return;
     }
-    setOrder(o as OrderRow);
+
+    const ord = o as OrderRow;
+    setOrder(ord);
+
+    if (ord.store_id) {
+      await loadCreditBalance(ord.store_id);
+    } else {
+      setCreditBalance(0);
+    }
 
     const { data: it, error: itErr } = await supabase
       .from("order_items")
-      // IMPORTANTE: o PostgREST pode retornar products como ARRAY; vamos normalizar abaixo
       .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
       .eq("order_id", id);
 
@@ -149,7 +186,6 @@ export default function AdmPedidoDetalhePage() {
       return;
     }
 
-    // ✅ Normaliza products: se vier array, pega o primeiro; se vier objeto, mantém; se vier null, null.
     const normalized: ItemRow[] = (it ?? []).map((row: any) => {
       const raw = row?.products;
       const prod: ProductEmbed | null = Array.isArray(raw) ? (raw[0] ?? null) : (raw ?? null);
@@ -177,7 +213,7 @@ export default function AdmPedidoDetalhePage() {
       .update(patch)
       .eq("id", order.id)
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied"
       )
       .single();
 
@@ -187,7 +223,13 @@ export default function AdmPedidoDetalhePage() {
       return;
     }
 
-    setOrder(data as OrderRow);
+    const ord = data as OrderRow;
+    setOrder(ord);
+
+    if (ord.store_id) {
+      await loadCreditBalance(ord.store_id);
+    }
+
     setSaving(false);
   }
 
@@ -204,6 +246,55 @@ export default function AdmPedidoDetalhePage() {
         payment_method: order.payment_method ?? "PIX",
       });
     }
+  }
+
+  function openCreditModal() {
+    setCreditAmount("");
+    setCreditNote("");
+    setCreditModalOpen(true);
+    setMsg("");
+  }
+  function closeCreditModal() {
+    setCreditModalOpen(false);
+  }
+
+  async function applyCredit() {
+    if (!order?.id || !order.store_id) return;
+
+    setSaving(true);
+    setMsg("");
+
+    let amt: number | null = null;
+    if (creditAmount.trim() !== "") {
+      const parsed = Number(creditAmount.replace(",", "."));
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        setSaving(false);
+        setMsg("Valor inválido. Use número maior que zero (ex.: 200 ou 200.00).");
+        return;
+      }
+      amt = parsed;
+    }
+
+    const { data, error } = await supabase.rpc("apply_store_credit_to_order", {
+      p_order_id: order.id,
+      p_amount: amt,
+      p_note: creditNote.trim() || null,
+    });
+
+    if (error) {
+      setSaving(false);
+      setMsg(`Erro ao aplicar crédito: ${error.message}`);
+      return;
+    }
+
+    const applied = Number(data ?? 0);
+
+    closeCreditModal();
+
+    await loadAll(order.id);
+
+    setSaving(false);
+    setMsg(applied > 0 ? `Crédito abatido: ${fmtBRL(applied)}.` : "Nenhum crédito abatido (sem saldo ou pedido já quitado).");
   }
 
   if (loading) {
@@ -250,7 +341,32 @@ export default function AdmPedidoDetalhePage() {
 
         {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
 
-        {/* Controles */}
+        <div style={styles.creditBar}>
+          <div>
+            <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>Crédito da loja</div>
+            <div style={{ fontSize: 18, fontWeight: 1000 as any }}>{fmtBRL(creditBalance)}</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 12, color: "#666", fontWeight: 900 }}>Crédito abatido neste pedido</div>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>{fmtBRL(creditApplied)}</div>
+            </div>
+
+            <button
+              style={{
+                ...styles.primaryBtn,
+                opacity: creditBalance <= 0 ? 0.5 : 1,
+                cursor: creditBalance <= 0 ? "not-allowed" : "pointer",
+              }}
+              disabled={saving || creditBalance <= 0}
+              onClick={openCreditModal}
+            >
+              Abater do crédito
+            </button>
+          </div>
+        </div>
+
         <div style={styles.grid6}>
           <div style={styles.box}>
             <div style={styles.label}>Status</div>
@@ -298,9 +414,7 @@ export default function AdmPedidoDetalhePage() {
                 </option>
               ))}
             </select>
-            <div style={styles.help}>
-              {order.delivery_mode === "FRETE" ? "Frete será somado ao total." : "Frete não conta."}
-            </div>
+            <div style={styles.help}>{order.delivery_mode === "FRETE" ? "Frete será somado ao total." : "Frete não conta."}</div>
           </div>
 
           <div style={styles.box}>
@@ -316,9 +430,7 @@ export default function AdmPedidoDetalhePage() {
                 background: order.delivery_mode !== "FRETE" ? "#f3f4f6" : "white",
               }}
             />
-            <div style={styles.help}>
-              {order.delivery_mode !== "FRETE" ? "Somente para Frete." : "Ex.: 65,00"}
-            </div>
+            <div style={styles.help}>{order.delivery_mode !== "FRETE" ? "Somente para Frete." : "Ex.: 65,00"}</div>
           </div>
 
           <div style={styles.box}>
@@ -374,7 +486,6 @@ export default function AdmPedidoDetalhePage() {
           </div>
         </div>
 
-        {/* Resumo */}
         <div style={styles.summaryRow}>
           <div style={styles.sumBox}>
             <div style={styles.sumLabel}>Itens</div>
@@ -384,13 +495,18 @@ export default function AdmPedidoDetalhePage() {
             <div style={styles.sumLabel}>Frete</div>
             <div style={styles.sumValue}>{fmtBRL(frete)}</div>
           </div>
+
+          <div style={styles.sumBox}>
+            <div style={styles.sumLabel}>Crédito abatido</div>
+            <div style={styles.sumValue}>- {fmtBRL(creditApplied)}</div>
+          </div>
+
           <div style={styles.sumBoxStrong}>
-            <div style={styles.sumLabel}>Total (c/ frete)</div>
-            <div style={styles.sumValueStrong}>{fmtBRL(totalComFrete)}</div>
+            <div style={styles.sumLabel}>Total líquido</div>
+            <div style={styles.sumValueStrong}>{fmtBRL(totalLiquido)}</div>
           </div>
         </div>
 
-        {/* Observações */}
         <div style={{ marginTop: 12 }}>
           <div style={styles.label}>Observações</div>
           <textarea
@@ -402,7 +518,6 @@ export default function AdmPedidoDetalhePage() {
           />
         </div>
 
-        {/* Itens */}
         <div style={{ overflowX: "auto", marginTop: 12 }}>
           <table style={styles.table}>
             <thead>
@@ -443,6 +558,52 @@ export default function AdmPedidoDetalhePage() {
           Criado: {fmtDT(order.created_at)} · Enviado: {fmtDT(order.submitted_at)} · Aprovado: {fmtDT(order.approved_at)}
         </div>
       </div>
+
+      {creditModalOpen ? (
+        <div style={styles.modalBackdrop} onClick={closeCreditModal}>
+          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 900, fontSize: 16 }}>Abater crédito</div>
+                <div style={{ fontSize: 12, opacity: 0.75 }}>
+                  Saldo: <b>{fmtBRL(creditBalance)}</b> · Já abatido no pedido: <b>{fmtBRL(creditApplied)}</b>
+                </div>
+              </div>
+              <button style={styles.secondaryBtn} onClick={closeCreditModal} disabled={saving}>
+                Fechar
+              </button>
+            </div>
+
+            <label style={styles.label}>Valor (opcional)</label>
+            <input
+              style={styles.input}
+              value={creditAmount}
+              onChange={(e) => setCreditAmount(e.target.value)}
+              placeholder="Vazio = abater o máximo possível"
+              disabled={saving}
+            />
+
+            <label style={styles.label}>Observação (opcional)</label>
+            <input
+              style={styles.input}
+              value={creditNote}
+              onChange={(e) => setCreditNote(e.target.value)}
+              placeholder="Ex.: abatimento parcial"
+              disabled={saving}
+            />
+
+            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+              <button style={styles.primaryBtn} onClick={applyCredit} disabled={saving}>
+                {saving ? "Aplicando..." : "Aplicar crédito"}
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, color: "#666" }}>
+              Regra: abate até o limite do saldo e até o limite do total do pedido.
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -462,7 +623,19 @@ const styles: Record<string, React.CSSProperties> = {
   headerRow: { display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" },
   mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
 
-  // ✅ RESPONSIVO: não estoura no mobile
+  creditBar: {
+    marginTop: 12,
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    padding: 12,
+    background: "#ffffff",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+    alignItems: "center",
+  },
+
   grid6: {
     marginTop: 12,
     display: "grid",
@@ -504,7 +677,7 @@ const styles: Record<string, React.CSSProperties> = {
   summaryRow: {
     marginTop: 12,
     display: "grid",
-    gridTemplateColumns: "1fr 1fr 1.2fr",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
     gap: 10,
   },
   sumBox: { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" },
@@ -545,6 +718,17 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
   },
 
+  primaryBtn: {
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #111",
+    background: "#111",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+
   secondaryBtn: {
     padding: "10px 12px",
     borderRadius: 10,
@@ -562,5 +746,23 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 10,
     color: "#a40000",
     fontSize: 13,
+  },
+
+  modalBackdrop: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.35)",
+    display: "grid",
+    placeItems: "center",
+    padding: 12,
+    zIndex: 50,
+  },
+  modalCard: {
+    width: "min(560px, 100%)",
+    background: "#fff",
+    borderRadius: 14,
+    border: "1px solid #e6e7ee",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.20)",
+    padding: 14,
   },
 };

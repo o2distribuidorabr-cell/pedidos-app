@@ -21,6 +21,9 @@ type OrderRow = {
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
+
+  // ✅ NOVO: quanto foi abatido do crédito pré-pago neste pedido
+  credit_applied: number | null;
 };
 
 type TotalsRow = {
@@ -31,7 +34,13 @@ type TotalsRow = {
 
 type StoreRow = { id: string; name: string };
 
-type OrderUi = OrderRow & { total_cost: number };
+// ✅ view do saldo
+type CreditBalanceRow = {
+  store_id: string;
+  balance: number | null;
+};
+
+type OrderUi = OrderRow & { total_cost: number; amount_due: number };
 
 function fmtBR(iso: string | null | undefined) {
   if (!iso) return "-";
@@ -68,9 +77,12 @@ export default function HistoricoPedidosPage() {
   const [storeName, setStoreName] = useState<string>("-");
   const [storeId, setStoreId] = useState<string | null>(null);
 
+  // ✅ saldo do crédito
+  const [creditBalance, setCreditBalance] = useState<number>(0);
+
   const [orders, setOrders] = useState<OrderUi[]>([]);
 
-  // filtros (mesmo padrão do admin)
+  // filtros
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [logFilter, setLogFilter] = useState<string>("all");
@@ -81,7 +93,7 @@ export default function HistoricoPedidosPage() {
   function toISOStart(dateStr: string) {
     const [y, m, d] = dateStr.split("-").map(Number);
     return new Date(y, m - 1, d, 0, 0, 0).toISOString();
-  }
+    }
   function toISOEnd(dateStr: string) {
     const [y, m, d] = dateStr.split("-").map(Number);
     return new Date(y, m - 1, d, 23, 59, 59).toISOString();
@@ -109,6 +121,14 @@ export default function HistoricoPedidosPage() {
 
   const totalGeral = useMemo(() => {
     return filtered.reduce((acc, o) => acc + (Number(o.total_cost) || 0), 0);
+  }, [filtered]);
+
+  const totalCreditoAplicado = useMemo(() => {
+    return filtered.reduce((acc, o) => acc + (Number(o.credit_applied ?? 0) || 0), 0);
+  }, [filtered]);
+
+  const totalAPagar = useMemo(() => {
+    return filtered.reduce((acc, o) => acc + (Number(o.amount_due ?? 0) || 0), 0);
   }, [filtered]);
 
   useEffect(() => {
@@ -162,12 +182,32 @@ export default function HistoricoPedidosPage() {
       const st = (store ?? null) as StoreRow | null;
       setStoreName(st?.name ?? "-");
 
-      await loadOrders(sId);
+      // ✅ carrega saldo + pedidos
+      await Promise.all([loadCreditBalance(sId), loadOrders(sId)]);
 
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function loadCreditBalance(sId: string) {
+    // view com saldo agregado do ledger
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id, balance")
+      .eq("store_id", sId)
+      .maybeSingle();
+
+    if (error) {
+      // não trava a página por isso, só mostra msg
+      setMsg((m) => (m ? m : error.message));
+      setCreditBalance(0);
+      return;
+    }
+
+    const row = (data ?? null) as CreditBalanceRow | null;
+    setCreditBalance(Number(row?.balance ?? 0) || 0);
+  }
 
   async function loadOrders(sId: string) {
     setMsg("");
@@ -175,7 +215,7 @@ export default function HistoricoPedidosPage() {
     const { data: ords, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee"
+        "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee, credit_applied"
       )
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
@@ -201,7 +241,13 @@ export default function HistoricoPedidosPage() {
 
     if (tErr) {
       setMsg(tErr.message);
-      setOrders(orderList.map((o) => ({ ...o, total_cost: 0 })));
+      setOrders(
+        orderList.map((o) => ({
+          ...o,
+          total_cost: 0,
+          amount_due: 0,
+        }))
+      );
       return;
     }
 
@@ -209,7 +255,19 @@ export default function HistoricoPedidosPage() {
     const map = new Map<string, number>();
     for (const r of totalsList) map.set(r.order_id, Number(r.total_cost) || 0);
 
-    setOrders(orderList.map((o) => ({ ...o, total_cost: map.get(o.id) ?? 0 })));
+    const ui: OrderUi[] = orderList.map((o) => {
+      const total = map.get(o.id) ?? 0;
+      const applied = Number(o.credit_applied ?? 0) || 0;
+      const due = Math.max(total - applied, 0);
+
+      return {
+        ...o,
+        total_cost: total,
+        amount_due: due,
+      };
+    });
+
+    setOrders(ui);
   }
 
   async function onLogout() {
@@ -239,11 +297,22 @@ export default function HistoricoPedidosPage() {
             <div style={styles.topValue}>{storeName}</div>
           </div>
 
+          {/* ✅ NOVO: saldo de crédito */}
+          <div>
+            <div style={styles.smallMuted}>Saldo de crédito</div>
+            <div style={{ ...styles.topValue, fontSize: 16 }}>
+              {money(Number(creditBalance) || 0)}
+            </div>
+          </div>
+
           <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button style={styles.secondaryBtn} onClick={() => router.push("/pedido")}>
               + Novo pedido
             </button>
-            <button style={styles.secondaryBtn} onClick={() => storeId && loadOrders(storeId)}>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => storeId && Promise.all([loadCreditBalance(storeId), loadOrders(storeId)])}
+            >
               Recarregar
             </button>
             <button style={styles.logoutBtn} onClick={onLogout}>
@@ -305,7 +374,11 @@ export default function HistoricoPedidosPage() {
                 <th style={styles.th}>Criado</th>
                 <th style={styles.th}>Enviado</th>
                 <th style={styles.th}>Aprovado</th>
+
+                {/* ✅ NOVOS */}
                 <th style={styles.th}>Total</th>
+                <th style={styles.th}>Crédito aplicado</th>
+                <th style={styles.th}>A pagar</th>
               </tr>
             </thead>
             <tbody>
@@ -331,12 +404,14 @@ export default function HistoricoPedidosPage() {
                   <td style={styles.td}>{fmtBR(o.approved_at)}</td>
 
                   <td style={styles.tdStrong}>{money(Number(o.total_cost) || 0)}</td>
+                  <td style={styles.tdStrong}>{money(Number(o.credit_applied ?? 0) || 0)}</td>
+                  <td style={styles.tdStrong}>{money(Number(o.amount_due ?? 0) || 0)}</td>
                 </tr>
               ))}
 
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={{ padding: 14, color: "#777" }}>
+                  <td colSpan={11} style={{ padding: 14, color: "#777" }}>
                     Nenhum pedido encontrado.
                   </td>
                 </tr>
@@ -345,9 +420,20 @@ export default function HistoricoPedidosPage() {
           </table>
         </div>
 
+        {/* ✅ resumo embaixo */}
         <div style={styles.totalBox}>
           <span>Total exibido</span>
           <b>{money(totalGeral)}</b>
+        </div>
+
+        <div style={styles.totalBox2}>
+          <span>Crédito aplicado (exibido)</span>
+          <b>{money(totalCreditoAplicado)}</b>
+        </div>
+
+        <div style={styles.totalBoxStrong}>
+          <span>A pagar (exibido)</span>
+          <b>{money(totalAPagar)}</b>
         </div>
 
         {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
@@ -371,6 +457,7 @@ const styles: Record<string, React.CSSProperties> = {
   topbar: { display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" },
   smallMuted: { fontSize: 12, color: "#777", fontWeight: 700 },
   topValue: { fontSize: 14, fontWeight: 800, color: "#111" },
+
   logoutBtn: {
     padding: "10px 12px",
     borderRadius: 10,
@@ -445,6 +532,27 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #eee",
     background: "#fff",
     fontSize: 14,
+  },
+  totalBox2: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #eee",
+    background: "#fff",
+    fontSize: 14,
+  },
+  totalBoxStrong: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginTop: 10,
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #ddd",
+    background: "#fafbff",
+    fontSize: 14,
+    fontWeight: 900,
   },
 
   err: {

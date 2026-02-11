@@ -10,32 +10,16 @@ type StoreRow = {
   city: string | null;
   state: string | null;
   active: boolean | null;
-  freight_fee: number | null;
+
+  // se existir na tabela, ok; se não existir, fica undefined e não quebra
+  code?: string | null;
+  freight_fee?: number | null;
 };
 
-function parseBRMoneyToNumber(input: string): number | null {
-  // Aceita: "65", "65.00", "65,00", "R$ 65,00"
-  const s = (input ?? "")
-    .trim()
-    .replace(/\s/g, "")
-    .replace("R$", "")
-    .replace(/\./g, "") // remove separador de milhar
-    .replace(",", "."); // troca decimal BR para ponto
-
-  if (!s) return null;
-  const n = Number(s);
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
-function formatBRL(n: number | null | undefined) {
-  if (n === null || n === undefined) return "-";
-  try {
-    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-  } catch {
-    return `R$ ${n.toFixed(2)}`;
-  }
-}
+type BalanceRow = {
+  store_id: string;
+  balance: number;
+};
 
 export default function AdmLojasPage() {
   const router = useRouter();
@@ -45,15 +29,23 @@ export default function AdmLojasPage() {
   const [msg, setMsg] = useState("");
 
   const [stores, setStores] = useState<StoreRow[]>([]);
+  const [balancesByStore, setBalancesByStore] = useState<Record<string, number>>({});
   const [q, setQ] = useState("");
 
-  // formulário
+  // formulário loja
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
   const [stateUf, setStateUf] = useState("");
   const [active, setActive] = useState(true);
-  const [freightFee, setFreightFee] = useState(""); // string para aceitar vírgula
+
+  // (opcional) se você já tem frete na stores
+  const [freightFee, setFreightFee] = useState<string>("");
+
+  // crédito
+  const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
+  const [creditAmount, setCreditAmount] = useState<string>("");
+  const [creditNote, setCreditNote] = useState<string>("");
 
   async function requireAuth() {
     const { data } = await supabase.auth.getUser();
@@ -64,14 +56,39 @@ export default function AdmLojasPage() {
     return true;
   }
 
+  async function loadBalances(storeIds: string[]) {
+    if (storeIds.length === 0) {
+      setBalancesByStore({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id,balance")
+      .in("store_id", storeIds);
+
+    if (error) {
+      // não trava a tela por causa do saldo
+      console.warn("loadBalances error:", error.message);
+      return;
+    }
+
+    const map: Record<string, number> = {};
+    (data ?? []).forEach((r: any) => {
+      map[String(r.store_id)] = Number(r.balance ?? 0);
+    });
+    setBalancesByStore(map);
+  }
+
   async function loadStores() {
     setMsg("");
     const ok = await requireAuth();
     if (!ok) return;
 
+    // inclui freight_fee e code se existirem
     const { data, error } = await supabase
       .from("stores")
-      .select("id,name,city,state,active,freight_fee")
+      .select("id,name,city,state,active,freight_fee,code")
       .order("name", { ascending: true });
 
     if (error) {
@@ -80,7 +97,11 @@ export default function AdmLojasPage() {
       return;
     }
 
-    setStores((data ?? []) as StoreRow[]);
+    const rows = (data ?? []) as StoreRow[];
+    setStores(rows);
+
+    // carrega saldo por loja
+    await loadBalances(rows.map((s) => s.id));
   }
 
   useEffect(() => {
@@ -96,7 +117,7 @@ export default function AdmLojasPage() {
     const qq = q.trim().toLowerCase();
     if (!qq) return stores;
     return stores.filter((s) => {
-      const blob = `${s.name} ${s.city ?? ""} ${s.state ?? ""} ${s.id}`.toLowerCase();
+      const blob = `${s.name} ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.id}`.toLowerCase();
       return blob.includes(qq);
     });
   }, [stores, q]);
@@ -116,9 +137,7 @@ export default function AdmLojasPage() {
     setCity(s.city ?? "");
     setStateUf((s.state ?? "").toUpperCase());
     setActive(s.active ?? true);
-
-    const ff = s.freight_fee ?? null;
-    setFreightFee(ff === null ? "" : String(ff).replace(".", ",")); // mostra em BR
+    setFreightFee(s.freight_fee != null ? String(s.freight_fee) : "");
     setMsg("");
   }
 
@@ -133,25 +152,28 @@ export default function AdmLojasPage() {
       return;
     }
 
-    const ff = parseBRMoneyToNumber(freightFee);
-    if (ff === null) {
-      setWorking(false);
-      setMsg("Preencha o frete (ex.: 65,00).");
-      return;
-    }
-    if (ff < 0) {
-      setWorking(false);
-      setMsg("O frete não pode ser negativo.");
-      return;
+    // frete (opcional)
+    let ff: number | null = null;
+    if (freightFee.trim() !== "") {
+      const parsed = Number(String(freightFee).replace(",", "."));
+      if (Number.isNaN(parsed) || parsed < 0) {
+        setWorking(false);
+        setMsg("Frete inválido. Use número (ex.: 65 ou 65.00).");
+        return;
+      }
+      ff = parsed;
     }
 
-    const payload = {
+    const payload: any = {
       name: nm,
       city: city.trim() || null,
       state: stateUf.trim().toUpperCase() || null,
       active: !!active,
-      freight_fee: ff, // ✅ salva na stores.freight_fee
     };
+
+    // só envia se a coluna existir no banco (se não existir, o Supabase retorna erro).
+    // como você disse que frete já está funcionando, vamos enviar:
+    payload.freight_fee = ff;
 
     if (editingId) {
       const { error } = await supabase.from("stores").update(payload).eq("id", editingId);
@@ -193,6 +215,52 @@ export default function AdmLojasPage() {
     await loadStores();
   }
 
+  function openCredit(s: StoreRow) {
+    setCreditStoreId(s.id);
+    setCreditAmount("");
+    setCreditNote("");
+    setMsg("");
+  }
+
+  function closeCredit() {
+    setCreditStoreId(null);
+    setCreditAmount("");
+    setCreditNote("");
+  }
+
+  async function addCredit() {
+    if (!creditStoreId) return;
+
+    setMsg("");
+    setWorking(true);
+
+    const amt = Number(String(creditAmount).replace(",", "."));
+    if (Number.isNaN(amt) || amt <= 0) {
+      setWorking(false);
+      setMsg("Informe um valor de crédito válido (maior que zero).");
+      return;
+    }
+
+    const { error } = await supabase.rpc("add_store_credit", {
+      p_store_id: creditStoreId,
+      p_amount: amt,
+      p_note: creditNote.trim() || null,
+    });
+
+    if (error) {
+      setWorking(false);
+      setMsg(error.message);
+      return;
+    }
+
+    setWorking(false);
+    closeCredit();
+    await loadStores();
+  }
+
+  const creditStore = creditStoreId ? stores.find((s) => s.id === creditStoreId) : null;
+  const creditBalance = creditStoreId ? (balancesByStore[creditStoreId] ?? 0) : 0;
+
   return (
     <main style={styles.main}>
       <div style={styles.card}>
@@ -200,7 +268,7 @@ export default function AdmLojasPage() {
           <div>
             <h1 style={{ margin: 0, fontSize: 20 }}>Lojas</h1>
             <div style={{ fontSize: 13, opacity: 0.75 }}>
-              Cadastre e edite lojas direto pelo painel.
+              Cadastre e edite lojas. Adicione crédito pré-pago por loja.
             </div>
           </div>
 
@@ -248,17 +316,13 @@ export default function AdmLojasPage() {
               </div>
             </div>
 
-            <label style={styles.label}>Frete padrão (R$)</label>
+            <label style={styles.label}>Frete padrão (opcional)</label>
             <input
               style={styles.input}
               value={freightFee}
               onChange={(e) => setFreightFee(e.target.value)}
-              placeholder="Ex.: 65,00"
-              inputMode="decimal"
+              placeholder="Ex.: 65.00"
             />
-            <div style={{ fontSize: 12, opacity: 0.65, marginTop: 6 }}>
-              Dica: pode digitar <b>65</b>, <b>65,00</b> ou <b>R$ 65,00</b>.
-            </div>
 
             <label style={styles.label}>Ativa?</label>
             <select
@@ -305,40 +369,104 @@ export default function AdmLojasPage() {
 
             {!loading && filtered.length > 0 ? (
               <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-                {filtered.map((s) => (
-                  <div key={s.id} style={styles.row}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {s.name}
+                {filtered.map((s) => {
+                  const bal = balancesByStore[s.id] ?? 0;
+                  return (
+                    <div key={s.id} style={styles.row}>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 900,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {s.name}
+                        </div>
+
+                        <div style={{ fontSize: 12, opacity: 0.75 }}>
+                          {(s.city ?? "-")}
+                          {s.state ? `/${s.state}` : ""} · {s.active ? "Ativa" : "Inativa"}
+                          {s.freight_fee != null ? ` · Frete: R$ ${Number(s.freight_fee).toFixed(2)}` : ""}
+                        </div>
+
+                        <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
+                          <b>Crédito:</b> R$ {Number(bal).toFixed(2)}
+                        </div>
+
+                        <div
+                          style={{
+                            fontSize: 12,
+                            opacity: 0.55,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {s.id}
+                        </div>
                       </div>
 
-                      <div style={{ fontSize: 12, opacity: 0.75 }}>
-                        {(s.city ?? "-")}{s.state ? `/${s.state}` : ""} · {s.active ? "Ativa" : "Inativa"}
-                      </div>
-
-                      <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
-                        Frete: <b>{formatBRL(s.freight_fee)}</b>
-                      </div>
-
-                      <div style={{ fontSize: 12, opacity: 0.55, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {s.id}
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <button style={styles.secondaryBtn} onClick={() => startEdit(s)} disabled={working}>
+                          Editar
+                        </button>
+                        <button style={styles.secondaryBtn} onClick={() => openCredit(s)} disabled={working}>
+                          Crédito
+                        </button>
+                        <button style={styles.warnBtn} onClick={() => toggleActive(s)} disabled={working}>
+                          {s.active ? "Desativar" : "Ativar"}
+                        </button>
                       </div>
                     </div>
-
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <button style={styles.secondaryBtn} onClick={() => startEdit(s)} disabled={working}>
-                        Editar
-                      </button>
-                      <button style={styles.warnBtn} onClick={() => toggleActive(s)} disabled={working}>
-                        {s.active ? "Desativar" : "Ativar"}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </section>
         </div>
+
+        {/* Modal simples de crédito */}
+        {creditStoreId ? (
+          <div style={styles.modalBackdrop} onClick={closeCredit}>
+            <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>Adicionar crédito</div>
+                  <div style={{ fontSize: 12, opacity: 0.75 }}>
+                    Loja: <b>{creditStore?.name ?? creditStoreId}</b> · Saldo atual: <b>R$ {Number(creditBalance).toFixed(2)}</b>
+                  </div>
+                </div>
+                <button style={styles.secondaryBtn} onClick={closeCredit} disabled={working}>
+                  Fechar
+                </button>
+              </div>
+
+              <label style={styles.label}>Valor (R$)</label>
+              <input
+                style={styles.input}
+                value={creditAmount}
+                onChange={(e) => setCreditAmount(e.target.value)}
+                placeholder="Ex.: 1000.00"
+              />
+
+              <label style={styles.label}>Observação (opcional)</label>
+              <input
+                style={styles.input}
+                value={creditNote}
+                onChange={(e) => setCreditNote(e.target.value)}
+                placeholder="Ex.: Crédito antecipado do mês (cartão)"
+              />
+
+              <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+                <button style={styles.primaryBtn} onClick={addCredit} disabled={working}>
+                  {working ? "Salvando..." : "Adicionar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </main>
   );
@@ -371,4 +499,22 @@ const styles: Record<string, React.CSSProperties> = {
   row: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", border: "1px solid #eee", borderRadius: 12, padding: 10 },
 
   msgBox: { marginTop: 12, padding: 10, background: "#fff2f2", border: "1px solid #ffd0d0", borderRadius: 10, color: "#a40000", fontSize: 13 },
+
+  modalBackdrop: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.35)",
+    display: "grid",
+    placeItems: "center",
+    padding: 12,
+    zIndex: 50,
+  },
+  modalCard: {
+    width: "min(520px, 100%)",
+    background: "#fff",
+    borderRadius: 14,
+    border: "1px solid #e6e7ee",
+    boxShadow: "0 20px 50px rgba(0,0,0,0.20)",
+    padding: 14,
+  },
 };
