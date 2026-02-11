@@ -24,13 +24,15 @@ type OrderRow = {
   freight_fee: number | null;
 };
 
+type ProductEmbed = { sku: string | null; name: string | null; unit: string | null };
+
 type ItemRow = {
   id: string;
   qty: number;
   unit: string | null;
   unit_cost: number | null;
   product_id: string;
-  products: { sku: string | null; name: string | null; unit: string | null } | null;
+  products: ProductEmbed | null;
 };
 
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
@@ -137,6 +139,7 @@ export default function AdmPedidoDetalhePage() {
 
     const { data: it, error: itErr } = await supabase
       .from("order_items")
+      // IMPORTANTE: o PostgREST pode retornar products como ARRAY; vamos normalizar abaixo
       .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
       .eq("order_id", id);
 
@@ -145,7 +148,23 @@ export default function AdmPedidoDetalhePage() {
       setItems([]);
       return;
     }
-    setItems((it ?? []) as ItemRow[]);
+
+    // ✅ Normaliza products: se vier array, pega o primeiro; se vier objeto, mantém; se vier null, null.
+    const normalized: ItemRow[] = (it ?? []).map((row: any) => {
+      const raw = row?.products;
+      const prod: ProductEmbed | null = Array.isArray(raw) ? (raw[0] ?? null) : (raw ?? null);
+
+      return {
+        id: row.id,
+        qty: row.qty,
+        unit: row.unit ?? null,
+        unit_cost: row.unit_cost ?? null,
+        product_id: row.product_id,
+        products: prod,
+      };
+    });
+
+    setItems(normalized);
   }
 
   async function updateOrder(patch: Partial<OrderRow>) {
@@ -297,7 +316,9 @@ export default function AdmPedidoDetalhePage() {
                 background: order.delivery_mode !== "FRETE" ? "#f3f4f6" : "white",
               }}
             />
-            <div style={styles.help}>{order.delivery_mode !== "FRETE" ? "Somente para Frete." : "Ex.: 65,00"}</div>
+            <div style={styles.help}>
+              {order.delivery_mode !== "FRETE" ? "Somente para Frete." : "Ex.: 65,00"}
+            </div>
           </div>
 
           <div style={styles.box}>
