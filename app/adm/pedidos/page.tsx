@@ -47,7 +47,7 @@ function fmtDateBR(iso: string) {
 
 function fmtBRL(value: number) {
   try {
-    return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    return (Number(value) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   } catch {
     return `R$ ${value}`;
   }
@@ -95,6 +95,10 @@ export default function AdmPedidosPage() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+
+  // seleção
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   // filtros
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -183,6 +187,35 @@ export default function AdmPedidosPage() {
     return filtered.reduce((acc, o) => acc + (Number(o.total_with_freight) || 0), 0);
   }, [filtered]);
 
+  function isAllFilteredSelected() {
+    if (filtered.length === 0) return false;
+    return filtered.every((o) => selected.has(o.id));
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllFiltered() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const all = isAllFilteredSelected();
+      if (all) {
+        // desmarca todos do filtro
+        filtered.forEach((o) => next.delete(o.id));
+      } else {
+        // marca todos do filtro
+        filtered.forEach((o) => next.add(o.id));
+      }
+      return next;
+    });
+  }
+
   async function updateOrder(id: string, patch: any) {
     setSavingId(id);
     setErr(null);
@@ -224,10 +257,64 @@ export default function AdmPedidosPage() {
     await updateOrder(o.id, { payment_method: method, is_paid: true });
   }
 
+  async function deleteSelected() {
+    if (selected.size === 0) return;
+
+    const ids = Array.from(selected);
+    const ok = window.confirm(
+      `Tem certeza que deseja excluir ${ids.length} pedido(s)?\n\nIsso remove do Admin e do Franqueado.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    setErr(null);
+
+    // 1) Excluir itens (ok se alguns pedidos não tiverem itens)
+    const delItems = await supabase
+      .from("order_items")
+      .delete({ count: "exact" })
+      .in("order_id", ids);
+
+    if (delItems.error) {
+      setErr(`Erro ao excluir itens: ${delItems.error.message}`);
+      setDeleting(false);
+      return;
+    }
+
+    // 2) Excluir pedidos (aqui precisa apagar >0)
+    const delOrders = await supabase
+      .from("orders")
+      .delete({ count: "exact" })
+      .in("id", ids);
+
+    if (delOrders.error) {
+      setErr(`Erro ao excluir pedidos: ${delOrders.error.message}`);
+      setDeleting(false);
+      return;
+    }
+
+    const deletedCount = delOrders.count ?? 0;
+
+    // ✅ Se RLS bloquear, vem count 0 sem erro
+    if (deletedCount === 0) {
+      setErr(
+        "Nenhum pedido foi excluído (apagou 0). Isso indica bloqueio de permissão/RLS para DELETE em orders. " +
+          "Rode o SQL do is_admin() (security definer) que eu te mandei e confirme que seu profiles.role = 'admin'."
+      );
+      setDeleting(false);
+      return;
+    }
+
+    // limpa seleção e recarrega
+    setSelected(new Set());
+    await loadOrders();
+    setDeleting(false);
+  }
+
   return (
     <main style={styles.main}>
       <div style={styles.card}>
-        {/* CABEÇALHO (sem menu) */}
+        {/* TOPO */}
         <div style={styles.topbar}>
           <div>
             <div style={styles.smallMuted}>Usuário</div>
@@ -240,8 +327,21 @@ export default function AdmPedidosPage() {
           </div>
 
           <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <button style={styles.secondaryBtn} onClick={loadOrders}>
+            <button style={styles.secondaryBtn} onClick={loadOrders} disabled={loading || deleting}>
               Atualizar
+            </button>
+
+            <button
+              style={{
+                ...styles.dangerBtn,
+                opacity: selected.size === 0 || deleting ? 0.5 : 1,
+                cursor: selected.size === 0 || deleting ? "not-allowed" : "pointer",
+              }}
+              onClick={deleteSelected}
+              disabled={selected.size === 0 || deleting}
+              title={selected.size === 0 ? "Selecione pedidos para excluir" : "Excluir selecionados"}
+            >
+              Excluir ({selected.size})
             </button>
           </div>
         </div>
@@ -255,6 +355,11 @@ export default function AdmPedidosPage() {
               Total por pedido + total geral. Edição rápida de status/logística/pagamento.
             </div>
           </div>
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800 }}>
+            <input type="checkbox" checked={isAllFilteredSelected()} onChange={toggleSelectAllFiltered} />
+            Selecionar todos (no filtro)
+          </label>
         </div>
 
         {/* Filtros */}
@@ -269,18 +374,14 @@ export default function AdmPedidosPage() {
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={styles.select}>
             <option value="all">Status: todos</option>
             {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
+              <option key={s} value={s}>{s}</option>
             ))}
           </select>
 
           <select value={logFilter} onChange={(e) => setLogFilter(e.target.value)} style={styles.select}>
             <option value="all">Logística: todos</option>
             {LOG_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
+              <option key={s} value={s}>{s}</option>
             ))}
           </select>
 
@@ -317,13 +418,14 @@ export default function AdmPedidosPage() {
                 const totalComFrete = Number(o.total_with_freight) || 0;
 
                 const paidDateStr = isoToDateInput(o.paid_at);
+                const checked = selected.has(o.id);
 
                 return (
                   <div
                     key={o.id}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "280px 150px 180px 190px 230px 120px",
+                      gridTemplateColumns: "34px 280px 150px 180px 190px 230px 120px",
                       gap: 10,
                       alignItems: "center",
                       padding: 12,
@@ -332,6 +434,17 @@ export default function AdmPedidosPage() {
                       background: "white",
                     }}
                   >
+                    {/* Checkbox */}
+                    <div style={{ display: "flex", justifyContent: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleSelect(o.id)}
+                        disabled={deleting}
+                        title="Selecionar"
+                      />
+                    </div>
+
                     {/* Loja + data + totais + entrega */}
                     <div style={{ minWidth: 0 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -377,14 +490,12 @@ export default function AdmPedidosPage() {
                       <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Status</div>
                       <select
                         value={o.status}
-                        disabled={saving}
+                        disabled={saving || deleting}
                         onChange={(e) => updateOrder(o.id, { status: e.target.value })}
                         style={styles.selectFull}
                       >
                         {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
+                          <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
                     </div>
@@ -394,14 +505,12 @@ export default function AdmPedidosPage() {
                       <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>Logística</div>
                       <select
                         value={(o.logistic_status ?? LOG_OPTIONS[0]) as any}
-                        disabled={saving}
+                        disabled={saving || deleting}
                         onChange={(e) => updateOrder(o.id, { logistic_status: e.target.value })}
                         style={styles.selectFull}
                       >
                         {LOG_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
+                          <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
                     </div>
@@ -412,7 +521,7 @@ export default function AdmPedidosPage() {
 
                       <button
                         onClick={() => togglePaid(o)}
-                        disabled={saving}
+                        disabled={saving || deleting}
                         style={{
                           width: "100%",
                           padding: "10px 12px",
@@ -431,7 +540,7 @@ export default function AdmPedidosPage() {
                         <input
                           type="date"
                           value={paidDateStr}
-                          disabled={saving || !o.is_paid}
+                          disabled={saving || deleting || !o.is_paid}
                           onChange={(e) => setPaidDate(o, e.target.value)}
                           style={{
                             padding: "10px 12px",
@@ -443,7 +552,7 @@ export default function AdmPedidosPage() {
 
                         <select
                           value={o.payment_method ?? "PIX"}
-                          disabled={saving || !o.is_paid}
+                          disabled={saving || deleting || !o.is_paid}
                           onChange={(e) => setPayMethod(o, e.target.value)}
                           style={{
                             padding: "10px 12px",
@@ -453,9 +562,7 @@ export default function AdmPedidosPage() {
                           }}
                         >
                           {PAY_METHODS.map((m) => (
-                            <option key={m} value={m}>
-                              {m}
-                            </option>
+                            <option key={m} value={m}>{m}</option>
                           ))}
                         </select>
                       </div>
@@ -518,6 +625,16 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #ddd",
     background: "#fff",
     cursor: "pointer",
+    fontSize: 14,
+    fontWeight: 900,
+  },
+
+  dangerBtn: {
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #b91c1c",
+    background: "#b91c1c",
+    color: "white",
     fontSize: 14,
     fontWeight: 900,
   },

@@ -11,14 +11,8 @@ type StoreRow = {
   state: string | null;
   active: boolean | null;
 
-  // se existir na tabela, ok; se não existir, fica undefined e não quebra
   code?: string | null;
   freight_fee?: number | null;
-};
-
-type BalanceRow = {
-  store_id: string;
-  balance: number;
 };
 
 export default function AdmLojasPage() {
@@ -39,13 +33,13 @@ export default function AdmLojasPage() {
   const [stateUf, setStateUf] = useState("");
   const [active, setActive] = useState(true);
 
-  // (opcional) se você já tem frete na stores
   const [freightFee, setFreightFee] = useState<string>("");
 
   // crédito
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
   const [creditAmount, setCreditAmount] = useState<string>("");
   const [creditNote, setCreditNote] = useState<string>("");
+  const [creditMode, setCreditMode] = useState<"ADD" | "REMOVE">("ADD"); // ✅ NOVO
 
   async function requireAuth() {
     const { data } = await supabase.auth.getUser();
@@ -68,7 +62,6 @@ export default function AdmLojasPage() {
       .in("store_id", storeIds);
 
     if (error) {
-      // não trava a tela por causa do saldo
       console.warn("loadBalances error:", error.message);
       return;
     }
@@ -85,7 +78,6 @@ export default function AdmLojasPage() {
     const ok = await requireAuth();
     if (!ok) return;
 
-    // inclui freight_fee e code se existirem
     const { data, error } = await supabase
       .from("stores")
       .select("id,name,city,state,active,freight_fee,code")
@@ -100,7 +92,6 @@ export default function AdmLojasPage() {
     const rows = (data ?? []) as StoreRow[];
     setStores(rows);
 
-    // carrega saldo por loja
     await loadBalances(rows.map((s) => s.id));
   }
 
@@ -152,7 +143,6 @@ export default function AdmLojasPage() {
       return;
     }
 
-    // frete (opcional)
     let ff: number | null = null;
     if (freightFee.trim() !== "") {
       const parsed = Number(String(freightFee).replace(",", "."));
@@ -169,11 +159,8 @@ export default function AdmLojasPage() {
       city: city.trim() || null,
       state: stateUf.trim().toUpperCase() || null,
       active: !!active,
+      freight_fee: ff,
     };
-
-    // só envia se a coluna existir no banco (se não existir, o Supabase retorna erro).
-    // como você disse que frete já está funcionando, vamos enviar:
-    payload.freight_fee = ff;
 
     if (editingId) {
       const { error } = await supabase.from("stores").update(payload).eq("id", editingId);
@@ -219,6 +206,7 @@ export default function AdmLojasPage() {
     setCreditStoreId(s.id);
     setCreditAmount("");
     setCreditNote("");
+    setCreditMode("ADD");
     setMsg("");
   }
 
@@ -226,31 +214,58 @@ export default function AdmLojasPage() {
     setCreditStoreId(null);
     setCreditAmount("");
     setCreditNote("");
+    setCreditMode("ADD");
   }
 
-  async function addCredit() {
+  function parseAmountBR(v: string) {
+    const n = Number(String(v).replace(",", "."));
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  async function applyCredit() {
     if (!creditStoreId) return;
 
     setMsg("");
     setWorking(true);
 
-    const amt = Number(String(creditAmount).replace(",", "."));
+    const amt = parseAmountBR(creditAmount);
     if (Number.isNaN(amt) || amt <= 0) {
       setWorking(false);
-      setMsg("Informe um valor de crédito válido (maior que zero).");
+      setMsg("Informe um valor válido (maior que zero).");
       return;
     }
 
-    const { error } = await supabase.rpc("add_store_credit", {
-      p_store_id: creditStoreId,
-      p_amount: amt,
-      p_note: creditNote.trim() || null,
-    });
-
-    if (error) {
+    // Opcional: impedir remover mais do que o saldo exibido
+    const currentBal = balancesByStore[creditStoreId] ?? 0;
+    if (creditMode === "REMOVE" && amt > currentBal) {
       setWorking(false);
-      setMsg(error.message);
+      setMsg(`Saldo insuficiente. Saldo atual: R$ ${currentBal.toFixed(2)}`);
       return;
+    }
+
+    if (creditMode === "ADD") {
+      const { error } = await supabase.rpc("add_store_credit", {
+        p_store_id: creditStoreId,
+        p_amount: amt,
+        p_note: creditNote.trim() || null,
+      });
+      if (error) {
+        setWorking(false);
+        setMsg(error.message);
+        return;
+      }
+    } else {
+      // ✅ NOVO: débito via RPC
+      const { error } = await supabase.rpc("remove_store_credit", {
+        p_store_id: creditStoreId,
+        p_amount: amt,
+        p_note: creditNote.trim() || null,
+      });
+      if (error) {
+        setWorking(false);
+        setMsg(error.message);
+        return;
+      }
     }
 
     setWorking(false);
@@ -261,6 +276,12 @@ export default function AdmLojasPage() {
   const creditStore = creditStoreId ? stores.find((s) => s.id === creditStoreId) : null;
   const creditBalance = creditStoreId ? (balancesByStore[creditStoreId] ?? 0) : 0;
 
+  const previewAfter = useMemo(() => {
+    const amt = parseAmountBR(creditAmount);
+    if (!creditStoreId || Number.isNaN(amt) || amt <= 0) return creditBalance;
+    return creditMode === "ADD" ? creditBalance + amt : Math.max(creditBalance - amt, 0);
+  }, [creditStoreId, creditAmount, creditMode, creditBalance]);
+
   return (
     <main style={styles.main}>
       <div style={styles.card}>
@@ -268,7 +289,7 @@ export default function AdmLojasPage() {
           <div>
             <h1 style={{ margin: 0, fontSize: 20 }}>Lojas</h1>
             <div style={{ fontSize: 13, opacity: 0.75 }}>
-              Cadastre e edite lojas. Adicione crédito pré-pago por loja.
+              Cadastre e edite lojas. Gerencie crédito pré-pago (adicionar/remover) por loja.
             </div>
           </div>
 
@@ -427,19 +448,41 @@ export default function AdmLojasPage() {
           </section>
         </div>
 
-        {/* Modal simples de crédito */}
+        {/* Modal crédito */}
         {creditStoreId ? (
           <div style={styles.modalBackdrop} onClick={closeCredit}>
             <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                 <div>
-                  <div style={{ fontWeight: 900, fontSize: 16 }}>Adicionar crédito</div>
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>Crédito pré-pago</div>
                   <div style={{ fontSize: 12, opacity: 0.75 }}>
-                    Loja: <b>{creditStore?.name ?? creditStoreId}</b> · Saldo atual: <b>R$ {Number(creditBalance).toFixed(2)}</b>
+                    Loja: <b>{creditStore?.name ?? creditStoreId}</b>
+                    {" · "}
+                    Saldo atual: <b>R$ {Number(creditBalance).toFixed(2)}</b>
+                    {" · "}
+                    Após: <b>R$ {Number(previewAfter).toFixed(2)}</b>
                   </div>
                 </div>
                 <button style={styles.secondaryBtn} onClick={closeCredit} disabled={working}>
                   Fechar
+                </button>
+              </div>
+
+              {/* ✅ Modo */}
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button
+                  style={creditMode === "ADD" ? styles.modeBtnActive : styles.modeBtn}
+                  onClick={() => setCreditMode("ADD")}
+                  disabled={working}
+                >
+                  Adicionar
+                </button>
+                <button
+                  style={creditMode === "REMOVE" ? styles.modeBtnActive : styles.modeBtn}
+                  onClick={() => setCreditMode("REMOVE")}
+                  disabled={working}
+                >
+                  Remover
                 </button>
               </div>
 
@@ -456,14 +499,20 @@ export default function AdmLojasPage() {
                 style={styles.input}
                 value={creditNote}
                 onChange={(e) => setCreditNote(e.target.value)}
-                placeholder="Ex.: Crédito antecipado do mês (cartão)"
+                placeholder={creditMode === "ADD" ? "Ex.: Crédito antecipado do mês" : "Ex.: Ajuste / Estorno"}
               />
 
               <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-                <button style={styles.primaryBtn} onClick={addCredit} disabled={working}>
-                  {working ? "Salvando..." : "Adicionar"}
+                <button style={styles.primaryBtn} onClick={applyCredit} disabled={working}>
+                  {working ? "Salvando..." : creditMode === "ADD" ? "Adicionar" : "Remover"}
                 </button>
               </div>
+
+              {creditMode === "REMOVE" ? (
+                <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                  Observação: a remoção só funciona se você rodou o SQL da função <b>remove_store_credit</b>.
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -516,5 +565,24 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #e6e7ee",
     boxShadow: "0 20px 50px rgba(0,0,0,0.20)",
     padding: 14,
+  },
+
+  // ✅ botões modo
+  modeBtn: {
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #ddd",
+    background: "#fff",
+    cursor: "pointer",
+    fontWeight: 900,
+  },
+  modeBtnActive: {
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #111",
+    background: "#111",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 900,
   },
 };

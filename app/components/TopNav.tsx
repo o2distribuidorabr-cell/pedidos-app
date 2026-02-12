@@ -103,11 +103,16 @@ export default function TopNav() {
     { label: "Lojas", href: "/adm/lojas" },
     { label: "Produtos", href: "/adm/produtos" },
     { label: "Financeiro", href: "/adm/financeiro" },
+
+    // ✅ NOVO
+    { label: "Extrato de crédito", href: "/adm/credito" },
   ];
 
   const franchiseeItems = [
     { label: "Pedidos", href: "/pedidos" },
     { label: "Novo pedido", href: "/pedido" },
+    // Se quiser também no franqueado, descomente e ajuste a rota:
+    // { label: "Extrato de crédito", href: "/credito" },
   ];
 
   const items = isAdminMode ? adminItems : franchiseeItems;
@@ -118,10 +123,7 @@ export default function TopNav() {
         {/* ESQUERDA: Menu dropdown */}
         <div style={styles.left}>
           <div ref={menuRef} style={{ position: "relative" }}>
-            <button
-              style={styles.menuBtn}
-              onClick={() => setMenuOpen((v) => !v)}
-            >
+            <button style={styles.menuBtn} onClick={() => setMenuOpen((v) => !v)}>
               Menu ▾
             </button>
 
@@ -176,11 +178,13 @@ export default function TopNav() {
 
             <div style={styles.metaBlock}>
               <div style={styles.metaLabel}>Portal</div>
-              <div style={styles.metaValue}>{isAdminMode ? "Administrador" : "Franqueado"}</div>
+              <div style={styles.metaValue}>
+                {isAdminMode ? "Administrador" : "Franqueado"}
+              </div>
             </div>
           </div>
 
-          {/* botão sair direto (opcional). Se não quiser, eu tiro */}
+          {/* botão sair direto (opcional). Se não quiser, pode remover */}
           <button onClick={onLogout} style={styles.logout}>
             Sair
           </button>

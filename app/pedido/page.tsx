@@ -4,13 +4,20 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import FranchiseeTopbar from "@/app/components/FranchiseeTopbar";
 
 type Product = {
   id: string;
   sku: string;
   name: string;
-  unit: string | null;       // ex: "cx", "kg", "un"
-  unit_cost: number | null;  // preço unitário
+  unit: string | null; // ex: "cx", "kg", "un"
+
+  // vamos usar unit_cost como "preço efetivo" para não quebrar seu carrinho
+  unit_cost: number | null;
+
+  // extra (opcional) só pra debug/UI, se quiser
+  base_price?: number | null;
+  override_price?: number | null;
 };
 
 type CartItem = {
@@ -18,30 +25,30 @@ type CartItem = {
   sku: string;
   name: string;
   unit: string;
-  unit_cost: number;
+  unit_cost: number; // preço efetivo
   qty: number;
 };
 
 type StoreRow = { id: string; name: string; freight_fee: number };
+type PriceOverrideRow = { product_id: string; unit_price: number | null };
 
 const STEP_BY_SKU: Record<string, number> = {
-  // conforme sua regra:
-  "110129": 120,  // Bife picanha 120g
-  "110132": 216,  // Bife 56g
-  "110133": 20,   // Bife vegetariano 71g
-  "190": 1,       // Brinde kids (livre)
-  "110243": 50,   // Copo milk shake
-  "110399": 800,  // Embalagem batata M
-  "110152": 2250, // Embalagem batata P
-  "110147": 150,  // Embalagem AB pequena (ajuste se SKU diferente)
-  "110278": 25,   // Embalagem kraft
-  "110255": 1000, // Etiqueta identificação
-  "110280": 3.5,  // Molho American 3,5kg
-  "110225": 0.397,// Molho barbecue 0,397kg (ajuste sku se necessário)
-  "110276": 48,   // Pão brioche
-  "110150": 1000, // Papel acoplado
-  "194": 60,      // Sachê baconese
-  "193": 60,      // Maionese temperada
+  "110129": 120,
+  "110132": 216,
+  "110133": 20,
+  "190": 1,
+  "110243": 50,
+  "110399": 800,
+  "110152": 2250,
+  "110147": 150,
+  "110278": 25,
+  "110255": 1000,
+  "110280": 3.5,
+  "110225": 0.397,
+  "110276": 48,
+  "110150": 1000,
+  "194": 60,
+  "193": 60,
 };
 
 function getStep(sku: string) {
@@ -55,7 +62,7 @@ function roundToStep(value: number, step: number) {
 }
 
 function money(v: number) {
-  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 export default function PedidoPage() {
@@ -66,7 +73,7 @@ export default function PedidoPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<Record<string, CartItem>>({});
 
-  // NOVO: modo de entrega + frete padrão da loja
+  // entrega + frete padrão da loja
   const [deliveryMode, setDeliveryMode] = useState<"RETIRADA" | "FRETE">("RETIRADA");
   const [freightFee, setFreightFee] = useState<number>(0);
   const [storeName, setStoreName] = useState<string>("-");
@@ -79,6 +86,8 @@ export default function PedidoPage() {
 
   const grandTotal = useMemo(() => itemsTotal + freightApplied, [itemsTotal, freightApplied]);
 
+  const hasItems = useMemo(() => Object.keys(cart).length > 0, [cart]);
+
   useEffect(() => {
     (async () => {
       setMsg("");
@@ -90,7 +99,7 @@ export default function PedidoPage() {
         return;
       }
 
-      // 1) pegar store_id do profile
+      // 1) store_id do profile
       const { data: profile, error: pErr } = await supabase
         .from("profiles")
         .select("store_id")
@@ -110,7 +119,7 @@ export default function PedidoPage() {
         return;
       }
 
-      // 2) pegar frete padrão da loja
+      // 2) frete padrão da loja
       const { data: store, error: sErr } = await supabase
         .from("stores")
         .select("id,name,freight_fee")
@@ -127,19 +136,58 @@ export default function PedidoPage() {
       setStoreName(st.name ?? "-");
       setFreightFee(Number(st.freight_fee ?? 0));
 
-      // 3) produtos
-      const { data, error } = await supabase
+      // 3) buscar produtos (preço padrão)
+      const { data: prodData, error: prodErr } = await supabase
         .from("products")
-        .select("id, sku, name, unit, unit_cost")
+        .select("id, sku, name, unit, unit_price, active")
+        .eq("active", true)
         .order("name", { ascending: true });
 
-      setLoading(false);
-
-      if (error) {
-        setMsg(error.message);
+      if (prodErr) {
+        setLoading(false);
+        setMsg(prodErr.message);
         return;
       }
-      setProducts((data ?? []) as Product[]);
+
+      // 4) buscar overrides da loja (preço por loja)
+      const { data: ovData, error: ovErr } = await supabase
+        .from("store_product_prices")
+        .select("product_id, unit_price")
+        .eq("store_id", storeId);
+
+      if (ovErr) {
+        setLoading(false);
+        setMsg(ovErr.message);
+        return;
+      }
+
+      const ovMap: Record<string, number> = {};
+      (ovData as PriceOverrideRow[] | null)?.forEach((r) => {
+        if (!r?.product_id) return;
+        const v = Number(r.unit_price ?? 0);
+        if (Number.isFinite(v) && v > 0) ovMap[String(r.product_id)] = v;
+      });
+
+      // 5) montar lista final com preço efetivo:
+      // effective = override (se existir) senão unit_price do produto
+      const merged: Product[] = (prodData ?? []).map((p: any) => {
+        const base = Number(p.unit_price ?? 0) || 0;
+        const ov = ovMap[p.id];
+        const effective = ov != null ? ov : base;
+
+        return {
+          id: String(p.id),
+          sku: String(p.sku ?? ""),
+          name: String(p.name ?? ""),
+          unit: (p.unit ?? "un") as string,
+          unit_cost: Number(effective) || 0,
+          base_price: base,
+          override_price: ov ?? null,
+        };
+      });
+
+      setProducts(merged);
+      setLoading(false);
     })();
   }, [router]);
 
@@ -180,11 +228,9 @@ export default function PedidoPage() {
   }
 
   function onContinue() {
-    // salva carrinho no localStorage para a tela de confirmar
     const items = Object.values(cart);
     localStorage.setItem("cart_items", JSON.stringify(items));
 
-    // NOVO: salva entrega/frete para a tela confirmar
     localStorage.setItem(
       "delivery_info",
       JSON.stringify({
@@ -199,62 +245,58 @@ export default function PedidoPage() {
 
   return (
     <main style={styles.main}>
-      <div style={styles.header}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 22 }}>Pedido de compra</h1>
-          <p style={{ margin: "6px 0 0", color: "#555" }}>
-            Selecione as quantidades. Algumas quantidades são travadas por caixa/lote.
-          </p>
-          <p style={{ margin: "6px 0 0", color: "#777", fontSize: 12 }}>
-            Loja: <b>{storeName}</b>
-          </p>
-        </div>
+      <FranchiseeTopbar />
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Link href="/pedidos" style={styles.linkBtn}>
-            Histórico de pedidos
-          </Link>
-          <button
-            style={styles.primaryBtn}
-            onClick={onContinue}
-            disabled={Object.keys(cart).length === 0}
-            title={Object.keys(cart).length === 0 ? "Selecione algum item" : "Continuar"}
-          >
-            Continuar → Confirmar ({money(grandTotal)})
-          </button>
+      {/* Cabeçalho */}
+      <div style={styles.card}>
+        <div style={styles.pageHeader}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 22 }}>Novo pedido</h1>
+            <div style={{ marginTop: 6, color: "#555" }}>
+              Selecione as quantidades. Algumas quantidades são travadas por caixa/lote.
+            </div>
+            <div style={{ marginTop: 6, color: "#777", fontSize: 12 }}>
+              Loja: <b>{storeName}</b>
+            </div>
+          </div>
+
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <Link href="/pedidos" style={styles.linkBtn}>
+              Histórico
+            </Link>
+
+            <button
+              style={{ ...styles.primaryBtn, opacity: hasItems ? 1 : 0.5, cursor: hasItems ? "pointer" : "not-allowed" }}
+              onClick={onContinue}
+              disabled={!hasItems}
+              title={!hasItems ? "Selecione algum item" : "Continuar"}
+            >
+              Continuar → Confirmar ({money(grandTotal)})
+            </button>
+          </div>
         </div>
       </div>
 
       {loading ? <div style={styles.card}>Carregando...</div> : null}
       {msg ? <div style={{ ...styles.card, ...styles.err }}>{msg}</div> : null}
 
-      {/* NOVO: escolha de entrega */}
+      {/* Entrega */}
       {!loading && !msg ? (
-        <div style={{ ...styles.card, marginBottom: 12 }}>
+        <div style={styles.card}>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ fontWeight: 800, color: "#111" }}>Entrega</div>
+            <div style={{ fontWeight: 900, color: "#111" }}>Entrega</div>
 
             <label style={styles.radio}>
-              <input
-                type="radio"
-                name="delivery"
-                checked={deliveryMode === "RETIRADA"}
-                onChange={() => setDeliveryMode("RETIRADA")}
-              />
+              <input type="radio" name="delivery" checked={deliveryMode === "RETIRADA"} onChange={() => setDeliveryMode("RETIRADA")} />
               Retirada
             </label>
 
             <label style={styles.radio}>
-              <input
-                type="radio"
-                name="delivery"
-                checked={deliveryMode === "FRETE"}
-                onChange={() => setDeliveryMode("FRETE")}
-              />
+              <input type="radio" name="delivery" checked={deliveryMode === "FRETE"} onChange={() => setDeliveryMode("FRETE")} />
               Frete
             </label>
 
-            <div style={{ marginLeft: "auto", fontWeight: 800 }}>
+            <div style={{ marginLeft: "auto", fontWeight: 900 }}>
               Frete: {money(freightApplied)}
             </div>
           </div>
@@ -265,6 +307,7 @@ export default function PedidoPage() {
         </div>
       ) : null}
 
+      {/* Produtos */}
       {!loading && !msg ? (
         <div style={styles.card}>
           <div style={styles.tableWrap}>
@@ -293,11 +336,11 @@ export default function PedidoPage() {
                       <td style={styles.tdMono}>{p.sku}</td>
                       <td style={styles.td}>{p.name}</td>
                       <td style={styles.td}>{unit}</td>
-                      <td style={styles.td}>R$ {unit_cost.toFixed(2)}</td>
+                      <td style={styles.td}>{money(unit_cost)}</td>
 
                       <td style={styles.td}>
                         <div style={styles.qtyWrap}>
-                          <button style={styles.qtyBtn} onClick={() => dec(p)}>-</button>
+                          <button style={styles.qtyBtn} onClick={() => dec(p)} type="button">-</button>
                           <input
                             style={styles.qtyInput}
                             type="number"
@@ -306,14 +349,14 @@ export default function PedidoPage() {
                             min={0}
                             onChange={(e) => setQty(p, Number(e.target.value))}
                           />
-                          <button style={styles.qtyBtn} onClick={() => inc(p)}>+</button>
+                          <button style={styles.qtyBtn} onClick={() => inc(p)} type="button">+</button>
                         </div>
                         <div style={styles.small}>
                           passo: {step} {unit}
                         </div>
                       </td>
 
-                      <td style={styles.tdStrong}>R$ {lineTotal.toFixed(2)}</td>
+                      <td style={styles.tdStrong}>{money(lineTotal)}</td>
                     </tr>
                   );
                 })}
@@ -324,17 +367,17 @@ export default function PedidoPage() {
           <div style={styles.footer}>
             <div style={styles.totalBox}>
               <div style={styles.small}>Itens</div>
-              <div style={{ fontSize: 16, fontWeight: 800 }}>R$ {itemsTotal.toFixed(2)}</div>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>{money(itemsTotal)}</div>
 
               <div style={{ ...styles.small, marginTop: 6 }}>
                 Frete ({deliveryMode === "FRETE" ? "Frete" : "Retirada"})
               </div>
-              <div style={{ fontSize: 16, fontWeight: 800 }}>R$ {freightApplied.toFixed(2)}</div>
+              <div style={{ fontSize: 16, fontWeight: 900 }}>{money(freightApplied)}</div>
 
               <hr style={{ border: 0, borderTop: "1px solid #eee", margin: "10px 0" }} />
 
               <div style={styles.small}>Total do pedido</div>
-              <div style={{ fontSize: 22, fontWeight: 800 }}>R$ {grandTotal.toFixed(2)}</div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>{money(grandTotal)}</div>
             </div>
           </div>
         </div>
@@ -345,26 +388,25 @@ export default function PedidoPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-end",
-    gap: 12,
-    marginBottom: 12,
-    flexWrap: "wrap",
-  },
+
   card: {
     background: "#fff",
     border: "1px solid #e6e7ee",
     borderRadius: 14,
     padding: 14,
     boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
+    width: "min(1300px, 100%)",
+    margin: "0 auto 12px",
   },
+
+  pageHeader: { display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" },
+
   err: {
     background: "#fff2f2",
     borderColor: "#ffd0d0",
     color: "#a40000",
   },
+
   linkBtn: {
     padding: "10px 12px",
     borderRadius: 10,
@@ -372,21 +414,22 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#fff",
     textDecoration: "none",
     color: "#111",
-    fontWeight: 600,
+    fontWeight: 900,
   },
+
   primaryBtn: {
     padding: "10px 12px",
     borderRadius: 10,
     border: "1px solid #111",
     background: "#111",
     color: "#fff",
-    cursor: "pointer",
     fontSize: 14,
-    fontWeight: 700,
-    opacity: 1,
+    fontWeight: 900,
   },
+
   tableWrap: { overflowX: "auto" },
   table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
+
   th: {
     textAlign: "left",
     padding: "10px 10px",
@@ -394,24 +437,32 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#555",
     borderBottom: "1px solid #eee",
     background: "#fafbff",
+    whiteSpace: "nowrap",
   },
+
   td: {
     padding: "10px 10px",
     borderBottom: "1px solid #f1f1f6",
     verticalAlign: "top",
+    whiteSpace: "nowrap",
   },
+
   tdStrong: {
     padding: "10px 10px",
     borderBottom: "1px solid #f1f1f6",
-    fontWeight: 800,
+    fontWeight: 900,
+    whiteSpace: "nowrap",
   },
+
   tdMono: {
     padding: "10px 10px",
     borderBottom: "1px solid #f1f1f6",
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     fontSize: 13,
     color: "#111",
+    whiteSpace: "nowrap",
   },
+
   qtyWrap: { display: "flex", alignItems: "center", gap: 6 },
   qtyBtn: {
     width: 34,
@@ -420,7 +471,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #ddd",
     background: "#fff",
     cursor: "pointer",
-    fontWeight: 800,
+    fontWeight: 900,
   },
   qtyInput: {
     width: 110,
@@ -431,7 +482,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     textAlign: "right",
   },
-  small: { marginTop: 4, fontSize: 12, color: "#777" },
+
+  small: { marginTop: 4, fontSize: 12, color: "#777", fontWeight: 700 },
+
   footer: { display: "flex", justifyContent: "flex-end", marginTop: 12 },
   totalBox: {
     padding: 12,
@@ -441,5 +494,6 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 260,
     textAlign: "right",
   },
-  radio: { display: "flex", gap: 8, alignItems: "center", fontWeight: 700, color: "#111" },
+
+  radio: { display: "flex", gap: 8, alignItems: "center", fontWeight: 900, color: "#111" },
 };
