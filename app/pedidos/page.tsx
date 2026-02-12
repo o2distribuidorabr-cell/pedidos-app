@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import FranchiseeTopbar from "@/app/components/FranchiseeTopbar";
 
 type OrderRow = {
   id: string;
@@ -52,7 +53,7 @@ function fmtBR(iso: string | null | undefined) {
 }
 
 function money(n: number) {
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 function logisticLabel(v: OrderRow["logistic_status"]) {
@@ -93,7 +94,7 @@ export default function HistoricoPedidosPage() {
   function toISOStart(dateStr: string) {
     const [y, m, d] = dateStr.split("-").map(Number);
     return new Date(y, m - 1, d, 0, 0, 0).toISOString();
-    }
+  }
   function toISOEnd(dateStr: string) {
     const [y, m, d] = dateStr.split("-").map(Number);
     return new Date(y, m - 1, d, 23, 59, 59).toISOString();
@@ -167,11 +168,7 @@ export default function HistoricoPedidosPage() {
         return;
       }
 
-      const { data: store, error: sErr } = await supabase
-        .from("stores")
-        .select("id, name")
-        .eq("id", sId)
-        .maybeSingle();
+      const { data: store, error: sErr } = await supabase.from("stores").select("id, name").eq("id", sId).maybeSingle();
 
       if (sErr) {
         setMsg(sErr.message);
@@ -182,7 +179,6 @@ export default function HistoricoPedidosPage() {
       const st = (store ?? null) as StoreRow | null;
       setStoreName(st?.name ?? "-");
 
-      // ✅ carrega saldo + pedidos
       await Promise.all([loadCreditBalance(sId), loadOrders(sId)]);
 
       setLoading(false);
@@ -191,15 +187,9 @@ export default function HistoricoPedidosPage() {
   }, []);
 
   async function loadCreditBalance(sId: string) {
-    // view com saldo agregado do ledger
-    const { data, error } = await supabase
-      .from("v_store_credit_balance")
-      .select("store_id, balance")
-      .eq("store_id", sId)
-      .maybeSingle();
+    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id, balance").eq("store_id", sId).maybeSingle();
 
     if (error) {
-      // não trava a página por isso, só mostra msg
       setMsg((m) => (m ? m : error.message));
       setCreditBalance(0);
       return;
@@ -234,10 +224,7 @@ export default function HistoricoPedidosPage() {
 
     const ids = orderList.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase
-      .from("v_order_totals")
-      .select("order_id, store_id, total_cost")
-      .in("order_id", ids);
+    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id, store_id, total_cost").in("order_id", ids);
 
     if (tErr) {
       setMsg(tErr.message);
@@ -258,6 +245,10 @@ export default function HistoricoPedidosPage() {
     const ui: OrderUi[] = orderList.map((o) => {
       const total = map.get(o.id) ?? 0;
       const applied = Number(o.credit_applied ?? 0) || 0;
+
+      // ✅ Aqui mantém exatamente o que você já quer:
+      // total = (itens + frete) vindo da view
+      // devido = total - crédito
       const due = Math.max(total - applied, 0);
 
       return {
@@ -270,14 +261,10 @@ export default function HistoricoPedidosPage() {
     setOrders(ui);
   }
 
-  async function onLogout() {
-    await supabase.auth.signOut();
-    router.push("/login");
-  }
-
   if (loading) {
     return (
       <main style={styles.main}>
+        <FranchiseeTopbar />
         <div style={styles.card}>Carregando...</div>
       </main>
     );
@@ -285,57 +272,32 @@ export default function HistoricoPedidosPage() {
 
   return (
     <main style={styles.main}>
+      <FranchiseeTopbar />
+
       <div style={styles.card}>
-        <div style={styles.topbar}>
-          <div>
-            <div style={styles.smallMuted}>Usuário</div>
-            <div style={styles.topValue}>{userEmail}</div>
-          </div>
-
-          <div>
-            <div style={styles.smallMuted}>Loja</div>
-            <div style={styles.topValue}>{storeName}</div>
-          </div>
-
-          {/* ✅ NOVO: saldo de crédito */}
-          <div>
-            <div style={styles.smallMuted}>Saldo de crédito</div>
-            <div style={{ ...styles.topValue, fontSize: 16 }}>
-              {money(Number(creditBalance) || 0)}
-            </div>
-          </div>
-
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.secondaryBtn} onClick={() => router.push("/pedido")}>
-              + Novo pedido
-            </button>
-            <button
-              style={styles.secondaryBtn}
-              onClick={() => storeId && Promise.all([loadCreditBalance(storeId), loadOrders(storeId)])}
-            >
-              Recarregar
-            </button>
-            <button style={styles.logoutBtn} onClick={onLogout}>
-              Sair
-            </button>
-          </div>
-        </div>
-
-        <hr style={styles.hr} />
+        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
 
         <h1 style={{ margin: 0, fontSize: 22 }}>Histórico de pedidos</h1>
-        <p style={{ marginTop: 6, color: "#555" }}>
-          Aqui aparecem os pedidos já enviados. Clique em um pedido para ver os itens.
-        </p>
+        <p style={{ marginTop: 6, color: "#555" }}>Aqui aparecem os pedidos já enviados. Clique em um pedido para ver os itens.</p>
+
+        {/* ✅ Faixa de saldo (opcional, mas útil) */}
+        <div style={styles.balanceBar}>
+          <div>
+            <div style={styles.smallMuted}>Saldo de crédito</div>
+            <div style={styles.balanceValue}>{money(creditBalance)}</div>
+          </div>
+
+          <button
+            style={styles.secondaryBtn}
+            onClick={() => storeId && Promise.all([loadCreditBalance(storeId), loadOrders(storeId)])}
+          >
+            Recarregar
+          </button>
+        </div>
 
         {/* Filtros */}
         <div style={styles.filters}>
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por ID do pedido..."
-            style={styles.input}
-          />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por ID do pedido..." style={styles.input} />
 
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={styles.select}>
             <option value="all">Status: todos</option>
@@ -374,21 +336,15 @@ export default function HistoricoPedidosPage() {
                 <th style={styles.th}>Criado</th>
                 <th style={styles.th}>Enviado</th>
                 <th style={styles.th}>Aprovado</th>
-
-                {/* ✅ NOVOS */}
                 <th style={styles.th}>Total</th>
                 <th style={styles.th}>Crédito aplicado</th>
                 <th style={styles.th}>A pagar</th>
               </tr>
             </thead>
+
             <tbody>
               {filtered.map((o) => (
-                <tr
-                  key={o.id}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => router.push(`/pedidos/${o.id}`)}
-                  title="Abrir pedido"
-                >
+                <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/pedidos/${o.id}`)} title="Abrir pedido">
                   <td style={styles.tdMono}>{o.id}</td>
                   <td style={styles.td}>{o.status}</td>
 
@@ -420,13 +376,12 @@ export default function HistoricoPedidosPage() {
           </table>
         </div>
 
-        {/* ✅ resumo embaixo */}
         <div style={styles.totalBox}>
           <span>Total exibido</span>
           <b>{money(totalGeral)}</b>
         </div>
 
-        <div style={styles.totalBox2}>
+        <div style={styles.totalBox}>
           <span>Crédito aplicado (exibido)</span>
           <b>{money(totalCreditoAplicado)}</b>
         </div>
@@ -435,8 +390,6 @@ export default function HistoricoPedidosPage() {
           <span>A pagar (exibido)</span>
           <b>{money(totalAPagar)}</b>
         </div>
-
-        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
       </div>
     </main>
   );
@@ -454,24 +407,25 @@ const styles: Record<string, React.CSSProperties> = {
     margin: "0 auto",
   },
 
-  topbar: { display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" },
   smallMuted: { fontSize: 12, color: "#777", fontWeight: 700 },
-  topValue: { fontSize: 14, fontWeight: 800, color: "#111" },
 
-  logoutBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 800,
+  balanceBar: {
+    marginTop: 12,
+    display: "flex",
+    justifyContent: "space-between",
+    gap: 12,
+    alignItems: "center",
+    flexWrap: "wrap",
+    padding: 12,
+    border: "1px solid #e5e7eb",
+    borderRadius: 14,
+    background: "white",
   },
-  hr: { border: 0, borderTop: "1px solid #eee", margin: "12px 0" },
+  balanceValue: { marginTop: 6, fontSize: 16, fontWeight: 900, color: "#111" },
 
   filters: {
     display: "grid",
-    gridTemplateColumns: "1fr 160px 180px 160px 150px 150px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
     gap: 10,
     alignItems: "center",
     padding: 12,
@@ -480,6 +434,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: "white",
     marginTop: 10,
   },
+
   input: { padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", outline: "none" },
   select: { padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", background: "white", fontWeight: 800 },
 
@@ -520,20 +475,10 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
-    fontWeight: 800,
+    fontWeight: 900,
   },
 
   totalBox: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    border: "1px solid #eee",
-    background: "#fff",
-    fontSize: 14,
-  },
-  totalBox2: {
     display: "flex",
     justifyContent: "space-between",
     marginTop: 10,
