@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -28,7 +29,6 @@ export default function LoginPage() {
   const router = useRouter();
 
   const [tab, setTab] = useState<"franchisee" | "admin">("franchisee");
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -46,7 +46,6 @@ export default function LoginPage() {
     state: "",
   });
 
-  // ✅ garante que o TopNav saiba qual portal mostrar
   function setPortalMode(mode: "admin" | "franchisee") {
     try {
       localStorage.setItem("portal_mode", mode);
@@ -85,24 +84,22 @@ export default function LoginPage() {
       return;
     }
 
-    // ✅ define portal pelo role real (não depende do clique)
     if ((p.role ?? "") === "admin") {
       setPortalMode("admin");
       router.push("/adm/pedidos");
       return;
     }
 
-    // franqueado
     setPortalMode("franchisee");
 
     if (!p.approved) {
-      setMsg("Cadastro recebido. Aguarde a aprovação da franqueadora para acessar.");
+      setMsg("Cadastro recebido. Aguarde a aprovação para acessar.");
       await supabase.auth.signOut();
       return;
     }
 
     if (!p.store_id) {
-      setMsg("Você foi aprovado, mas ainda não tem loja vinculada. Fale com a franqueadora.");
+      setMsg("Você foi aprovado, mas ainda não tem loja vinculada. Fale com o administrador.");
       await supabase.auth.signOut();
       return;
     }
@@ -114,7 +111,6 @@ export default function LoginPage() {
     setMsg("");
     setWorking(true);
 
-    // ✅ também grava pelo tab selecionado (ajuda o TopNav na hora)
     setPortalMode(tab === "admin" ? "admin" : "franchisee");
 
     const { data, error } = await supabase.auth.signInWithPassword({
@@ -136,7 +132,6 @@ export default function LoginPage() {
     setMsg("");
     setWorking(true);
 
-    // validações simples
     if (!email.trim() || !password) {
       setWorking(false);
       setMsg("Preencha email e senha.");
@@ -153,7 +148,6 @@ export default function LoginPage() {
       return;
     }
 
-    // 1) cria usuário no Auth
     const { data, error } = await supabase.auth.signUp({
       email: email.trim(),
       password,
@@ -172,14 +166,8 @@ export default function LoginPage() {
       return;
     }
 
-    // 2) garante profiles (pending) para esse usuário
     const { error: pErr } = await supabase.from("profiles").upsert(
-      {
-        id: userId,
-        role: "pending",
-        approved: false,
-        store_id: null,
-      },
+      { id: userId, role: "pending", approved: false, store_id: null },
       { onConflict: "id" }
     );
 
@@ -190,8 +178,6 @@ export default function LoginPage() {
       return;
     }
 
-    // 3) cria a solicitação (para aparecer no /adm/cadastros)
-    // ✅ se já existir para esse user_id, atualiza (evita erro de "duplicate key")
     const { error: reqErr } = await supabase.from("signup_requests").upsert(
       {
         user_id: userId,
@@ -215,13 +201,10 @@ export default function LoginPage() {
     }
 
     setWorking(false);
-    setMsg("Cadastro enviado. Aguarde a aprovação da franqueadora para acessar.");
+    setMsg("Solicitação enviada. Aguarde a aprovação para acessar.");
 
-    // evita ficar logado antes da aprovação
     await supabase.auth.signOut();
     setShowSignup(false);
-
-    // limpa campos
     setPassword("");
     setSignup({
       franchisee_name: "",
@@ -241,44 +224,63 @@ export default function LoginPage() {
     );
   }
 
+  const isAdmin = tab === "admin";
+
   return (
     <main style={styles.main}>
       <div style={styles.card}>
+        {/* HEADER (logo + textos) */}
+        <div style={styles.header}>
+          <div style={styles.logoWrap}>
+            <Image
+              src="/logo.png"
+              alt="Logo"
+              fill
+              sizes="140px"
+              style={{ objectFit: "contain" }}
+              priority
+            />
+          </div>
+
+          <div style={styles.headerText}>
+            <div style={styles.title}>{isAdmin ? "Acesso administrativo" : "Portal do cliente"}</div>
+            <div style={styles.sub}>
+              {isAdmin
+                ? "Entre com seu email e senha de administrador."
+                : "Entre com seu email e senha. Se ainda não tiver acesso, solicite cadastro."}
+            </div>
+          </div>
+        </div>
+
+        {/* TABS */}
         <div style={styles.tabs}>
           <button
             onClick={() => {
               setTab("franchisee");
-              setPortalMode("franchisee"); // ✅ aqui
+              setPortalMode("franchisee");
               setShowSignup(false);
               setMsg("");
             }}
             style={{ ...styles.tab, ...(tab === "franchisee" ? styles.tabActive : {}) }}
           >
-            Franqueado
+            Cliente
           </button>
+
           <button
             onClick={() => {
               setTab("admin");
-              setPortalMode("admin"); // ✅ aqui
+              setPortalMode("admin");
               setShowSignup(false);
               setMsg("");
             }}
             style={{ ...styles.tab, ...(tab === "admin" ? styles.tabActive : {}) }}
           >
-            Portal administrativo
+            Administrativo
           </button>
         </div>
 
-        <h1 style={{ margin: "12px 0 0", fontSize: 22 }}>
-          {tab === "admin" ? "Acesso administrativo" : "Acesso do franqueado"}
-        </h1>
-        <p style={{ marginTop: 6, color: "#555" }}>
-          {tab === "admin"
-            ? "Entre com seu email e senha de administrador."
-            : "Entre com seu email e senha. Se ainda não tiver cadastro, solicite acesso."}
-        </p>
-
-        <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+        {/* FORM */}
+        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <label style={styles.label}>Email</label>
           <input
             style={styles.input}
@@ -303,14 +305,19 @@ export default function LoginPage() {
               {working ? "Aguarde..." : "Entrar"}
             </button>
 
-            {tab === "franchisee" ? (
-              <button style={styles.secondaryBtn} onClick={() => setShowSignup((v) => !v)} disabled={working}>
+            {!isAdmin ? (
+              <button
+                style={styles.secondaryBtn}
+                onClick={() => setShowSignup((v) => !v)}
+                disabled={working}
+              >
                 {showSignup ? "Fechar cadastro" : "Solicitar cadastro"}
               </button>
             ) : null}
           </div>
 
-          {showSignup && tab === "franchisee" ? (
+          {/* SIGNUP */}
+          {showSignup && !isAdmin ? (
             <div style={styles.signupBox}>
               <div style={{ fontWeight: 900, marginBottom: 8 }}>Solicitação de cadastro</div>
 
@@ -392,6 +399,8 @@ export default function LoginPage() {
           ) : null}
 
           {msg ? <div style={styles.msgBox}>{msg}</div> : null}
+
+          <div style={styles.footerNote}>© {new Date().getFullYear()} • Portal do cliente</div>
         </div>
       </div>
     </main>
@@ -399,15 +408,58 @@ export default function LoginPage() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16, display: "grid", placeItems: "center" },
+  main: {
+    minHeight: "100vh",
+    padding: 16,
+    display: "grid",
+    placeItems: "center",
+    background:
+      "radial-gradient(1200px 600px at 20% 10%, rgba(0,0,0,0.06), transparent 60%), #f6f7fb",
+  },
   card: {
     background: "#fff",
     border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
     boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(620px, 100%)",
+    width: "min(680px, 100%)",
   },
+
+  // ✅ header fixo: nunca deixa a logo invadir
+  header: {
+    display: "grid",
+    gridTemplateColumns: "140px 1fr",
+    gap: 14,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  logoWrap: {
+    position: "relative",
+    width: 140,
+    height: 64,
+    borderRadius: 14,
+    border: "1px solid #eee",
+    background: "#fafbff",
+    overflow: "hidden",
+  },
+  headerText: {
+    display: "grid",
+    gap: 6,
+    minWidth: 0,
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: 950,
+    color: "#111",
+    lineHeight: 1.15,
+  },
+  sub: {
+    fontSize: 13,
+    color: "#555",
+    fontWeight: 700,
+    lineHeight: 1.3,
+  },
+
   tabs: {
     display: "flex",
     gap: 8,
@@ -431,6 +483,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#fff",
     borderColor: "#111",
   },
+
   label: { fontSize: 12, color: "#666", fontWeight: 900 },
   input: {
     width: "100%",
@@ -440,7 +493,9 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     fontSize: 14,
     background: "white",
+    color: "#111",
   },
+
   primaryBtn: {
     padding: "10px 12px",
     borderRadius: 10,
@@ -460,7 +515,9 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 14,
     fontWeight: 900,
+    color: "#111",
   },
+
   msgBox: {
     marginTop: 10,
     padding: 10,
@@ -470,7 +527,9 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#111",
     fontSize: 13,
     lineHeight: 1.35,
+    whiteSpace: "pre-wrap",
   },
+
   signupBox: {
     marginTop: 10,
     padding: 12,
@@ -484,5 +543,13 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 10,
     marginBottom: 10,
     marginTop: 10,
+  },
+
+  footerNote: {
+    marginTop: 10,
+    fontSize: 12,
+    color: "#888",
+    textAlign: "center",
+    fontWeight: 700,
   },
 };
