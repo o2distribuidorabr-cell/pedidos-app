@@ -1,14 +1,20 @@
+// app/layout.tsx (SERVER - NÃO colocar "use client")
+
 import "./globals.css";
 
-export const viewport = {
-  width: "device-width",
-  initialScale: 1,
+export const metadata = {
+  title: "Pedidos",
+  description: "Portal de pedidos",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="pt-BR">
-      <body style={{ margin: 0, background: "#f6f7fb" }}>{children}</body>
+    <html lang="pt-br">
+      <body>{children}</body>
     </html>
   );
 }

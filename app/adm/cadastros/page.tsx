@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { requireAdminOrRedirect } from "@/app/lib/requireAdmin";
 
 type StoreRow = { id: string; name: string };
 
@@ -50,34 +51,6 @@ export default function AdmCadastrosPage() {
   // seleção de loja por request
   const [storePick, setStorePick] = useState<Record<string, string>>({}); // requestId -> storeId
 
-  async function bootstrap() {
-    setMsg("");
-    setLoading(true);
-
-    const { data: auth } = await supabase.auth.getUser();
-    if (!auth?.user) {
-      router.push("/login");
-      return;
-    }
-    setUserEmail(auth.user.email ?? "-");
-
-    // carrega stores pro dropdown
-    const { data: st, error: stErr } = await supabase
-      .from("stores")
-      .select("id,name")
-      .order("name", { ascending: true });
-
-    if (stErr) {
-      setMsg(stErr.message);
-      setStores([]);
-    } else {
-      setStores((st ?? []) as StoreRow[]);
-    }
-
-    await loadRequests();
-    setLoading(false);
-  }
-
   async function loadRequests() {
     setMsg("");
 
@@ -105,6 +78,35 @@ export default function AdmCadastrosPage() {
       }
       return next;
     });
+  }
+
+  async function bootstrap() {
+    setMsg("");
+    setLoading(true);
+
+    // ✅ bloqueia não-admin
+    const ok = await requireAdminOrRedirect(router);
+    if (!ok) return;
+
+    // email do usuário (apenas para exibir)
+    const { data: auth } = await supabase.auth.getUser();
+    setUserEmail(auth?.user?.email ?? "-");
+
+    // carrega stores pro dropdown
+    const { data: st, error: stErr } = await supabase
+      .from("stores")
+      .select("id,name")
+      .order("name", { ascending: true });
+
+    if (stErr) {
+      setMsg(stErr.message);
+      setStores([]);
+    } else {
+      setStores((st ?? []) as StoreRow[]);
+    }
+
+    await loadRequests();
+    setLoading(false);
   }
 
   useEffect(() => {
