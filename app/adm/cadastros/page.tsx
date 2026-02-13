@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import { requireAdminOrRedirect } from "@/app/lib/requireAdmin";
+import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 
 type StoreRow = { id: string; name: string };
 
