@@ -117,7 +117,7 @@ export default function FranchiseeTopbar() {
         </button>
 
         <div style={styles.titleArea}>
-          <div style={styles.title}>Portal do Franqueado</div>
+          <div style={styles.title}>Portal do Cliente</div>
           <div style={styles.subtitle}>
             {loading ? "Carregando..." : `${userEmail} · ${storeName} · Crédito: ${money(creditBalance)}`}
           </div>
