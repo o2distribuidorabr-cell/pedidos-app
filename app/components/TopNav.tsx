@@ -98,15 +98,17 @@ export default function TopNav() {
 
   // itens do menu
   const adminItems = [
-    { label: "Pedidos", href: "/adm/pedidos" },
-    { label: "Cadastros", href: "/adm/cadastros" },
-    { label: "Lojas", href: "/adm/lojas" },
-    { label: "Produtos", href: "/adm/produtos" },
-    { label: "Financeiro", href: "/adm/financeiro" },
+  { label: "Pedidos", href: "/adm/pedidos" },
+  { label: "Cadastros", href: "/adm/cadastros" },
 
-    // ✅ NOVO
-    { label: "Extrato de crédito", href: "/adm/credito" },
-  ];
+  // ✅ NOVO
+  { label: "Usuários", href: "/adm/usuarios" },
+
+  { label: "Lojas", href: "/adm/lojas" },
+  { label: "Produtos", href: "/adm/produtos" },
+  { label: "Financeiro", href: "/adm/financeiro" },
+  { label: "Extrato de crédito", href: "/adm/credito" },
+];
 
   const franchiseeItems = [
     { label: "Pedidos", href: "/pedidos" },
