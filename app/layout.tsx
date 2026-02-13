@@ -1,4 +1,4 @@
-// app/layout.tsx (SERVER - NÃO colocar "use client")
+// app/layout.tsx
 
 import "./globals.css";
 
@@ -13,7 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-br">
+    <html lang="pt-br" style={{ colorScheme: "light" }}>
       <body>{children}</body>
     </html>
   );
