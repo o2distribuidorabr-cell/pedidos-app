@@ -34,6 +34,12 @@ function fmtDT(iso: string | null | undefined) {
   }
 }
 
+function toneByStatus(s: SignupRow["status"]) {
+  if (s === "approved") return "green" as const;
+  if (s === "rejected") return "red" as const;
+  return "yellow" as const;
+}
+
 export default function AdmCadastrosPage() {
   const router = useRouter();
 
@@ -41,12 +47,12 @@ export default function AdmCadastrosPage() {
   const [msg, setMsg] = useState("");
 
   const [requests, setRequests] = useState<SignupRow[]>([]);
-  const [stores, setStores] = useState<StoreRow[]>([]); // ✅ corrigido aqui
+  const [stores, setStores] = useState<StoreRow[]>([]);
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<
-    "pending" | "approved" | "rejected" | "all"
-  >("pending");
+  const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "all">(
+    "pending"
+  );
 
   const [storePick, setStorePick] = useState<Record<string, string>>({});
 
@@ -197,10 +203,10 @@ export default function AdmCadastrosPage() {
     }
 
     // opcional: manter approved=false no profile
-    await supabase
-      .from("profiles")
-      .update({ approved: false, role: "pending", store_id: null })
-      .eq("id", r.user_id);
+    await supabase.from("profiles").update({ approved: false, role: "pending", store_id: null }).eq(
+      "id",
+      r.user_id
+    );
 
     await loadRequests();
   }
@@ -219,12 +225,7 @@ export default function AdmCadastrosPage() {
 
       <Card>
         <div className="grid gap-3 md:grid-cols-2">
-          <Input
-            label="Buscar"
-            placeholder="Email, nome, loja ou CNPJ"
-            value={q}
-            onChange={setQ}
-          />
+          <Input label="Buscar" placeholder="Email, nome, loja ou CNPJ" value={q} onChange={setQ} />
 
           <Select
             label="Status"
@@ -249,83 +250,72 @@ export default function AdmCadastrosPage() {
       <div className="space-y-4">
         {loading && <Card>Carregando...</Card>}
 
-        {!loading && filtered.length === 0 && (
-          <Card>Nenhuma solicitação encontrada.</Card>
-        )}
+        {!loading && filtered.length === 0 && <Card>Nenhuma solicitação encontrada.</Card>}
 
         {filtered.map((r) => {
           const isPending = r.status === "pending";
 
           return (
-            <Card
-              key={r.id}
-              title={`${r.franchisee_name} — ${r.email}`}
-              subtitle={`Criado em ${fmtDT(r.created_at)}`}
-              right={
-                <Badge
-                  tone={
-                    r.status === "approved"
-                      ? "green"
-                      : r.status === "rejected"
-                      ? "red"
-                      : "yellow"
-                  }
-                >
-                  {r.status}
-                </Badge>
-              }
-            >
-              <div className="grid gap-4 md:grid-cols-[1fr_320px]">
-                <div className="text-sm text-slate-700 space-y-1">
-                  <div>
-                    <b>Loja solicitada:</b> {r.store_name}
-                  </div>
-                  <div>
-                    <b>Cidade:</b> {r.city ?? "-"} {r.state ?? ""}
-                  </div>
-                  <div>
-                    <b>CNPJ:</b> {r.cnpj ?? "-"}
-                  </div>
-                  <div>
-                    <b>Telefone:</b> {r.phone ?? "-"}
-                  </div>
-                  <div className="text-xs text-slate-500">user_id: {r.user_id}</div>
-
-                  {r.decided_at ? (
-                    <div className="text-xs text-slate-500">
-                      Decidido em: {fmtDT(r.decided_at)}
+            <Card key={r.id} className="p-0">
+              {/* Header (título + badge) */}
+              <div className="border-b border-slate-200 px-4 py-3 md:px-6">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-slate-900">
+                      {r.franchisee_name} — {r.email}
                     </div>
-                  ) : null}
+                    <div className="mt-0.5 text-xs text-slate-600">
+                      Criado em {fmtDT(r.created_at)}
+                    </div>
+                  </div>
+
+                  <Badge tone={toneByStatus(r.status)}>{r.status}</Badge>
                 </div>
+              </div>
 
-                <div className="space-y-2">
-                  <Select
-                    label="Vincular loja"
-                    value={storePick[r.id] ?? ""}
-                    onChange={(v) =>
-                      setStorePick((p) => ({ ...p, [r.id]: v }))
-                    }
-                    options={[
-                      { value: "", label: "Selecione..." },
-                      ...stores.map((s) => ({ value: s.id, label: s.name })),
-                    ]}
-                  />
+              {/* Body */}
+              <div className="p-4 md:p-6">
+                <div className="grid gap-4 md:grid-cols-[1fr_320px]">
+                  <div className="space-y-1 text-sm text-slate-700">
+                    <div>
+                      <b>Loja solicitada:</b> {r.store_name}
+                    </div>
+                    <div>
+                      <b>Cidade:</b> {r.city ?? "-"} {r.state ?? ""}
+                    </div>
+                    <div>
+                      <b>CNPJ:</b> {r.cnpj ?? "-"}
+                    </div>
+                    <div>
+                      <b>Telefone:</b> {r.phone ?? "-"}
+                    </div>
+                    <div className="text-xs text-slate-500">user_id: {r.user_id}</div>
 
-                  <div className="flex gap-2 justify-end">
-                    <Button
-                      variant="danger"
-                      disabled={!isPending}
-                      onClick={() => rejectRequest(r)}
-                    >
-                      Rejeitar
-                    </Button>
+                    {r.decided_at ? (
+                      <div className="text-xs text-slate-500">Decidido em: {fmtDT(r.decided_at)}</div>
+                    ) : null}
+                  </div>
 
-                    <Button
-                      disabled={!isPending}
-                      onClick={() => approveRequest(r)}
-                    >
-                      Aprovar
-                    </Button>
+                  <div className="space-y-2">
+                    <Select
+                      label="Vincular loja"
+                      value={storePick[r.id] ?? ""}
+                      onChange={(v) => setStorePick((p) => ({ ...p, [r.id]: v }))}
+                      options={[
+                        { value: "", label: "Selecione..." },
+                        ...stores.map((s) => ({ value: s.id, label: s.name })),
+                      ]}
+                    />
+
+                    <div className="flex justify-end gap-2">
+                      <Button variant="danger" disabled={!isPending} onClick={() => rejectRequest(r)}>
+                        Rejeitar
+                      </Button>
+
+                      <Button disabled={!isPending} onClick={() => approveRequest(r)}>
+                        Aprovar
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
