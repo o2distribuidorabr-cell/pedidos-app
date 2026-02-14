@@ -1,5 +1,22 @@
-import Link from "next/link";
+"use client";
+
 import React from "react";
+
+/* ----------------------------- utils ----------------------------- */
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function safeOnChangeValue(
+  onChange?: ((v: string) => void) | undefined,
+  e?: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+) {
+  if (!onChange || !e) return;
+  onChange(e.target.value);
+}
+
+/* ----------------------------- PageHeader ----------------------------- */
 
 export function PageHeader({
   title,
@@ -12,191 +29,166 @@ export function PageHeader({
 }) {
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-      <div>
-        <h1 className="text-lg md:text-xl font-semibold text-slate-900">{title}</h1>
-        {subtitle ? <p className="mt-1 text-sm text-slate-500">{subtitle}</p> : null}
+      <div className="min-w-0">
+        <div className="text-lg font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
       </div>
-      {right ? <div className="flex items-center gap-2">{right}</div> : null}
+      {right ? <div className="flex items-center justify-end gap-2">{right}</div> : null}
     </div>
   );
 }
+
+/* ----------------------------- Card ----------------------------- */
 
 export function Card({
-  children,
   title,
-  subtitle,
-  right,
+  children,
+  className,
 }: {
-  children: React.ReactNode;
   title?: string;
-  subtitle?: string;
-  right?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      {title || subtitle || right ? (
-        <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-4 md:px-6">
-          <div>
-            {title ? <div className="text-sm font-semibold text-slate-900">{title}</div> : null}
-            {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
-          </div>
-          {right ? <div className="flex items-center gap-2">{right}</div> : null}
+    <div className={cn("rounded-2xl border border-slate-200 bg-white shadow-sm", className)}>
+      {title ? (
+        <div className="border-b border-slate-200 px-4 py-3 md:px-6">
+          <div className="text-sm font-semibold text-slate-900">{title}</div>
         </div>
       ) : null}
-      <div className="p-4 md:p-6">{children}</div>
+      <div className={cn("p-4 md:p-6", title ? "" : "")}>{children}</div>
     </div>
   );
 }
 
-export function StatCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="text-xs font-semibold text-slate-500">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
-      {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
-    </div>
-  );
-}
+/* ----------------------------- Button ----------------------------- */
+
+type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
 export function Button({
   children,
-  href,
+  className,
   variant = "primary",
-  type = "button",
-  onClick,
-  disabled,
-  title,
-}: {
-  children: React.ReactNode;
-  href?: string;
-  variant?: "primary" | "secondary" | "ghost" | "danger";
-  type?: "button" | "submit";
-  onClick?: () => void;
-  disabled?: boolean;
-  title?: string;
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant;
 }) {
-  const cls =
-    variant === "primary"
-      ? "bg-blue-600 text-white hover:bg-blue-700"
-      : variant === "secondary"
-      ? "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-      : variant === "danger"
-      ? "bg-red-600 text-white hover:bg-red-700"
-      : "text-slate-700 hover:bg-slate-100";
-
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-60 disabled:cursor-not-allowed";
+    "inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed";
 
-  if (href) {
-    return (
-      <Link href={href} className={`${base} ${cls}`} title={title}>
-        {children}
-      </Link>
-    );
-  }
+  const styles: Record<ButtonVariant, string> = {
+    primary: "bg-slate-900 text-white hover:bg-slate-800",
+    secondary: "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+    danger: "bg-red-600 text-white hover:bg-red-700",
+    ghost: "bg-transparent text-slate-700 hover:bg-slate-100",
+  };
 
   return (
-    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${cls}`} title={title}>
+    <button className={cn(base, styles[variant], className)} {...props}>
       {children}
     </button>
   );
 }
 
+/* ----------------------------- Badge ----------------------------- */
+
+export type BadgeTone = "neutral" | "slate" | "blue" | "green" | "yellow" | "red";
+
+export function Badge({
+  children,
+  tone = "neutral",
+  className,
+}: {
+  children: React.ReactNode;
+  tone?: BadgeTone;
+  className?: string;
+}) {
+  const base = "inline-flex items-center rounded-xl px-2.5 py-1 text-xs font-semibold";
+
+  const tones: Record<BadgeTone, string> = {
+    neutral: "bg-slate-100 text-slate-700",
+    slate: "bg-slate-100 text-slate-700",
+    blue: "bg-blue-50 text-blue-700",
+    green: "bg-green-50 text-green-700",
+    yellow: "bg-amber-50 text-amber-800",
+    red: "bg-red-50 text-red-700",
+  };
+
+  return <span className={cn(base, tones[tone], className)}>{children}</span>;
+}
+
+/* ----------------------------- Input ----------------------------- */
+/**
+ * Aceita props nativas (type, maxLength, inputMode, etc).
+ * Se você passar onChange como (v:string)=>void, ele funciona.
+ */
 export function Input({
   label,
-  placeholder,
   value,
   onChange,
-  type = "text",
-}: {
+  className,
+  ...rest
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value"> & {
   label?: string;
-  placeholder?: string;
   value: string;
   onChange: (v: string) => void;
-  type?: string;
 }) {
   return (
-    <label className="block">
-      {label ? <div className="mb-1 text-xs font-semibold text-slate-600">{label}</div> : null}
+    <div className="grid gap-1">
+      {label ? <div className="text-xs font-semibold text-slate-600">{label}</div> : null}
       <input
-        type={type}
         value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+        onChange={(e) => safeOnChangeValue(onChange, e)}
+        className={cn(
+          "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none",
+          className
+        )}
+        {...rest}
       />
-    </label>
+    </div>
   );
 }
+
+/* ----------------------------- Select ----------------------------- */
 
 export function Select({
   label,
   value,
   onChange,
   options,
-}: {
+  className,
+  ...rest
+}: Omit<React.SelectHTMLAttributes<HTMLSelectElement>, "onChange" | "value"> & {
   label?: string;
   value: string;
   onChange: (v: string) => void;
-  options?: { value: string; label: string }[]; // ✅ opcional
+  options: Array<{ value: string; label: string }>;
 }) {
-  const safeOptions = Array.isArray(options) ? options : []; // ✅ evita .map em undefined
-
   return (
-    <label className="block">
-      {label ? <div className="mb-1 text-xs font-semibold text-slate-600">{label}</div> : null}
+    <div className="grid gap-1">
+      {label ? <div className="text-xs font-semibold text-slate-600">{label}</div> : null}
       <select
         value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+        onChange={(e) => safeOnChangeValue(onChange, e)}
+        className={cn(
+          "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none",
+          className
+        )}
+        {...rest}
       >
-        {safeOptions.map((o) => (
+        {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
       </select>
-    </label>
+    </div>
   );
 }
 
-/** ✅ Agora aceita "slate" também (resolve seu deploy) */
-export function Badge({
-  children,
-  tone = "neutral",
-}: {
-  children: React.ReactNode;
-  tone?: "neutral" | "slate" | "blue" | "green" | "yellow" | "red";
-}) {
-  const cls =
-    tone === "blue"
-      ? "bg-blue-50 text-blue-700 border-blue-100"
-      : tone === "green"
-      ? "bg-green-50 text-green-700 border-green-100"
-      : tone === "yellow"
-      ? "bg-amber-50 text-amber-700 border-amber-100"
-      : tone === "red"
-      ? "bg-red-50 text-red-700 border-red-100"
-      : // neutral e slate ficam iguais (padrão cinza)
-        "bg-slate-50 text-slate-700 border-slate-200";
+/* ----------------------------- DataTable ----------------------------- */
 
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${cls}`}>
-      {children}
-    </span>
-  );
-}
-
-/** ✅ Agora suporta clique na linha (resolve seu deploy) */
-export function Table({
+export function DataTable({
   headers,
   rows,
   onRowClick,
@@ -206,45 +198,46 @@ export function Table({
   onRowClick?: (idx: number) => void;
 }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-slate-50">
-          <tr>
+    <div className="overflow-x-auto">
+      <table className="w-full border-separate border-spacing-0">
+        <thead>
+          <tr className="text-left text-xs text-slate-600">
             {headers.map((h) => (
-              <th key={h} className="px-4 py-3 text-xs font-semibold text-slate-600">
+              <th
+                key={h}
+                className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2"
+              >
                 {h}
               </th>
             ))}
           </tr>
         </thead>
 
-        <tbody className="bg-white">
-          {rows.length === 0 ? (
-            <tr>
-              <td colSpan={headers.length} className="px-4 py-8 text-center text-sm text-slate-500">
-                Sem dados.
-              </td>
+        <tbody>
+          {rows.map((r, idx) => (
+            <tr
+              key={idx}
+              className={cn(
+                "hover:bg-slate-50",
+                onRowClick ? "cursor-pointer" : ""
+              )}
+              onClick={onRowClick ? () => onRowClick(idx) : undefined}
+            >
+              {r.map((cell, cIdx) => (
+                <td key={cIdx} className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                  {cell}
+                </td>
+              ))}
             </tr>
-          ) : (
-            rows.map((r, idx) => (
-              <tr
-                key={idx}
-                onClick={onRowClick ? () => onRowClick(idx) : undefined}
-                className={[
-                  "border-t border-slate-200",
-                  onRowClick ? "cursor-pointer hover:bg-slate-50" : "",
-                ].join(" ")}
-              >
-                {r.map((cell, cidx) => (
-                  <td key={cidx} className="px-4 py-3 text-slate-900">
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))
-          )}
+          ))}
         </tbody>
       </table>
     </div>
   );
 }
+
+/**
+ * ✅ Compatibilidade: permite importar "Table" sem quebrar build
+ * Ex.: import { Table } from "@/app/components/ui";
+ */
+export const Table = DataTable;
