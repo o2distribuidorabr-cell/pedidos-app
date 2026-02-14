@@ -39,24 +39,40 @@ export function PageHeader({
 }
 
 /* ----------------------------- Card ----------------------------- */
-
+/**
+ * ✅ Agora suporta title + subtitle + right (para não quebrar páginas existentes)
+ * Ex.: <Card title="..." subtitle="..." right={<Badge/>}>...</Card>
+ */
 export function Card({
   title,
+  subtitle,
+  right,
   children,
   className,
 }: {
   title?: string;
+  subtitle?: string;
+  right?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("rounded-2xl border border-slate-200 bg-white shadow-sm", className)}>
-      {title ? (
+      {title || subtitle || right ? (
         <div className="border-b border-slate-200 px-4 py-3 md:px-6">
-          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              {title ? <div className="text-sm font-semibold text-slate-900">{title}</div> : null}
+              {subtitle ? (
+                <div className="mt-0.5 text-xs text-slate-600">{subtitle}</div>
+              ) : null}
+            </div>
+            {right ? <div className="shrink-0">{right}</div> : null}
+          </div>
         </div>
       ) : null}
-      <div className={cn("p-4 md:p-6", title ? "" : "")}>{children}</div>
+
+      <div className="p-4 md:p-6">{children}</div>
     </div>
   );
 }
@@ -81,10 +97,7 @@ export function StatCard({
 }) {
   return (
     <div
-      className={cn(
-        "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6",
-        className
-      )}
+      className={cn("rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6", className)}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
