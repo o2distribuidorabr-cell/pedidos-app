@@ -61,6 +61,43 @@ export function Card({
   );
 }
 
+/* ----------------------------- StatCard ----------------------------- */
+/**
+ * ✅ Compatibilidade: permite importar "StatCard" sem quebrar build
+ * Ex.: import { StatCard } from "@/app/components/ui";
+ */
+export function StatCard({
+  title,
+  value,
+  subtitle,
+  right,
+  className,
+}: {
+  title: string;
+  value: React.ReactNode;
+  subtitle?: React.ReactNode;
+  right?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6",
+        className
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-slate-600">{title}</div>
+          <div className="mt-1 text-2xl font-semibold text-slate-900">{value}</div>
+          {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+        </div>
+        {right ? <div className="shrink-0">{right}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 /* ----------------------------- Button ----------------------------- */
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
@@ -217,10 +254,7 @@ export function DataTable({
           {rows.map((r, idx) => (
             <tr
               key={idx}
-              className={cn(
-                "hover:bg-slate-50",
-                onRowClick ? "cursor-pointer" : ""
-              )}
+              className={cn("hover:bg-slate-50", onRowClick ? "cursor-pointer" : "")}
               onClick={onRowClick ? () => onRowClick(idx) : undefined}
             >
               {r.map((cell, cIdx) => (
