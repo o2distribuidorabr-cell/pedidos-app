@@ -104,13 +104,7 @@ export function Button({
   }
 
   return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className={`${base} ${cls}`}
-      title={title}
-    >
+    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${cls}`} title={title}>
       {children}
     </button>
   );
@@ -148,15 +142,13 @@ export function Select({
   value,
   onChange,
   options,
-  placeholder,
 }: {
   label?: string;
   value: string;
   onChange: (v: string) => void;
-  options?: { value: string; label: string }[];
-  placeholder?: string;
+  options?: { value: string; label: string }[]; // ✅ opcional
 }) {
-  const safeOptions = Array.isArray(options) ? options : [];
+  const safeOptions = Array.isArray(options) ? options : []; // ✅ evita .map em undefined
 
   return (
     <label className="block">
@@ -166,8 +158,6 @@ export function Select({
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
       >
-        {placeholder ? <option value="">{placeholder}</option> : null}
-
         {safeOptions.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -178,6 +168,7 @@ export function Select({
   );
 }
 
+/** ✅ Agora aceita "slate" também (resolve seu deploy) */
 export function Badge({
   children,
   tone = "neutral",
@@ -185,19 +176,17 @@ export function Badge({
   children: React.ReactNode;
   tone?: "neutral" | "slate" | "blue" | "green" | "yellow" | "red";
 }) {
-  // "slate" = neutro (compatibilidade com suas páginas)
-  const t = tone === "slate" ? "neutral" : tone;
-
   const cls =
-    t === "blue"
+    tone === "blue"
       ? "bg-blue-50 text-blue-700 border-blue-100"
-      : t === "green"
+      : tone === "green"
       ? "bg-green-50 text-green-700 border-green-100"
-      : t === "yellow"
+      : tone === "yellow"
       ? "bg-amber-50 text-amber-700 border-amber-100"
-      : t === "red"
+      : tone === "red"
       ? "bg-red-50 text-red-700 border-red-100"
-      : "bg-slate-50 text-slate-700 border-slate-200";
+      : // neutral e slate ficam iguais (padrão cinza)
+        "bg-slate-50 text-slate-700 border-slate-200";
 
   return (
     <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${cls}`}>
@@ -206,12 +195,15 @@ export function Badge({
   );
 }
 
+/** ✅ Agora suporta clique na linha (resolve seu deploy) */
 export function Table({
   headers,
   rows,
+  onRowClick,
 }: {
   headers: string[];
   rows: React.ReactNode[][];
+  onRowClick?: (idx: number) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200">
@@ -225,6 +217,7 @@ export function Table({
             ))}
           </tr>
         </thead>
+
         <tbody className="bg-white">
           {rows.length === 0 ? (
             <tr>
@@ -234,7 +227,14 @@ export function Table({
             </tr>
           ) : (
             rows.map((r, idx) => (
-              <tr key={idx} className="border-t border-slate-200">
+              <tr
+                key={idx}
+                onClick={onRowClick ? () => onRowClick(idx) : undefined}
+                className={[
+                  "border-t border-slate-200",
+                  onRowClick ? "cursor-pointer hover:bg-slate-50" : "",
+                ].join(" ")}
+              >
                 {r.map((cell, cidx) => (
                   <td key={cidx} className="px-4 py-3 text-slate-900">
                     {cell}
