@@ -40,8 +40,8 @@ export function PageHeader({
 
 /* ----------------------------- Card ----------------------------- */
 /**
- * ✅ Agora suporta title + subtitle + right (para não quebrar páginas existentes)
- * Ex.: <Card title="..." subtitle="..." right={<Badge/>}>...</Card>
+ * ✅ Suporta title/subtitle como ReactNode (string ou JSX)
+ * Ex.: <Card title={<span>...</span>} subtitle="..." right={<Badge/>}>...</Card>
  */
 export function Card({
   title,
@@ -50,8 +50,8 @@ export function Card({
   children,
   className,
 }: {
-  title?: string;
-  subtitle?: string;
+  title?: React.ReactNode;
+  subtitle?: React.ReactNode;
   right?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
@@ -79,30 +79,41 @@ export function Card({
 
 /* ----------------------------- StatCard ----------------------------- */
 /**
- * ✅ Compatibilidade: permite importar "StatCard" sem quebrar build
- * Ex.: import { StatCard } from "@/app/components/ui";
+ * ✅ Compatibilidade:
+ * - aceita `title` (novo padrão)
+ * - aceita `label` (padrão antigo usado em páginas)
+ *
+ * Ex.:
+ * <StatCard title="Entradas" value="..." />
+ * <StatCard label="Entradas" value="..." />
  */
 export function StatCard({
   title,
+  label,
   value,
   subtitle,
   right,
   className,
 }: {
-  title: string;
+  title?: React.ReactNode;
+  label?: React.ReactNode;
   value: React.ReactNode;
   subtitle?: React.ReactNode;
   right?: React.ReactNode;
   className?: string;
 }) {
+  const head = title ?? label;
+
   return (
     <div
       className={cn("rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6", className)}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-xs font-semibold text-slate-600">{title}</div>
-          <div className="mt-1 text-2xl font-semibold text-slate-900">{value}</div>
+          {head ? <div className="text-xs font-semibold text-slate-600">{head}</div> : null}
+          <div className={cn("mt-1 text-2xl font-semibold text-slate-900", head ? "" : "mt-0")}>
+            {value}
+          </div>
           {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
         </div>
         {right ? <div className="shrink-0">{right}</div> : null}
@@ -113,7 +124,7 @@ export function StatCard({
 
 /* ----------------------------- Button ----------------------------- */
 
-type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
+type ButtonVariant = "primary" | "secondary" | "danger" | "warn" | "ghost";
 
 export function Button({
   children,
@@ -130,6 +141,7 @@ export function Button({
     primary: "bg-slate-900 text-white hover:bg-slate-800",
     secondary: "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
     danger: "bg-red-600 text-white hover:bg-red-700",
+    warn: "bg-amber-500 text-white hover:bg-amber-600",
     ghost: "bg-transparent text-slate-700 hover:bg-slate-100",
   };
 
@@ -168,10 +180,7 @@ export function Badge({
 }
 
 /* ----------------------------- Input ----------------------------- */
-/**
- * Aceita props nativas (type, maxLength, inputMode, etc).
- * Se você passar onChange como (v:string)=>void, ele funciona.
- */
+
 export function Input({
   label,
   value,
@@ -285,6 +294,5 @@ export function DataTable({
 
 /**
  * ✅ Compatibilidade: permite importar "Table" sem quebrar build
- * Ex.: import { Table } from "@/app/components/ui";
  */
 export const Table = DataTable;
