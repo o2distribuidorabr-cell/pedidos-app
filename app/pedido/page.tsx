@@ -1,21 +1,18 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import FranchiseeTopbar from "@/app/components/FranchiseeTopbar";
+import PortalShell from "@/app/components/PortalShell";
+
+import { PageHeader, Card, Button, Badge, Input } from "@/app/components/ui";
 
 type Product = {
   id: string;
   sku: string;
   name: string;
-  unit: string | null; // ex: "cx", "kg", "un"
-
-  // vamos usar unit_cost como "preço efetivo" para não quebrar seu carrinho
-  unit_cost: number | null;
-
-  // extra (opcional) só pra debug/UI, se quiser
+  unit: string | null;
+  unit_cost: number | null; // preço efetivo (override ou base)
   base_price?: number | null;
   override_price?: number | null;
 };
@@ -25,7 +22,7 @@ type CartItem = {
   sku: string;
   name: string;
   unit: string;
-  unit_cost: number; // preço efetivo
+  unit_cost: number;
   qty: number;
 };
 
@@ -67,16 +64,17 @@ function money(v: number) {
 
 export default function PedidoPage() {
   const router = useRouter();
+
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<string>("");
 
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<Record<string, CartItem>>({});
 
-  // entrega + frete padrão da loja
   const [deliveryMode, setDeliveryMode] = useState<"RETIRADA" | "FRETE">("RETIRADA");
   const [freightFee, setFreightFee] = useState<number>(0);
   const [storeName, setStoreName] = useState<string>("-");
+  const [storeId, setStoreId] = useState<string | null>(null);
 
   const itemsTotal = useMemo(() => {
     return Object.values(cart).reduce((acc, it) => acc + it.qty * it.unit_cost, 0);
@@ -100,11 +98,7 @@ export default function PedidoPage() {
       }
 
       // 1) store_id do profile
-      const { data: profile, error: pErr } = await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", auth.user.id)
-        .maybeSingle();
+      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", auth.user.id).maybeSingle();
 
       if (pErr) {
         setLoading(false);
@@ -112,19 +106,17 @@ export default function PedidoPage() {
         return;
       }
 
-      const storeId = (profile?.store_id as string | null) ?? null;
-      if (!storeId) {
+      const sId = (profile?.store_id as string | null) ?? null;
+      setStoreId(sId);
+
+      if (!sId) {
         setLoading(false);
         setMsg("Seu usuário não está vinculado a nenhuma loja (profiles.store_id).");
         return;
       }
 
       // 2) frete padrão da loja
-      const { data: store, error: sErr } = await supabase
-        .from("stores")
-        .select("id,name,freight_fee")
-        .eq("id", storeId)
-        .maybeSingle();
+      const { data: store, error: sErr } = await supabase.from("stores").select("id,name,freight_fee").eq("id", sId).maybeSingle();
 
       if (sErr || !store) {
         setLoading(false);
@@ -134,9 +126,9 @@ export default function PedidoPage() {
 
       const st = store as StoreRow;
       setStoreName(st.name ?? "-");
-      setFreightFee(Number(st.freight_fee ?? 0));
+      setFreightFee(Number(st.freight_fee ?? 0) || 0);
 
-      // 3) buscar produtos (preço padrão)
+      // 3) produtos (preço padrão)
       const { data: prodData, error: prodErr } = await supabase
         .from("products")
         .select("id, sku, name, unit, unit_price, active")
@@ -149,11 +141,8 @@ export default function PedidoPage() {
         return;
       }
 
-      // 4) buscar overrides da loja (preço por loja)
-      const { data: ovData, error: ovErr } = await supabase
-        .from("store_product_prices")
-        .select("product_id, unit_price")
-        .eq("store_id", storeId);
+      // 4) overrides da loja (preço por loja)
+      const { data: ovData, error: ovErr } = await supabase.from("store_product_prices").select("product_id, unit_price").eq("store_id", sId);
 
       if (ovErr) {
         setLoading(false);
@@ -168,8 +157,7 @@ export default function PedidoPage() {
         if (Number.isFinite(v) && v > 0) ovMap[String(r.product_id)] = v;
       });
 
-      // 5) montar lista final com preço efetivo:
-      // effective = override (se existir) senão unit_price do produto
+      // 5) merge preço efetivo
       const merged: Product[] = (prodData ?? []).map((p: any) => {
         const base = Number(p.unit_price ?? 0) || 0;
         const ov = ovMap[p.id];
@@ -189,11 +177,13 @@ export default function PedidoPage() {
       setProducts(merged);
       setLoading(false);
     })();
-  }, [router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function setQty(prod: Product, qtyRaw: number) {
     const unit = (prod.unit ?? "un").toString();
-    const unit_cost = Number(prod.unit_cost ?? 0);
+    const unit_cost = Number(prod.unit_cost ?? 0) || 0;
+
     const step = getStep(prod.sku);
     const qty = Math.max(0, roundToStep(qtyRaw, step));
 
@@ -244,256 +234,166 @@ export default function PedidoPage() {
   }
 
   return (
-    <main style={styles.main}>
-      <FranchiseeTopbar />
-
-      {/* Cabeçalho */}
-      <div style={styles.card}>
-        <div style={styles.pageHeader}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Novo pedido</h1>
-            <div style={{ marginTop: 6, color: "#555" }}>
-              Selecione as quantidades. Algumas quantidades são travadas por caixa/lote.
+    <PortalShell title="Novo pedido" subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Selecione as quantidades"}>
+      <div className="space-y-4">
+        <PageHeader
+          title="Novo pedido"
+          subtitle={
+            storeName && storeName !== "-"
+              ? `Selecione as quantidades. Loja: ${storeName}`
+              : "Selecione as quantidades. Algumas quantidades são travadas por caixa/lote."
+          }
+          right={
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => router.push("/pedidos")}>
+                Histórico
+              </Button>
+              <Button onClick={onContinue} disabled={!hasItems}>
+                Continuar ({money(grandTotal)})
+              </Button>
             </div>
-            <div style={{ marginTop: 6, color: "#777", fontSize: 12 }}>
-              Loja: <b>{storeName}</b>
-            </div>
-          </div>
+          }
+        />
 
-          <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <Link href="/pedidos" style={styles.linkBtn}>
-              Histórico
-            </Link>
+        {msg ? (
+          <Card title="Erro">
+            <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+          </Card>
+        ) : null}
 
-            <button
-              style={{ ...styles.primaryBtn, opacity: hasItems ? 1 : 0.5, cursor: hasItems ? "pointer" : "not-allowed" }}
-              onClick={onContinue}
-              disabled={!hasItems}
-              title={!hasItems ? "Selecione algum item" : "Continuar"}
-            >
-              Continuar → Confirmar ({money(grandTotal)})
-            </button>
-          </div>
-        </div>
-      </div>
+        {loading ? (
+          <Card>
+            <div className="text-sm text-slate-600">Carregando...</div>
+          </Card>
+        ) : null}
 
-      {loading ? <div style={styles.card}>Carregando...</div> : null}
-      {msg ? <div style={{ ...styles.card, ...styles.err }}>{msg}</div> : null}
+        {!loading && !msg ? (
+          <Card title="Entrega" subtitle="O frete é o valor padrão cadastrado para a sua loja.">
+            <div className="flex flex-wrap items-center gap-3">
+              <Button variant={deliveryMode === "RETIRADA" ? "primary" : "secondary"} onClick={() => setDeliveryMode("RETIRADA")}>
+                Retirada
+              </Button>
+              <Button variant={deliveryMode === "FRETE" ? "primary" : "secondary"} onClick={() => setDeliveryMode("FRETE")}>
+                Frete
+              </Button>
 
-      {/* Entrega */}
-      {!loading && !msg ? (
-        <div style={styles.card}>
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-            <div style={{ fontWeight: 900, color: "#111" }}>Entrega</div>
-
-            <label style={styles.radio}>
-              <input type="radio" name="delivery" checked={deliveryMode === "RETIRADA"} onChange={() => setDeliveryMode("RETIRADA")} />
-              Retirada
-            </label>
-
-            <label style={styles.radio}>
-              <input type="radio" name="delivery" checked={deliveryMode === "FRETE"} onChange={() => setDeliveryMode("FRETE")} />
-              Frete
-            </label>
-
-            <div style={{ marginLeft: "auto", fontWeight: 900 }}>
-              Frete: {money(freightApplied)}
-            </div>
-          </div>
-
-          <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
-            Se escolher Frete, o valor é o frete padrão cadastrado para esta loja.
-          </div>
-        </div>
-      ) : null}
-
-      {/* Produtos */}
-      {!loading && !msg ? (
-        <div style={styles.card}>
-          <div style={styles.tableWrap}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  <th style={styles.th}>SKU</th>
-                  <th style={styles.th}>Nome</th>
-                  <th style={styles.th}>Unid.</th>
-                  <th style={styles.th}>Preço</th>
-                  <th style={styles.th}>Quantidade</th>
-                  <th style={styles.th}>Total</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {products.map((p) => {
-                  const unit = (p.unit ?? "un").toString();
-                  const unit_cost = Number(p.unit_cost ?? 0);
-                  const qty = cart[p.id]?.qty ?? 0;
-                  const step = getStep(p.sku);
-                  const lineTotal = qty * unit_cost;
-
-                  return (
-                    <tr key={p.id}>
-                      <td style={styles.tdMono}>{p.sku}</td>
-                      <td style={styles.td}>{p.name}</td>
-                      <td style={styles.td}>{unit}</td>
-                      <td style={styles.td}>{money(unit_cost)}</td>
-
-                      <td style={styles.td}>
-                        <div style={styles.qtyWrap}>
-                          <button style={styles.qtyBtn} onClick={() => dec(p)} type="button">-</button>
-                          <input
-                            style={styles.qtyInput}
-                            type="number"
-                            value={qty}
-                            step={step}
-                            min={0}
-                            onChange={(e) => setQty(p, Number(e.target.value))}
-                          />
-                          <button style={styles.qtyBtn} onClick={() => inc(p)} type="button">+</button>
-                        </div>
-                        <div style={styles.small}>
-                          passo: {step} {unit}
-                        </div>
-                      </td>
-
-                      <td style={styles.tdStrong}>{money(lineTotal)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div style={styles.footer}>
-            <div style={styles.totalBox}>
-              <div style={styles.small}>Itens</div>
-              <div style={{ fontSize: 16, fontWeight: 900 }}>{money(itemsTotal)}</div>
-
-              <div style={{ ...styles.small, marginTop: 6 }}>
-                Frete ({deliveryMode === "FRETE" ? "Frete" : "Retirada"})
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <span className="text-sm text-slate-600">Frete aplicado:</span>
+                <span className="font-semibold text-slate-900">{money(freightApplied)}</span>
+                {deliveryMode === "FRETE" ? <Badge tone="yellow">Frete</Badge> : <Badge tone="neutral">Retirada</Badge>}
               </div>
-              <div style={{ fontSize: 16, fontWeight: 900 }}>{money(freightApplied)}</div>
-
-              <hr style={{ border: 0, borderTop: "1px solid #eee", margin: "10px 0" }} />
-
-              <div style={styles.small}>Total do pedido</div>
-              <div style={{ fontSize: 22, fontWeight: 900 }}>{money(grandTotal)}</div>
             </div>
-          </div>
-        </div>
-      ) : null}
-    </main>
+
+            <div className="mt-2 text-xs text-slate-500">
+              Quantidades com <b>passo</b> são travadas por caixa/lote (ex.: 216, 120, etc.).
+            </div>
+          </Card>
+        ) : null}
+
+        {!loading && !msg ? (
+          <Card title={`Produtos (${products.length})`} subtitle="Use + / - ou digite a quantidade.">
+            {products.length === 0 ? (
+              <div className="text-sm text-slate-600">Nenhum produto ativo.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-separate border-spacing-0">
+                  <thead>
+                    <tr className="text-left text-xs text-slate-600">
+                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Nome</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Quantidade</th>
+                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {products.map((p) => {
+                      const unit = (p.unit ?? "un").toString();
+                      const unit_cost = Number(p.unit_cost ?? 0) || 0;
+                      const qty = cart[p.id]?.qty ?? 0;
+                      const step = getStep(p.sku);
+                      const lineTotal = qty * unit_cost;
+
+                      return (
+                        <tr key={p.id} className="hover:bg-slate-50">
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                            <div className="font-mono text-xs text-slate-600">{p.sku}</div>
+                          </td>
+
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                            <div className="text-sm font-semibold text-slate-900">{p.name}</div>
+                            <div className="mt-1 text-xs text-slate-500">{p.id}</div>
+                          </td>
+
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">{unit}</td>
+
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
+                            {money(unit_cost)}
+                          </td>
+
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button variant="secondary" onClick={() => dec(p)} disabled={qty <= 0}>
+                                -
+                              </Button>
+
+                              <input
+                                className="w-[140px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold text-slate-900 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+                                type="number"
+                                value={qty}
+                                step={step}
+                                min={0}
+                                onChange={(e) => setQty(p, Number(e.target.value))}
+                              />
+
+                              <Button variant="secondary" onClick={() => inc(p)}>
+                                +
+                              </Button>
+                            </div>
+
+                            <div className="mt-1 text-xs text-slate-500">
+                              passo: <b>{step}</b> {unit}
+                            </div>
+                          </td>
+
+                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                            {money(lineTotal)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="mt-4 flex justify-end">
+              <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-slate-50 p-4 text-right">
+                <div className="text-xs font-semibold text-slate-600">Itens</div>
+                <div className="text-base font-semibold text-slate-900">{money(itemsTotal)}</div>
+
+                <div className="mt-3 text-xs font-semibold text-slate-600">
+                  Frete ({deliveryMode === "FRETE" ? "Frete" : "Retirada"})
+                </div>
+                <div className="text-base font-semibold text-slate-900">{money(freightApplied)}</div>
+
+                <div className="my-3 h-px bg-slate-200" />
+
+                <div className="text-xs font-semibold text-slate-600">Total do pedido</div>
+                <div className="text-2xl font-semibold text-slate-900">{money(grandTotal)}</div>
+
+                <div className="mt-3 flex justify-end">
+                  <Button onClick={onContinue} disabled={!hasItems}>
+                    Continuar
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </Card>
+        ) : null}
+      </div>
+    </PortalShell>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto 12px",
-  },
-
-  pageHeader: { display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" },
-
-  err: {
-    background: "#fff2f2",
-    borderColor: "#ffd0d0",
-    color: "#a40000",
-  },
-
-  linkBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    textDecoration: "none",
-    color: "#111",
-    fontWeight: 900,
-  },
-
-  primaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-
-  tableWrap: { overflowX: "auto" },
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-
-  td: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    verticalAlign: "top",
-    whiteSpace: "nowrap",
-  },
-
-  tdStrong: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontWeight: 900,
-    whiteSpace: "nowrap",
-  },
-
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    color: "#111",
-    whiteSpace: "nowrap",
-  },
-
-  qtyWrap: { display: "flex", alignItems: "center", gap: 6 },
-  qtyBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-  qtyInput: {
-    width: 110,
-    padding: "8px 10px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    outline: "none",
-    fontSize: 14,
-    textAlign: "right",
-  },
-
-  small: { marginTop: 4, fontSize: 12, color: "#777", fontWeight: 700 },
-
-  footer: { display: "flex", justifyContent: "flex-end", marginTop: 12 },
-  totalBox: {
-    padding: 12,
-    borderRadius: 12,
-    border: "1px solid #eee",
-    background: "#fbfbff",
-    minWidth: 260,
-    textAlign: "right",
-  },
-
-  radio: { display: "flex", gap: 8, alignItems: "center", fontWeight: 900, color: "#111" },
-};

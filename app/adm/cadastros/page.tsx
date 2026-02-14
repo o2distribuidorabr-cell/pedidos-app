@@ -5,21 +5,20 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 
+import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
+
 type StoreRow = { id: string; name: string };
 
 type SignupRow = {
   id: string;
   user_id: string;
   email: string;
-
   franchisee_name: string;
   phone: string | null;
-
   store_name: string;
   cnpj: string | null;
   city: string | null;
   state: string | null;
-
   status: "pending" | "approved" | "rejected";
   created_at: string;
   decided_at: string | null;
@@ -38,18 +37,18 @@ function fmtDT(iso: string | null | undefined) {
 export default function AdmCadastrosPage() {
   const router = useRouter();
 
-  const [userEmail, setUserEmail] = useState("-");
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
 
   const [requests, setRequests] = useState<SignupRow[]>([]);
-  const [stores, setStores] = useState<StoreRow[]>([]);
+  const [stores, setStores] = useState<StoreRow[]>([]); // ✅ corrigido aqui
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "all">("pending");
+  const [statusFilter, setStatusFilter] = useState<
+    "pending" | "approved" | "rejected" | "all"
+  >("pending");
 
-  // seleção de loja por request
-  const [storePick, setStorePick] = useState<Record<string, string>>({}); // requestId -> storeId
+  const [storePick, setStorePick] = useState<Record<string, string>>({});
 
   async function loadRequests() {
     setMsg("");
@@ -70,29 +69,19 @@ export default function AdmCadastrosPage() {
     const rows = (data ?? []) as SignupRow[];
     setRequests(rows);
 
-    // preenche storePick com vazio (se não existir)
     setStorePick((prev) => {
       const next = { ...prev };
-      for (const r of rows) {
-        if (!(r.id in next)) next[r.id] = "";
-      }
+      for (const r of rows) if (!(r.id in next)) next[r.id] = "";
       return next;
     });
   }
 
   async function bootstrap() {
-    setMsg("");
     setLoading(true);
 
-    // ✅ bloqueia não-admin
     const ok = await requireAdminOrRedirect(router);
     if (!ok) return;
 
-    // email do usuário (apenas para exibir)
-    const { data: auth } = await supabase.auth.getUser();
-    setUserEmail(auth?.user?.email ?? "-");
-
-    // carrega stores pro dropdown
     const { data: st, error: stErr } = await supabase
       .from("stores")
       .select("id,name")
@@ -111,11 +100,12 @@ export default function AdmCadastrosPage() {
 
   useEffect(() => {
     bootstrap();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, []);
 
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
+
     return requests.filter((r) => {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
 
@@ -134,6 +124,7 @@ export default function AdmCadastrosPage() {
 
         if (!blob.includes(qq)) return false;
       }
+
       return true;
     });
   }, [requests, q, statusFilter]);
@@ -149,10 +140,7 @@ export default function AdmCadastrosPage() {
 
     const { data: auth } = await supabase.auth.getUser();
     const adminId = auth?.user?.id;
-    if (!adminId) {
-      router.push("/login");
-      return;
-    }
+    if (!adminId) return router.push("/login");
 
     // 1) aprova no profiles
     const { error: pErr } = await supabase
@@ -192,12 +180,8 @@ export default function AdmCadastrosPage() {
 
     const { data: auth } = await supabase.auth.getUser();
     const adminId = auth?.user?.id;
-    if (!adminId) {
-      router.push("/login");
-      return;
-    }
+    if (!adminId) return router.push("/login");
 
-    // rejeita request
     const { error: rErr } = await supabase
       .from("signup_requests")
       .update({
@@ -222,269 +206,133 @@ export default function AdmCadastrosPage() {
   }
 
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        {/* TOPBAR (sem menu) */}
-        <div style={styles.topbar}>
-          <div>
-            <div style={styles.smallMuted}>Usuário</div>
-            <div style={styles.topValue}>{userEmail}</div>
-          </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Cadastros"
+        subtitle="Aprovar ou rejeitar solicitações de franqueados"
+        right={
+          <Button variant="secondary" onClick={loadRequests}>
+            Atualizar
+          </Button>
+        }
+      />
 
-          <div>
-            <div style={styles.smallMuted}>Portal</div>
-            <div style={styles.topValue}>Administrativo</div>
-          </div>
-
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <button style={styles.secondaryBtn} onClick={loadRequests}>
-              Atualizar
-            </button>
-          </div>
-        </div>
-
-        <hr style={styles.hr} />
-
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20 }}>Cadastros</h1>
-            <div style={{ fontSize: 13, opacity: 0.7 }}>Aprovar/rejeitar solicitações e vincular loja ao franqueado.</div>
-          </div>
-        </div>
-
-        {/* filtros */}
-        <div style={styles.filters}>
-          <input
+      <Card>
+        <div className="grid gap-3 md:grid-cols-2">
+          <Input
+            label="Buscar"
+            placeholder="Email, nome, loja ou CNPJ"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por email, nome, loja, CNPJ..."
-            style={styles.input}
+            onChange={setQ}
           />
 
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as any)} style={styles.select}>
-            <option value="pending">Pendentes</option>
-            <option value="approved">Aprovados</option>
-            <option value="rejected">Rejeitados</option>
-            <option value="all">Todos</option>
-          </select>
+          <Select
+            label="Status"
+            value={statusFilter}
+            onChange={(v) => setStatusFilter(v as any)}
+            options={[
+              { value: "pending", label: "Pendentes" },
+              { value: "approved", label: "Aprovados" },
+              { value: "rejected", label: "Rejeitados" },
+              { value: "all", label: "Todos" },
+            ]}
+          />
         </div>
+      </Card>
 
-        {loading ? <div style={{ marginTop: 12 }}>Carregando...</div> : null}
-        {msg ? <div style={{ marginTop: 12, ...styles.msgBox }}>{msg}</div> : null}
+      {msg && (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      )}
 
-        {!loading && filtered.length === 0 ? <div style={{ marginTop: 12, color: "#666" }}>Nada encontrado.</div> : null}
+      <div className="space-y-4">
+        {loading && <Card>Carregando...</Card>}
 
-        {!loading && filtered.length > 0 ? (
-          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            {filtered.map((r) => {
-              const isPending = r.status === "pending";
-              return (
-                <div key={r.id} style={styles.rowCard}>
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 900,
-                        fontSize: 14,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {r.franchisee_name} — {r.email}
-                    </div>
+        {!loading && filtered.length === 0 && (
+          <Card>Nenhuma solicitação encontrada.</Card>
+        )}
 
-                    <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
-                      <b>Solicitou loja:</b> {r.store_name}
-                      {r.city || r.state ? (
-                        <>
-                          {" "}
-                          · {r.city ?? ""} {r.state ? `/${r.state}` : ""}
-                        </>
-                      ) : null}
-                      {r.cnpj ? (
-                        <>
-                          {" "}
-                          · <b>CNPJ:</b> {r.cnpj}
-                        </>
-                      ) : null}
-                      {r.phone ? (
-                        <>
-                          {" "}
-                          · <b>Tel:</b> {r.phone}
-                        </>
-                      ) : null}
-                    </div>
+        {filtered.map((r) => {
+          const isPending = r.status === "pending";
 
-                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
-                      <b>Status:</b> {r.status} · <b>Criado:</b> {fmtDT(r.created_at)}
-                      {r.decided_at ? (
-                        <>
-                          {" "}
-                          · <b>Decidido:</b> {fmtDT(r.decided_at)}
-                        </>
-                      ) : null}
-                    </div>
-
-                    <div
-                      style={{
-                        fontSize: 12,
-                        opacity: 0.6,
-                        marginTop: 6,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      user_id: {r.user_id}
-                    </div>
+          return (
+            <Card
+              key={r.id}
+              title={`${r.franchisee_name} — ${r.email}`}
+              subtitle={`Criado em ${fmtDT(r.created_at)}`}
+              right={
+                <Badge
+                  tone={
+                    r.status === "approved"
+                      ? "green"
+                      : r.status === "rejected"
+                      ? "red"
+                      : "yellow"
+                  }
+                >
+                  {r.status}
+                </Badge>
+              }
+            >
+              <div className="grid gap-4 md:grid-cols-[1fr_320px]">
+                <div className="text-sm text-slate-700 space-y-1">
+                  <div>
+                    <b>Loja solicitada:</b> {r.store_name}
                   </div>
+                  <div>
+                    <b>Cidade:</b> {r.city ?? "-"} {r.state ?? ""}
+                  </div>
+                  <div>
+                    <b>CNPJ:</b> {r.cnpj ?? "-"}
+                  </div>
+                  <div>
+                    <b>Telefone:</b> {r.phone ?? "-"}
+                  </div>
+                  <div className="text-xs text-slate-500">user_id: {r.user_id}</div>
 
-                  {/* ações */}
-                  <div style={styles.actionsCol}>
-                    <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>Vincular loja (stores)</div>
-
-                    <select
-                      value={storePick[r.id] ?? ""}
-                      disabled={!isPending}
-                      onChange={(e) => setStorePick((p) => ({ ...p, [r.id]: e.target.value }))}
-                      style={{
-                        ...styles.selectFull,
-                        background: !isPending ? "#f9fafb" : "white",
-                      }}
-                    >
-                      <option value="">Selecione...</option>
-                      {stores.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
-
-                    <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                      <button
-                        style={{ ...styles.btnDanger, opacity: isPending ? 1 : 0.5 }}
-                        disabled={!isPending}
-                        onClick={() => rejectRequest(r)}
-                      >
-                        Rejeitar
-                      </button>
-
-                      <button
-                        style={{ ...styles.btnOk, opacity: isPending ? 1 : 0.5 }}
-                        disabled={!isPending}
-                        onClick={() => approveRequest(r)}
-                      >
-                        Aprovar
-                      </button>
+                  {r.decided_at ? (
+                    <div className="text-xs text-slate-500">
+                      Decidido em: {fmtDT(r.decided_at)}
                     </div>
+                  ) : null}
+                </div>
+
+                <div className="space-y-2">
+                  <Select
+                    label="Vincular loja"
+                    value={storePick[r.id] ?? ""}
+                    onChange={(v) =>
+                      setStorePick((p) => ({ ...p, [r.id]: v }))
+                    }
+                    options={[
+                      { value: "", label: "Selecione..." },
+                      ...stores.map((s) => ({ value: s.id, label: s.name })),
+                    ]}
+                  />
+
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="danger"
+                      disabled={!isPending}
+                      onClick={() => rejectRequest(r)}
+                    >
+                      Rejeitar
+                    </Button>
+
+                    <Button
+                      disabled={!isPending}
+                      onClick={() => approveRequest(r)}
+                    >
+                      Aprovar
+                    </Button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        ) : null}
+              </div>
+            </Card>
+          );
+        })}
       </div>
-    </main>
+    </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto",
-  },
-
-  topbar: { display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" },
-  smallMuted: { fontSize: 12, color: "#777", fontWeight: 700 },
-  topValue: { fontSize: 14, fontWeight: 900, color: "#111" },
-  hr: { border: 0, borderTop: "1px solid #eee", margin: "12px 0" },
-
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-
-  filters: {
-    display: "grid",
-    gridTemplateColumns: "1fr 220px",
-    gap: 10,
-    alignItems: "center",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-    marginTop: 12,
-  },
-
-  input: {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    outline: "none",
-  },
-  select: {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-  },
-  selectFull: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-  },
-
-  msgBox: {
-    padding: 10,
-    background: "#fff2f2",
-    border: "1px solid #ffd0d0",
-    borderRadius: 10,
-    color: "#a40000",
-    fontSize: 13,
-  },
-
-  rowCard: {
-    display: "grid",
-    gridTemplateColumns: "1fr 380px",
-    gap: 12,
-    alignItems: "start",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-  },
-
-  actionsCol: {
-    borderLeft: "1px solid #f0f0f0",
-    paddingLeft: 12,
-  },
-
-  btnOk: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #0f6b2e",
-    background: "#eafff1",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-  btnDanger: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ffd0d0",
-    background: "#fff2f2",
-    cursor: "pointer",
-    fontWeight: 900,
-    color: "#a40000",
-  },
-};

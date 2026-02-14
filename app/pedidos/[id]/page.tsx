@@ -4,6 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+import PortalShell from "@/app/components/PortalShell";
+import { PageHeader, Card, Button, Badge } from "@/app/components/ui";
+
 type OrderRow = {
   id: string;
   store_id: string | null;
@@ -26,8 +29,6 @@ type OrderRow = {
 
 type ProductRow = { sku: string | null; name: string | null; unit: string | null };
 
-// ✅ Aqui está o ponto: em alguns casos o Supabase devolve `products` como ARRAY.
-// Então aceitamos: ProductRow | ProductRow[] | null
 type ItemRow = {
   id: string;
   qty: number;
@@ -37,19 +38,45 @@ type ItemRow = {
   products: ProductRow | ProductRow[] | null;
 };
 
-function fmtBRL(v: number) {
-  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+function money(n: number) {
+  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
+
 function fmtDT(v: string | null | undefined) {
   if (!v) return "-";
   try {
     return new Date(v).toLocaleString("pt-BR");
   } catch {
-    return v;
+    return String(v);
   }
 }
 
-// ✅ Normaliza products para SEMPRE virar 1 objeto (ou null)
+function logisticLabel(v: OrderRow["logistic_status"]) {
+  if (v === "RECEBIDO") return "Recebido";
+  if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "ENTREGUE") return "Entregue";
+  return "—";
+}
+
+function deliveryLabel(v: OrderRow["delivery_mode"]) {
+  return v === "FRETE" ? "Frete" : "Retirada";
+}
+
+function statusTone(status: string): "green" | "red" | "yellow" | "neutral" {
+  const s = (status || "").toLowerCase();
+  if (s === "approved") return "green";
+  if (s === "rejected") return "red";
+  if (s === "submitted") return "yellow";
+  return "neutral";
+}
+
+function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neutral" {
+  if (v === "ENTREGUE") return "green";
+  if (v === "EM_SEPARACAO") return "yellow";
+  return "neutral";
+}
+
+// Normaliza products para SEMPRE virar 1 objeto (ou null)
 function getProduct(p: ItemRow["products"]): ProductRow | null {
   if (!p) return null;
   if (Array.isArray(p)) return p[0] ?? null;
@@ -58,10 +85,13 @@ function getProduct(p: ItemRow["products"]): ProductRow | null {
 
 export default function PedidoDetalhePage() {
   const router = useRouter();
-  const params = useParams<{ id: string }>();
-  const orderId = params?.id;
+  const params = useParams();
+
+  const rawId = (params as any)?.id as string | string[] | undefined;
+  const orderId = Array.isArray(rawId) ? rawId[0] : rawId;
 
   const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [order, setOrder] = useState<OrderRow | null>(null);
@@ -70,14 +100,14 @@ export default function PedidoDetalhePage() {
   const totalItens = useMemo(() => {
     return items.reduce((acc, it) => {
       const unitCost = Number(it.unit_cost ?? 0);
-      return acc + Number(it.qty ?? 0) * unitCost;
+      return acc + (Number(it.qty ?? 0) || 0) * unitCost;
     }, 0);
   }, [items]);
 
   const frete = useMemo(() => {
     if (!order) return 0;
     if (order.delivery_mode !== "FRETE") return 0;
-    return Number(order.freight_fee ?? 0);
+    return Number(order.freight_fee ?? 0) || 0;
   }, [order]);
 
   const totalComFrete = useMemo(() => totalItens + frete, [totalItens, frete]);
@@ -95,18 +125,21 @@ export default function PedidoDetalhePage() {
 
       if (!orderId) {
         setMsg("Pedido inválido.");
+        setOrder(null);
+        setItems([]);
         setLoading(false);
         return;
       }
 
       await loadAll(orderId);
-
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
   async function loadAll(id: string) {
+    setMsg("");
+
     // Pedido
     const { data: o, error: oErr } = await supabase
       .from("orders")
@@ -124,7 +157,7 @@ export default function PedidoDetalhePage() {
     }
     setOrder(o as OrderRow);
 
-    // Itens (✅ usando alias products:products para relação)
+    // Itens (alias products:products para relação)
     const { data: it, error: itErr } = await supabase
       .from("order_items")
       .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
@@ -136,249 +169,171 @@ export default function PedidoDetalhePage() {
       return;
     }
 
-    // ✅ Não faz cast direto “as ItemRow[]” do jeito antigo.
-    // Faz cast para unknown e depois para ItemRow[] (evita o erro do build)
     const safe = (it ?? []) as unknown as ItemRow[];
     setItems(safe);
   }
 
-  if (loading) {
-    return (
-      <main style={styles.main}>
-        <div style={styles.card}>Carregando...</div>
-      </main>
-    );
+  async function refresh() {
+    if (!orderId) return;
+    setWorking(true);
+    await loadAll(orderId);
+    setWorking(false);
   }
 
-  if (!order) {
-    return (
-      <main style={styles.main}>
-        <div style={styles.card}>
-          <button style={styles.secondaryBtn} onClick={() => router.push("/pedidos")}>
-            ← Voltar
-          </button>
-          <div style={{ marginTop: 12, ...styles.err }}>{msg || "Pedido não encontrado."}</div>
-        </div>
-      </main>
-    );
-  }
+  const backTo = "/pedidos";
 
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        <div style={styles.headerRow}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Detalhe do pedido</h1>
-            <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>
-              ID: <span style={styles.mono}>{order.id}</span>
+    <PortalShell title="Pedidos" subtitle="Detalhe do pedido">
+      <div className="space-y-4">
+        <PageHeader
+          title="Detalhe do pedido"
+          subtitle={orderId ? `ID: ${orderId}` : "—"}
+          right={
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => router.push(backTo)} disabled={working}>
+                ← Voltar
+              </Button>
+              <Button variant="secondary" onClick={refresh} disabled={working || loading}>
+                {working ? "Atualizando..." : "Atualizar"}
+              </Button>
             </div>
-          </div>
+          }
+        />
 
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.secondaryBtn} onClick={() => router.push("/pedidos")}>
-              ← Voltar
-            </button>
-            <button style={styles.secondaryBtn} onClick={() => loadAll(order.id)}>
-              Recarregar
-            </button>
-          </div>
-        </div>
+        {msg ? (
+          <Card title="Aviso">
+            <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+          </Card>
+        ) : null}
 
-        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
+        {loading ? (
+          <Card>
+            <div className="text-sm text-slate-600">Carregando...</div>
+          </Card>
+        ) : !order ? (
+          <Card>
+            <div className="text-sm text-slate-700">Pedido não encontrado.</div>
+          </Card>
+        ) : (
+          <>
+            {/* Cards de informações */}
+            <div className="grid gap-3 lg:grid-cols-3">
+              <Card title="Status">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                  <Badge tone={logisticTone(order.logistic_status)}>{logisticLabel(order.logistic_status)}</Badge>
+                </div>
 
-        {/* Info (somente leitura) */}
-        <div style={styles.grid6}>
-          <div style={styles.box}>
-            <div style={styles.label}>Status</div>
-            <div style={styles.value}>{order.status}</div>
-          </div>
+                <div className="mt-3 text-sm text-slate-700">
+                  <span className="font-semibold text-slate-900">Entrega:</span> {deliveryLabel(order.delivery_mode)}
+                </div>
+                <div className="mt-1 text-sm text-slate-700">
+                  <span className="font-semibold text-slate-900">Frete:</span> {money(frete)}
+                </div>
+              </Card>
 
-          <div style={styles.box}>
-            <div style={styles.label}>Logística</div>
-            <div style={styles.value}>{order.logistic_status ?? "—"}</div>
-          </div>
+              <Card title="Pagamento">
+                <div className="text-sm text-slate-700">
+                  <span className="font-semibold text-slate-900">{order.is_paid ? "Pago" : "Não pago"}</span>{" "}
+                  <span className="text-slate-500">{order.paid_at ? `(${fmtDT(order.paid_at)})` : ""}</span>
+                </div>
+                <div className="mt-2 text-sm text-slate-700">
+                  <span className="font-semibold text-slate-900">Forma:</span> {order.payment_method ?? "—"}
+                </div>
+              </Card>
 
-          <div style={styles.box}>
-            <div style={styles.label}>Entrega</div>
-            <div style={styles.value}>{order.delivery_mode ?? "—"}</div>
-          </div>
-
-          <div style={styles.box}>
-            <div style={styles.label}>Frete</div>
-            <div style={styles.value}>{fmtBRL(frete)}</div>
-          </div>
-
-          <div style={styles.box}>
-            <div style={styles.label}>Pagamento</div>
-            <div style={styles.value}>
-              {order.is_paid ? "Pago" : "Não pago"}{" "}
-              <span style={{ fontSize: 12, color: "#666" }}>{order.paid_at ? `(${fmtDT(order.paid_at)})` : ""}</span>
+              <Card title="Datas">
+                <div className="text-sm text-slate-700 leading-6">
+                  <div>
+                    <span className="font-semibold text-slate-900">Criado:</span> {fmtDT(order.created_at)}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900">Enviado:</span> {fmtDT(order.submitted_at)}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-slate-900">Aprovado:</span> {fmtDT(order.approved_at)}
+                  </div>
+                </div>
+              </Card>
             </div>
-            <div style={{ fontSize: 12, color: "#666", marginTop: 6 }}>
-              Forma: {order.payment_method ?? "—"}
+
+            {/* Observações */}
+            <Card title="Observações">
+              <div className="whitespace-pre-wrap text-sm text-slate-700">{order.notes ?? "—"}</div>
+            </Card>
+
+            {/* Resumo */}
+            <div className="grid gap-3 md:grid-cols-3">
+              <Card title="Itens">
+                <div className="text-lg font-semibold text-slate-900">{money(totalItens)}</div>
+              </Card>
+              <Card title="Frete">
+                <div className="text-lg font-semibold text-slate-900">{money(frete)}</div>
+              </Card>
+              <Card title="Total (c/ frete)">
+                <div className="text-lg font-semibold text-slate-900">{money(totalComFrete)}</div>
+              </Card>
             </div>
-          </div>
 
-          <div style={styles.box}>
-            <div style={styles.label}>Datas</div>
-            <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>
-              Criado: {fmtDT(order.created_at)}
-              <br />
-              Enviado: {fmtDT(order.submitted_at)}
-              <br />
-              Aprovado: {fmtDT(order.approved_at)}
-            </div>
-          </div>
-        </div>
+            {/* Itens */}
+            <Card title={`Itens (${items.length})`}>
+              {items.length === 0 ? (
+                <div className="text-sm text-slate-600">Nenhum item.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-separate border-spacing-0">
+                    <thead>
+                      <tr className="text-left text-xs text-slate-600">
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Produto</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Qtd</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
+                      </tr>
+                    </thead>
 
-        {/* Observações */}
-        <div style={{ marginTop: 12 }}>
-          <div style={styles.label}>Observações</div>
-          <div style={styles.notesBox}>{order.notes ?? "—"}</div>
-        </div>
+                    <tbody>
+                      {items.map((it) => {
+                        const prod = getProduct(it.products);
+                        const sku = prod?.sku ?? "-";
+                        const name = prod?.name ?? "-";
+                        const unit = prod?.unit ?? it.unit ?? "-";
+                        const unitCost = Number(it.unit_cost ?? 0) || 0;
+                        const qty = Number(it.qty ?? 0) || 0;
+                        const line = qty * unitCost;
 
-        {/* Resumo */}
-        <div style={styles.summaryRow}>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Itens</div>
-            <div style={styles.sumValue}>{fmtBRL(totalItens)}</div>
-          </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Frete</div>
-            <div style={styles.sumValue}>{fmtBRL(frete)}</div>
-          </div>
-          <div style={styles.sumBoxStrong}>
-            <div style={styles.sumLabel}>Total (c/ frete)</div>
-            <div style={styles.sumValueStrong}>{fmtBRL(totalComFrete)}</div>
-          </div>
-        </div>
-
-        {/* Itens */}
-        <div style={{ overflowX: "auto", marginTop: 12 }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>SKU</th>
-                <th style={styles.th}>Produto</th>
-                <th style={styles.th}>Unid.</th>
-                <th style={styles.th}>Preço</th>
-                <th style={styles.th}>Qtd</th>
-                <th style={styles.th}>Total</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {items.map((it) => {
-                const prod = getProduct(it.products);
-                const sku = prod?.sku ?? "-";
-                const name = prod?.name ?? "-";
-                const unit = prod?.unit ?? it.unit ?? "-";
-                const unitCost = Number(it.unit_cost ?? 0);
-                const line = Number(it.qty ?? 0) * unitCost;
-
-                return (
-                  <tr key={it.id}>
-                    <td style={styles.tdMono}>{sku}</td>
-                    <td style={styles.td}>{name}</td>
-                    <td style={styles.td}>{unit}</td>
-                    <td style={styles.td}>{fmtBRL(unitCost)}</td>
-                    <td style={styles.tdStrong}>{it.qty}</td>
-                    <td style={styles.tdStrong}>{fmtBRL(line)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        return (
+                          <tr key={it.id} className="hover:bg-slate-50">
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                              <div className="font-mono text-xs text-slate-600">{sku}</div>
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-900">
+                              {name}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                              {unit}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
+                              {money(unitCost)}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                              {qty}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                              {money(line)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </>
+        )}
       </div>
-    </main>
+    </PortalShell>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1200px, 100%)",
-    margin: "0 auto",
-  },
-
-  headerRow: { display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" },
-  mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" },
-
-  grid6: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 10,
-  },
-
-  box: { border: "1px solid #eee", borderRadius: 12, padding: 10, background: "#fafbff" },
-  label: { fontSize: 12, color: "#666", fontWeight: 900, marginBottom: 6 },
-  value: { fontSize: 14, fontWeight: 900 },
-
-  notesBox: {
-    border: "1px solid #ddd",
-    borderRadius: 12,
-    padding: "10px 12px",
-    background: "white",
-    fontSize: 14,
-    minHeight: 52,
-    whiteSpace: "pre-wrap",
-  },
-
-  summaryRow: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 1.2fr",
-    gap: 10,
-  },
-  sumBox: { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" },
-  sumBoxStrong: { border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "#fff" },
-  sumLabel: { fontSize: 12, color: "#666", fontWeight: 900 },
-  sumValue: { marginTop: 6, fontSize: 16, fontWeight: 900 },
-  sumValueStrong: { marginTop: 6, fontSize: 18, fontWeight: 1000 as any },
-
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", whiteSpace: "nowrap" },
-  tdStrong: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap" },
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    whiteSpace: "nowrap",
-  },
-
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-
-  err: {
-    padding: 10,
-    background: "#fff2f2",
-    border: "1px solid #ffd0d0",
-    borderRadius: 10,
-    color: "#a40000",
-    fontSize: 13,
-  },
-};

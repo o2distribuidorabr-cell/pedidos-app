@@ -4,12 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
+
 type ProductRow = {
   id: string;
   sku: string | null;
   name: string | null;
   unit: string | null;
-  unit_price: number | null; // preço padrão
+  unit_price: number | null;
   step_qty: number | null;
   pack_qty: number | null;
   active: boolean | null;
@@ -18,12 +20,6 @@ type ProductRow = {
 type StoreRow = {
   id: string;
   name: string | null;
-};
-
-type StorePriceRow = {
-  store_id: string;
-  product_id: string;
-  unit_price: number | null;
 };
 
 function toNumber(v: string) {
@@ -59,7 +55,7 @@ export default function AdmProdutosPage() {
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [storeFilterId, setStoreFilterId] = useState<string>(""); // loja selecionada
   const [storePricesMap, setStorePricesMap] = useState<Record<string, number>>({}); // product_id -> price
-  const [dirtyMap, setDirtyMap] = useState<Record<string, string>>({}); // product_id -> input string
+  const [dirtyMap, setDirtyMap] = useState<Record<string, string>>({}); // product_id -> input string (pendente)
   const [priceQ, setPriceQ] = useState<string>(""); // busca dentro da tabela de preços
   const [priceWorking, setPriceWorking] = useState<boolean>(false);
 
@@ -92,10 +88,7 @@ export default function AdmProdutosPage() {
   }
 
   async function loadStores() {
-    const { data, error } = await supabase
-      .from("stores")
-      .select("id,name")
-      .order("name", { ascending: true });
+    const { data, error } = await supabase.from("stores").select("id,name").order("name", { ascending: true });
 
     if (error) {
       console.warn("loadStores:", error.message);
@@ -143,6 +136,14 @@ export default function AdmProdutosPage() {
     setStorePricesMap(map);
     setDirtyMap({});
     setPriceWorking(false);
+  }
+
+  async function refreshAll() {
+    setLoading(true);
+    await loadProducts();
+    await loadStores();
+    if (storeFilterId) await loadStorePrices(storeFilterId);
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -258,10 +259,7 @@ export default function AdmProdutosPage() {
     setMsg("");
     setWorking(true);
 
-    const { error } = await supabase
-      .from("products")
-      .update({ active: !(p.active ?? true) })
-      .eq("id", p.id);
+    const { error } = await supabase.from("products").update({ active: !(p.active ?? true) }).eq("id", p.id);
 
     if (error) {
       setWorking(false);
@@ -312,10 +310,9 @@ export default function AdmProdutosPage() {
 
     const { error } = await supabase
       .from("store_product_prices")
-      .upsert(
-        [{ store_id: storeFilterId, product_id: productId, unit_price: price }],
-        { onConflict: "store_id,product_id" }
-      );
+      .upsert([{ store_id: storeFilterId, product_id: productId, unit_price: price }], {
+        onConflict: "store_id,product_id",
+      });
 
     if (error) {
       setPriceWorking(false);
@@ -323,7 +320,6 @@ export default function AdmProdutosPage() {
       return;
     }
 
-    // atualiza mapa local e limpa dirty daquele produto
     setStorePricesMap((prev) => ({ ...prev, [productId]: price }));
     setDirtyMap((prev) => {
       const n = { ...prev };
@@ -389,7 +385,7 @@ export default function AdmProdutosPage() {
       return;
     }
 
-    const payload = [];
+    const payload: { store_id: string; product_id: string; unit_price: number }[] = [];
     for (const e of entries) {
       const p = toNumber(e.val);
       if (!(p > 0)) {
@@ -400,9 +396,9 @@ export default function AdmProdutosPage() {
       payload.push({ store_id: storeFilterId, product_id: e.product_id, unit_price: p });
     }
 
-    const { error } = await supabase
-      .from("store_product_prices")
-      .upsert(payload, { onConflict: "store_id,product_id" });
+    const { error } = await supabase.from("store_product_prices").upsert(payload, {
+      onConflict: "store_id,product_id",
+    });
 
     if (error) {
       setPriceWorking(false);
@@ -410,7 +406,6 @@ export default function AdmProdutosPage() {
       return;
     }
 
-    // aplica localmente
     const nextMap = { ...storePricesMap };
     for (const row of payload) nextMap[row.product_id] = Number(row.unit_price);
     setStorePricesMap(nextMap);
@@ -424,258 +419,251 @@ export default function AdmProdutosPage() {
     return s?.name ?? (storeFilterId ? storeFilterId : "-");
   }, [stores, storeFilterId]);
 
+  const pendingCount = Object.keys(dirtyMap).length;
+
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        <div style={styles.header}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20 }}>Produtos</h1>
-            <div style={{ fontSize: 13, opacity: 0.75 }}>
-              Cadastro de produtos + preço padrão + preço por loja (override).
-            </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Produtos"
+        subtitle="Cadastro de produtos + preço padrão + preço por loja (override)."
+        right={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => router.push("/adm/lojas")}>
+              Lojas
+            </Button>
+            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>
+              Pedidos
+            </Button>
+            <Button variant="secondary" onClick={refreshAll} disabled={working || priceWorking}>
+              Atualizar
+            </Button>
           </div>
+        }
+      />
 
-          <button style={styles.secondaryBtn} onClick={async () => {
-            setLoading(true);
-            await loadProducts();
-            await loadStores();
-            if (storeFilterId) await loadStorePrices(storeFilterId);
-            setLoading(false);
-          }} disabled={working || priceWorking}>
-            Atualizar
-          </button>
-        </div>
+      {msg ? (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      ) : null}
 
-        {msg ? <div style={styles.msgBox}>{msg}</div> : null}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Form */}
+        <Card title={editingId ? "Editar produto" : "Novo produto"}>
+          <div className="grid gap-3">
+            <Input label="SKU" value={sku} onChange={setSku} placeholder="Ex.: AB-001" />
+            <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Pão Brioche" />
 
-        {/* ======= BLOCO 1: PRODUTOS (seu original) ======= */}
-        <div style={styles.grid2}>
-          {/* Form */}
-          <section style={styles.panel}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>
-              {editingId ? "Editar produto" : "Novo produto"}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Unidade" value={unit} onChange={setUnit} placeholder="un / cx / kg ..." />
+              <Input label="Preço padrão" value={unitPrice} onChange={setUnitPrice} placeholder="0,00" />
             </div>
 
-            <label style={styles.label}>SKU</label>
-            <input style={styles.input} value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Ex.: AB-001" />
-
-            <label style={styles.label}>Nome</label>
-            <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex.: Pão Brioche" />
-
-            <div style={styles.grid2inner}>
-              <div>
-                <label style={styles.label}>Unidade</label>
-                <input style={styles.input} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="un / cx / kg ..." />
-              </div>
-              <div>
-                <label style={styles.label}>Preço padrão</label>
-                <input style={styles.input} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="0,00" />
-              </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Passo (step_qty)" value={stepQty} onChange={setStepQty} placeholder="1" />
+              <Input label="Lote/caixa (pack_qty)" value={packQty} onChange={setPackQty} placeholder="1" />
             </div>
 
-            <div style={styles.grid2inner}>
-              <div>
-                <label style={styles.label}>Passo (step_qty)</label>
-                <input style={styles.input} value={stepQty} onChange={(e) => setStepQty(e.target.value)} placeholder="1" />
-              </div>
-              <div>
-                <label style={styles.label}>Lote/caixa (pack_qty)</label>
-                <input style={styles.input} value={packQty} onChange={(e) => setPackQty(e.target.value)} placeholder="1" />
-              </div>
-            </div>
+            <Select
+              label="Ativo?"
+              value={active ? "true" : "false"}
+              onChange={(v) => setActive(v === "true")}
+              options={[
+                { value: "true", label: "Sim" },
+                { value: "false", label: "Não" },
+              ]}
+            />
 
-            <label style={styles.label}>Ativo?</label>
-            <select style={styles.select} value={active ? "true" : "false"} onChange={(e) => setActive(e.target.value === "true")}>
-              <option value="true">Sim</option>
-              <option value="false">Não</option>
-            </select>
-
-            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-              <button style={styles.primaryBtn} onClick={saveProduct} disabled={working}>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Button onClick={saveProduct} disabled={working}>
                 {working ? "Salvando..." : "Salvar"}
-              </button>
-              <button style={styles.secondaryBtn} onClick={resetForm} disabled={working}>
+              </Button>
+              <Button variant="secondary" onClick={resetForm} disabled={working}>
                 Limpar
-              </button>
+              </Button>
             </div>
 
             {editingId ? (
-              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-                ID: {editingId}
+              <div className="pt-2 text-xs text-slate-500">
+                ID: <span className="font-mono">{editingId}</span>
               </div>
             ) : null}
-          </section>
+          </div>
+        </Card>
 
-          {/* List */}
-          <section style={styles.panel}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>Lista</div>
+        {/* Lista */}
+        <Card title="Lista">
+          <div className="grid gap-3">
+            <Input value={q} onChange={setQ} placeholder="Buscar por SKU, nome..." />
 
-            <input style={styles.input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por SKU, nome..." />
-
-            {loading ? <div style={{ marginTop: 10 }}>Carregando...</div> : null}
+            {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
 
             {!loading && filtered.length === 0 ? (
-              <div style={{ marginTop: 10, color: "#666" }}>Nenhum produto encontrado.</div>
+              <div className="text-sm text-slate-600">Nenhum produto encontrado.</div>
             ) : null}
 
             {!loading && filtered.length > 0 ? (
-              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <div className="grid gap-2">
                 {filtered.map((p) => (
-                  <div key={p.id} style={styles.row}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {p.name ?? "-"} {p.sku ? `(${p.sku})` : ""}
+                  <div
+                    key={p.id}
+                    className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="truncate font-semibold text-slate-900">
+                          {p.name ?? "-"} {p.sku ? `(${p.sku})` : ""}
+                        </div>
+                        <Badge tone={p.active ? "green" : "red"}>{p.active ? "Ativo" : "Inativo"}</Badge>
                       </div>
-                      <div style={{ fontSize: 12, opacity: 0.75 }}>
-                        {p.unit ?? "un"} · {moneyBR(Number(p.unit_price ?? 0))} · passo {p.step_qty ?? 1} · lote {p.pack_qty ?? 1} ·{" "}
-                        {p.active ? "Ativo" : "Inativo"}
+
+                      <div className="mt-1 text-sm text-slate-600">
+                        {p.unit ?? "un"} · {moneyBR(Number(p.unit_price ?? 0))} · passo {p.step_qty ?? 1} · lote{" "}
+                        {p.pack_qty ?? 1}
                       </div>
-                      <div style={{ fontSize: 12, opacity: 0.55, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {p.id}
-                      </div>
+
+                      <div className="mt-2 truncate font-mono text-xs text-slate-500">{p.id}</div>
                     </div>
 
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <button style={styles.secondaryBtn} onClick={() => startEdit(p)} disabled={working}>
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" onClick={() => startEdit(p)} disabled={working}>
                         Editar
-                      </button>
-                      <button style={styles.warnBtn} onClick={() => toggleActive(p)} disabled={working}>
+                      </Button>
+                      <Button
+                        variant="warn"
+                        onClick={() => toggleActive(p)}
+                        disabled={working}
+                        title={p.active ? "Desativar produto" : "Ativar produto"}
+                      >
                         {p.active ? "Desativar" : "Ativar"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : null}
-          </section>
-        </div>
-
-        {/* ======= BLOCO 2: PREÇOS POR LOJA ======= */}
-        <div style={{ marginTop: 12, ...styles.panel }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <div style={{ fontWeight: 1000 as any, fontSize: 16 }}>Preços por loja</div>
-              <div style={{ fontSize: 13, opacity: 0.75 }}>
-                Defina um preço específico para uma loja. Se não existir override, vale o preço padrão do produto.
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              <select
-                style={{ ...styles.select, minWidth: 260 }}
-                value={storeFilterId}
-                onChange={(e) => setStoreFilterId(e.target.value)}
-                disabled={priceWorking || loading}
-              >
-                {stores.length === 0 ? <option value="">(Sem lojas)</option> : null}
-                {stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name ?? s.id}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                style={styles.secondaryBtn}
-                onClick={() => storeFilterId && loadStorePrices(storeFilterId)}
-                disabled={!storeFilterId || priceWorking || loading}
-              >
-                Recarregar preços
-              </button>
-
-              <button
-                style={styles.primaryBtn}
-                onClick={saveAllDirty}
-                disabled={!storeFilterId || priceWorking || Object.keys(dirtyMap).length === 0}
-                title={Object.keys(dirtyMap).length === 0 ? "Nenhuma alteração pendente" : "Salvar alterações"}
-              >
-                {priceWorking ? "Salvando..." : `Salvar alterações (${Object.keys(dirtyMap).length})`}
-              </button>
-            </div>
           </div>
+        </Card>
+      </div>
 
-          <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            <input
-              style={{ ...styles.input, maxWidth: 420 }}
-              value={priceQ}
-              onChange={(e) => setPriceQ(e.target.value)}
-              placeholder="Buscar produto por SKU/nome..."
-              disabled={loading}
+      {/* Preços por loja */}
+      <Card
+        title="Preços por loja"
+        subtitle="Defina um preço específico para uma loja. Se não existir override, vale o preço padrão do produto."
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={storeFilterId}
+              onChange={(v) => setStoreFilterId(v)}
+              options={
+                stores.length === 0
+                  ? [{ value: "", label: "(Sem lojas)" }]
+                  : stores.map((s) => ({ value: s.id, label: s.name ?? s.id }))
+              }
             />
-            <div style={{ fontSize: 12, opacity: 0.75 }}>
+
+            <Button
+              variant="secondary"
+              onClick={() => storeFilterId && loadStorePrices(storeFilterId)}
+              disabled={!storeFilterId || priceWorking || loading}
+            >
+              Recarregar preços
+            </Button>
+
+            <Button
+              onClick={saveAllDirty}
+              disabled={!storeFilterId || priceWorking || pendingCount === 0}
+              title={pendingCount === 0 ? "Nenhuma alteração pendente" : "Salvar alterações"}
+            >
+              {priceWorking ? "Salvando..." : `Salvar alterações (${pendingCount})`}
+            </Button>
+          </div>
+        }
+      >
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="w-full max-w-md">
+              <Input value={priceQ} onChange={setPriceQ} placeholder="Buscar produto por SKU/nome..." />
+            </div>
+            <div className="text-xs text-slate-600">
               Loja selecionada: <b>{selectedStoreName}</b>
             </div>
           </div>
 
-          {loading ? <div style={{ marginTop: 10 }}>Carregando...</div> : null}
+          {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
 
-          {!loading && (
-            <div style={{ marginTop: 10, overflowX: "auto" }}>
-              <table style={styles.table}>
+          {!loading ? (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+              <table className="min-w-[900px] w-full border-collapse">
                 <thead>
-                  <tr>
-                    <th style={styles.th}>SKU</th>
-                    <th style={styles.th}>Produto</th>
-                    <th style={styles.th}>Un</th>
-                    <th style={styles.th}>Preço padrão</th>
-                    <th style={styles.th}>Override loja</th>
-                    <th style={styles.th}>Preço efetivo</th>
-                    <th style={styles.th}>Ações</th>
+                  <tr className="bg-slate-50 text-left text-xs text-slate-600">
+                    <th className="px-4 py-3 font-semibold">SKU</th>
+                    <th className="px-4 py-3 font-semibold">Produto</th>
+                    <th className="px-4 py-3 font-semibold">Un</th>
+                    <th className="px-4 py-3 font-semibold">Preço padrão</th>
+                    <th className="px-4 py-3 font-semibold">Override loja</th>
+                    <th className="px-4 py-3 font-semibold">Preço efetivo</th>
+                    <th className="px-4 py-3 font-semibold">Ações</th>
                   </tr>
                 </thead>
+
                 <tbody>
                   {filteredForPrices.map((p) => {
                     const pid = p.id;
                     const base = Number(p.unit_price ?? 0) || 0;
-                    const ov = getOverridePrice(pid);
-                    const effective = ov != null ? ov : base;
+                    const ov = storePricesMap[pid];
+                    const hasOverride = ov != null;
+                    const effective = hasOverride ? Number(ov) : base;
 
                     const dirty = getDirtyInput(pid);
-                    const hasOverride = ov != null;
+                    const shownValue = dirty !== "" ? dirty : hasOverride ? String(ov) : "";
 
                     return (
-                      <tr key={pid}>
-                        <td style={styles.tdMono}>{p.sku ?? "-"}</td>
-                        <td style={styles.td}>
-                          <div style={{ fontWeight: 900 }}>{p.name ?? "-"}</div>
-                          <div style={{ fontSize: 12, opacity: 0.7 }}>{pid}</div>
-                        </td>
-                        <td style={styles.td}>{p.unit ?? "un"}</td>
-                        <td style={styles.tdStrong}>{moneyBR(base)}</td>
+                      <tr key={pid} className="border-t border-slate-200">
+                        <td className="px-4 py-3 font-mono text-sm text-slate-900">{p.sku ?? "-"}</td>
 
-                        <td style={styles.td}>
-                          <input
-                            style={styles.priceInput}
-                            value={dirty !== "" ? dirty : (hasOverride ? String(ov) : "")}
-                            onChange={(e) => setDirty(pid, e.target.value)}
-                            placeholder="Ex.: 12.50"
-                            disabled={!storeFilterId || priceWorking}
-                          />
-                          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-slate-900">{p.name ?? "-"}</div>
+                          <div className="mt-1 font-mono text-xs text-slate-500">{pid}</div>
+                        </td>
+
+                        <td className="px-4 py-3 text-sm text-slate-700">{p.unit ?? "un"}</td>
+
+                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">{moneyBR(base)}</td>
+
+                        <td className="px-4 py-3">
+                          <div className="w-[160px]">
+                            <Input
+                              value={shownValue}
+                              onChange={(v) => setDirty(pid, v)}
+                              placeholder="Ex.: 12.50"
+                            />
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
                             {hasOverride ? "override cadastrado" : "sem override"}
                           </div>
                         </td>
 
-                        <td style={styles.tdStrong}>{moneyBR(effective)}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">{moneyBR(effective)}</td>
 
-                        <td style={styles.td}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <button
-                              style={styles.secondaryBtn}
+                        <td className="px-4 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              variant="secondary"
                               onClick={() => saveStorePrice(pid)}
                               disabled={!storeFilterId || priceWorking}
                             >
                               Salvar
-                            </button>
+                            </Button>
 
-                            <button
-                              style={styles.warnBtn}
+                            <Button
+                              variant="warn"
                               onClick={() => removeOverride(pid)}
                               disabled={!storeFilterId || priceWorking || !hasOverride}
                               title={!hasOverride ? "Não existe override para remover" : "Remover override"}
                             >
                               Remover override
-                            </button>
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -684,7 +672,7 @@ export default function AdmProdutosPage() {
 
                   {filteredForPrices.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: 12, color: "#666" }}>
+                      <td colSpan={7} className="px-4 py-4 text-sm text-slate-600">
                         Nenhum produto encontrado.
                       </td>
                     </tr>
@@ -692,79 +680,13 @@ export default function AdmProdutosPage() {
                 </tbody>
               </table>
 
-              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+              <div className="px-4 py-3 text-xs text-slate-500">
                 * Override: preço específico da loja. Se remover, volta a valer o “Preço padrão”.
               </div>
             </div>
-          )}
+          ) : null}
         </div>
-      </div>
-    </main>
+      </Card>
+    </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 0 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto",
-  },
-  header: { display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" },
-  grid2: { display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 12, marginTop: 12 },
-  panel: { border: "1px solid #e5e7eb", borderRadius: 14, padding: 12, background: "white" },
-  grid2inner: { display: "grid", gridTemplateColumns: "1fr 200px", gap: 10, marginTop: 10 },
-
-  label: { fontSize: 12, color: "#666", fontWeight: 900, marginTop: 10, display: "block" },
-  input: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", outline: "none" },
-  select: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb" },
-
-  primaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-  secondaryBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontWeight: 900 },
-  warnBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #f0b429", background: "#fff8e1", cursor: "pointer", fontWeight: 900 },
-
-  row: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", border: "1px solid #eee", borderRadius: 12, padding: 10 },
-
-  msgBox: { marginTop: 12, padding: 10, background: "#fff2f2", border: "1px solid #ffd0d0", borderRadius: 10, color: "#a40000", fontSize: 13 },
-
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", verticalAlign: "top", whiteSpace: "nowrap" },
-  tdStrong: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap" },
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    color: "#111",
-    whiteSpace: "nowrap",
-  },
-  priceInput: {
-    width: 140,
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    outline: "none",
-    fontWeight: 900,
-  },
-};

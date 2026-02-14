@@ -4,6 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+import {
+  PageHeader,
+  Card,
+  Button,
+  Select,
+  Badge,
+  Table,
+} from "@/app/components/ui";
+
 type StoreRow = { id: string; name: string | null };
 
 type OrderRow = {
@@ -56,14 +65,12 @@ type RowUi = {
   payment_method: OrderRow["payment_method"];
   created_at: string | null;
 
-  // valores
   mercadoria: number; // somente itens (sem frete)
   frete: number;
   total: number; // mercadoria + frete
   credit_applied: number;
   a_pagar: number; // total - crédito (>=0)
 
-  // saldo crédito (da loja)
   credit_balance: number;
 };
 
@@ -86,6 +93,12 @@ function logisticLabel(v: OrderRow["logistic_status"]) {
 }
 function deliveryLabel(v: OrderRow["delivery_mode"]) {
   return v === "FRETE" ? "Frete" : "Retirada";
+}
+function statusTone(status: string) {
+  if (status === "approved") return "green";
+  if (status === "submitted") return "blue";
+  if (status === "rejected") return "red";
+  return "slate";
 }
 function toISOStart(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
@@ -155,7 +168,6 @@ export default function AdmFinanceiroPage() {
   async function loadFinance(storeList: StoreRow[]) {
     setMsg("");
 
-    // 1) Carrega pedidos
     let q = supabase
       .from("orders")
       .select(
@@ -190,29 +202,22 @@ export default function AdmFinanceiroPage() {
     const orderIds = orders.map((o) => o.id);
     const storeIdsUnique = Array.from(new Set(orders.map((o) => o.store_id)));
 
-    // 2) Totais (view)
     const { data: tots, error: tErr } = await supabase
       .from("v_order_totals")
       .select("order_id,store_id,total_cost")
       .in("order_id", orderIds);
 
-    if (tErr) {
-      setMsg(tErr.message);
-    }
+    if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    // 3) Soma REAL dos itens (para detectar view incluindo frete)
     const { data: itemsRaw, error: iErr } = await supabase
       .from("order_items")
       .select("order_id,qty,unit_cost")
       .in("order_id", orderIds);
 
-    if (iErr) {
-      // se der erro aqui, a tela ainda funciona, só perde a “detecção anti-frete-duplicado”
-      console.warn("order_items calc:", iErr.message);
-    }
+    if (iErr) console.warn("order_items calc:", iErr.message);
 
     const itemsCalcMap = new Map<string, number>();
     for (const r of (itemsRaw ?? []) as OrderItemRow[]) {
@@ -221,50 +226,37 @@ export default function AdmFinanceiroPage() {
       itemsCalcMap.set(r.order_id, cur + line);
     }
 
-    // 4) Saldo de crédito por loja
     const { data: bals, error: bErr } = await supabase
       .from("v_store_credit_balance")
       .select("store_id,balance")
       .in("store_id", storeIdsUnique);
 
-    if (bErr) {
-      console.warn("credit balance:", bErr.message);
-    }
+    if (bErr) console.warn("credit balance:", bErr.message);
 
     const balMap = new Map<string, number>();
     for (const r of (bals ?? []) as CreditBalRow[]) balMap.set(r.store_id, Number(r.balance) || 0);
 
-    // 5) store_id -> name (usar storeList, não state)
     const storeMap = new Map<string, string>();
     for (const s of storeList) storeMap.set(s.id, s.name ?? s.id);
 
-    // 6) Monta UI (com anti-frete-duplicado)
     const ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
 
-      const viewTotal = totalsMap.get(o.id) ?? 0; // pode ser: itens OU itens+frete
+      const viewTotal = totalsMap.get(o.id) ?? 0;
       const itemsCalc = itemsCalcMap.get(o.id) ?? 0;
 
-      // Detecta se a view já inclui frete:
-      // - se view ≈ itensCalc -> view é itens
-      // - se view ≈ itensCalc + frete -> view inclui frete
-      // Caso não consiga decidir (sem dados), assume view = itens.
       let mercadoria = viewTotal;
 
       if (frete > 0 && itemsRaw) {
         if (near(viewTotal, itemsCalc + frete)) {
-          mercadoria = Math.max(viewTotal - frete, 0); // remove frete da base
+          mercadoria = Math.max(viewTotal - frete, 0);
         } else if (near(viewTotal, itemsCalc)) {
-          mercadoria = viewTotal; // ok, já é itens
+          mercadoria = viewTotal;
         } else {
-          // fallback: se não bate, preferir o cálculo real dos itens (mais confiável)
           if (!near(itemsCalc, 0)) mercadoria = itemsCalc;
         }
       } else {
-        // sem frete: mercadoria = viewTotal (ou itemsCalc se houver divergência grande)
-        if (itemsRaw && !near(viewTotal, itemsCalc)) {
-          mercadoria = itemsCalc;
-        }
+        if (itemsRaw && !near(viewTotal, itemsCalc)) mercadoria = itemsCalc;
       }
 
       const total = mercadoria + frete;
@@ -299,7 +291,7 @@ export default function AdmFinanceiroPage() {
     setRows(ui);
   }
 
-  async function onReload() {
+  async function onApply() {
     setLoading(true);
     const storeList = await loadStores();
     await loadFinance(storeList);
@@ -318,276 +310,191 @@ export default function AdmFinanceiroPage() {
     return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto };
   }, [rows]);
 
-  if (loading) {
-    return (
-      <main style={styles.main}>
-        <div style={styles.card}>Carregando...</div>
-      </main>
-    );
-  }
+  const tableRows = useMemo(() => {
+    return rows.map((r) => {
+      return [
+        <span key="id" className="font-mono text-xs text-slate-700">{r.id}</span>,
+        <span key="store" className="font-semibold text-slate-900">{r.store_name}</span>,
+        <div key="op" className="flex flex-wrap items-center gap-2">
+          <Badge tone={statusTone(r.status)}>{r.status}</Badge>
+          <Badge tone="slate">{logisticLabel(r.logistic_status)}</Badge>
+        </div>,
+        <span key="del" className="text-slate-800">{deliveryLabel(r.delivery_mode)}</span>,
+        <span key="merc" className="font-semibold text-slate-900">{money(r.mercadoria)}</span>,
+        <span key="frete" className="text-slate-800">{r.delivery_mode === "FRETE" ? money(r.frete) : "—"}</span>,
+        <span key="tot" className="font-semibold text-slate-900">{money(r.total)}</span>,
+        <span key="cred" className="text-slate-800">- {money(r.credit_applied)}</span>,
+        <span key="apg" className="font-semibold text-slate-900">{money(r.a_pagar)}</span>,
+        <Badge key="paid" tone={r.is_paid ? "green" : "red"}>{r.is_paid ? "Pago" : "Em aberto"}</Badge>,
+        <span key="dt" className="text-slate-700">{fmtBR(r.paid_at)}</span>,
+        <span key="cb" className="font-semibold text-slate-900">{money(r.credit_balance)}</span>,
+      ];
+    });
+  }, [rows]);
 
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        <div style={styles.headerRow}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Financeiro (Admin)</h1>
-            <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>Resumo de pedidos, crédito e pagamentos.</div>
-          </div>
-
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.secondaryBtn} onClick={() => router.push("/adm/pedidos")}>
-              ← Pedidos
-            </button>
-            <button style={styles.secondaryBtn} onClick={onReload}>
+    <div className="space-y-6">
+      <PageHeader
+        title="Financeiro"
+        subtitle="Resumo de pedidos, crédito e pagamentos."
+        right={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>
+              Pedidos
+            </Button>
+            <Button variant="secondary" onClick={onApply} disabled={loading}>
               Recarregar
-            </button>
+            </Button>
+          </div>
+        }
+      />
+
+      {msg ? (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      ) : null}
+
+      <Card title="Filtros">
+        <div className="grid gap-3 md:grid-cols-6">
+          <Select
+            label="Loja"
+            value={storeFilter}
+            onChange={setStoreFilter}
+            options={[
+              { value: "all", label: "Todas" },
+              ...stores.map((s) => ({ value: s.id, label: s.name ?? s.id })),
+            ]}
+          />
+
+          <Select
+            label="Status"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            options={[
+              { value: "all", label: "Todos" },
+              { value: "draft", label: "draft" },
+              { value: "submitted", label: "submitted" },
+              { value: "approved", label: "approved" },
+              { value: "rejected", label: "rejected" },
+            ]}
+          />
+
+          <Select
+            label="Pagamento"
+            value={paidFilter}
+            onChange={setPaidFilter}
+            options={[
+              { value: "all", label: "Todos" },
+              { value: "paid", label: "Somente pagos" },
+              { value: "unpaid", label: "Somente não pagos" },
+            ]}
+          />
+
+          <Select
+            label="Entrega"
+            value={deliveryFilter}
+            onChange={setDeliveryFilter}
+            options={[
+              { value: "all", label: "Todas" },
+              { value: "RETIRADA", label: "Retirada" },
+              { value: "FRETE", label: "Frete" },
+            ]}
+          />
+
+          <div>
+            <div className="text-xs font-semibold text-slate-600 mb-1">De</div>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+
+          <div>
+            <div className="text-xs font-semibold text-slate-600 mb-1">Até</div>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
+
+          <div className="md:col-span-6 flex justify-end">
+            <Button onClick={onApply} disabled={loading}>
+              Aplicar filtros
+            </Button>
           </div>
         </div>
+      </Card>
 
-        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
-
-        {/* Filtros */}
-        <div style={styles.filters}>
-          <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)} style={styles.select}>
-            <option value="all">Loja: todas</option>
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name ?? s.id}
-              </option>
-            ))}
-          </select>
-
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={styles.select}>
-            <option value="all">Status: todos</option>
-            <option value="draft">draft</option>
-            <option value="submitted">submitted</option>
-            <option value="approved">approved</option>
-            <option value="rejected">rejected</option>
-          </select>
-
-          <select value={paidFilter} onChange={(e) => setPaidFilter(e.target.value)} style={styles.select}>
-            <option value="all">Pagamento: todos</option>
-            <option value="paid">Somente pagos</option>
-            <option value="unpaid">Somente não pagos</option>
-          </select>
-
-          <select value={deliveryFilter} onChange={(e) => setDeliveryFilter(e.target.value)} style={styles.select}>
-            <option value="all">Entrega: todas</option>
-            <option value="RETIRADA">Retirada</option>
-            <option value="FRETE">Frete</option>
-          </select>
-
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={styles.select} />
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={styles.select} />
-
-          <button style={styles.primaryBtn} onClick={onReload}>
-            Aplicar filtros
-          </button>
-        </div>
-
-        {/* Resumo */}
-        <div style={styles.summaryRow}>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Mercadoria</div>
-            <div style={styles.sumValue}>{money(resumo.totalMercadoria)}</div>
+      <Card title="Resumo">
+        <div className="grid gap-3 md:grid-cols-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Mercadoria</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalMercadoria)}</div>
           </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Frete</div>
-            <div style={styles.sumValue}>{money(resumo.totalFrete)}</div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Frete</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalFrete)}</div>
           </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Total</div>
-            <div style={styles.sumValue}>{money(resumo.totalTotal)}</div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold text-slate-500">Total</div>
+            <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.totalTotal)}</div>
           </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Crédito abatido</div>
-            <div style={styles.sumValue}>- {money(resumo.totalCredito)}</div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold text-slate-500">Crédito abatido</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">- {money(resumo.totalCredito)}</div>
           </div>
-          <div style={styles.sumBoxStrong}>
-            <div style={styles.sumLabel}>A pagar</div>
-            <div style={styles.sumValueStrong}>{money(resumo.totalApagar)}</div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold text-slate-500">A pagar</div>
+            <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.totalApagar)}</div>
           </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Pago</div>
-            <div style={styles.sumValue}>{money(resumo.totalPago)}</div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Pago</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalPago)}</div>
           </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Em aberto</div>
-            <div style={styles.sumValue}>{money(resumo.totalAberto)}</div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Em aberto</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalAberto)}</div>
           </div>
         </div>
+      </Card>
 
-        {/* Tabela */}
-        <div style={{ overflowX: "auto", marginTop: 12 }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Pedido</th>
-                <th style={styles.th}>Loja</th>
-                <th style={styles.th}>Operação</th>
-
-                <th style={styles.th}>Entrega</th>
-                <th style={styles.th}>Líquido (mercadoria)</th>
-                <th style={styles.th}>Frete</th>
-                <th style={styles.th}>Total</th>
-
-                <th style={styles.th}>Crédito abatido</th>
-                <th style={styles.th}>A pagar</th>
-
-                <th style={styles.th}>Pago?</th>
-                <th style={styles.th}>Data pagamento</th>
-
-                <th style={styles.th}>Saldo crédito</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.id}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => router.push(`/adm/pedidos/${r.id}`)}
-                  title="Abrir pedido"
-                >
-                  <td style={styles.tdMono}>{r.id}</td>
-                  <td style={styles.td}>{r.store_name}</td>
-
-                  <td style={styles.td}>
-                    <span style={styles.pill}>{logisticLabel(r.logistic_status)}</span>
-                  </td>
-
-                  <td style={styles.td}>{deliveryLabel(r.delivery_mode)}</td>
-                  <td style={styles.tdStrong}>{money(r.mercadoria)}</td>
-                  <td style={styles.td}>{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</td>
-                  <td style={styles.tdStrong}>{money(r.total)}</td>
-
-                  <td style={styles.td}>- {money(r.credit_applied)}</td>
-                  <td style={styles.tdStrong}>{money(r.a_pagar)}</td>
-
-                  <td style={styles.td}>{r.is_paid ? "Sim" : "Não"}</td>
-                  <td style={styles.td}>{fmtBR(r.paid_at)}</td>
-
-                  <td style={styles.tdStrong}>{money(r.credit_balance)}</td>
-                </tr>
-              ))}
-
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={12} style={{ padding: 14, color: "#777" }}>
-                    Nenhum dado encontrado.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </main>
+      <Card title="Pedidos no financeiro" subtitle={`${rows.length} registro(s)`}>
+        {loading ? (
+          <div>Carregando...</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-slate-600">Nenhum dado encontrado.</div>
+        ) : (
+          <Table
+            headers={[
+              "Pedido",
+              "Loja",
+              "Operação",
+              "Entrega",
+              "Mercadoria",
+              "Frete",
+              "Total",
+              "Crédito",
+              "A pagar",
+              "Pago?",
+              "Data pagamento",
+              "Saldo crédito",
+            ]}
+            rows={tableRows}
+            onRowClick={(idx) => router.push(`/adm/pedidos/${rows[idx].id}`)}
+          />
+        )}
+      </Card>
+    </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto",
-  },
-  headerRow: { display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" },
-
-  filters: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: 10,
-    alignItems: "center",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-  },
-
-  select: {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    background: "white",
-    fontWeight: 800,
-  },
-
-  summaryRow: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-    gap: 10,
-  },
-  sumBox: { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" },
-  sumBoxStrong: { border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "#fff" },
-  sumLabel: { fontSize: 12, color: "#666", fontWeight: 900 },
-  sumValue: { marginTop: 6, fontSize: 16, fontWeight: 900 },
-  sumValueStrong: { marginTop: 6, fontSize: 18, fontWeight: 1000 as any },
-
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", whiteSpace: "nowrap" },
-  tdStrong: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap" },
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    whiteSpace: "nowrap",
-  },
-
-  pill: {
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid #e6e7ee",
-    background: "#fff",
-    fontSize: 12,
-    fontWeight: 900,
-    color: "#111",
-  },
-
-  primaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-  err: {
-    marginTop: 12,
-    padding: 10,
-    background: "#fff2f2",
-    border: "1px solid #ffd0d0",
-    borderRadius: 10,
-    color: "#a40000",
-    fontSize: 13,
-  },
-};

@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import FranchiseeTopbar from "@/app/components/FranchiseeTopbar";
+import PortalShell from "@/app/components/PortalShell";
+import { Card, PageHeader, Select, Button, StatCard, Table, Input, Badge } from "@/app/components/ui";
 
 type OrderRow = {
   id: string;
@@ -26,7 +27,7 @@ type OrderRow = {
 type TotalsRow = {
   order_id: string;
   store_id: string;
-  total_cost: number | null; // view (pode vir itens OU itens+frete)
+  total_cost: number | null;
 };
 
 type OrderItemRow = {
@@ -46,22 +47,18 @@ type RowUi = {
   status: string;
   logistic_status: OrderRow["logistic_status"];
   delivery_mode: OrderRow["delivery_mode"];
-
   created_at: string | null;
 
-  // valores
-  mercadoria: number; // somente itens (sem frete)
+  mercadoria: number;
   frete: number;
-  total: number; // mercadoria + frete
+  total: number;
   credit_applied: number;
-  a_pagar: number; // total - crédito (>=0)
+  a_pagar: number;
 
-  // pagamento
   is_paid: boolean;
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
-  // saldo crédito (da loja)
   credit_balance: number;
 };
 
@@ -76,15 +73,6 @@ function fmtBR(iso: string | null | undefined) {
     return iso;
   }
 }
-function logisticLabel(v: OrderRow["logistic_status"]) {
-  if (v === "RECEBIDO") return "Recebido";
-  if (v === "EM_SEPARACAO") return "Em separação";
-  if (v === "ENTREGUE") return "Entregue";
-  return "—";
-}
-function deliveryLabel(v: OrderRow["delivery_mode"]) {
-  return v === "FRETE" ? "Frete" : "Retirada";
-}
 function toISOStart(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 0, 0, 0).toISOString();
@@ -96,6 +84,21 @@ function toISOEnd(dateStr: string) {
 function near(a: number, b: number, eps = 0.01) {
   return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= eps;
 }
+function logisticLabel(v: OrderRow["logistic_status"]) {
+  if (v === "RECEBIDO") return "Recebido";
+  if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "ENTREGUE") return "Entregue";
+  return "—";
+}
+function deliveryLabel(v: OrderRow["delivery_mode"]) {
+  return v === "FRETE" ? "Frete" : "Retirada";
+}
+function statusTone(s: string) {
+  if (s === "approved") return "green";
+  if (s === "submitted") return "blue";
+  if (s === "rejected") return "red";
+  return "neutral";
+}
 
 export default function FinanceiroFranqueadoPage() {
   const router = useRouter();
@@ -104,14 +107,13 @@ export default function FinanceiroFranqueadoPage() {
   const [msg, setMsg] = useState("");
 
   const [storeId, setStoreId] = useState<string | null>(null);
-
   const [rows, setRows] = useState<RowUi[]>([]);
   const [creditBalance, setCreditBalance] = useState<number>(0);
 
   // filtros
-  const [paidFilter, setPaidFilter] = useState<string>("all"); // all | paid | unpaid
+  const [paidFilter, setPaidFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [deliveryFilter, setDeliveryFilter] = useState<string>("all"); // all | FRETE | RETIRADA
+  const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
@@ -127,13 +129,7 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      // pega store_id do profile
-      const { data: profile, error: pErr } = await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .maybeSingle();
-
+      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
       if (pErr) {
         setMsg(pErr.message);
         setLoading(false);
@@ -155,15 +151,26 @@ export default function FinanceiroFranqueadoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function loadCreditBalance(sId: string): Promise<number> {
+    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id,balance").eq("store_id", sId).maybeSingle();
+
+    if (error) {
+      console.warn("credit balance:", error.message);
+      setCreditBalance(0);
+      return 0;
+    }
+
+    const b = Number((data as CreditBalRow | null)?.balance ?? 0) || 0;
+    setCreditBalance(b);
+    return b;
+  }
+
   async function loadFinanceForStore(sId: string) {
     setMsg("");
 
-    // 1) pedidos da loja
     let q = supabase
       .from("orders")
-      .select(
-        "id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied"
-      )
+      .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied")
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
 
@@ -185,7 +192,6 @@ export default function FinanceiroFranqueadoPage() {
 
     const orders = (ords ?? []) as OrderRow[];
     if (orders.length === 0) {
-      // ainda carrega saldo de crédito
       await loadCreditBalance(sId);
       setRows([]);
       return;
@@ -193,26 +199,14 @@ export default function FinanceiroFranqueadoPage() {
 
     const orderIds = orders.map((o) => o.id);
 
-    // 2) view totals
-    const { data: tots, error: tErr } = await supabase
-      .from("v_order_totals")
-      .select("order_id,store_id,total_cost")
-      .in("order_id", orderIds);
-
+    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    // 3) soma REAL itens (anti-frete-duplicado)
-    const { data: itemsRaw, error: iErr } = await supabase
-      .from("order_items")
-      .select("order_id,qty,unit_cost")
-      .in("order_id", orderIds);
-
-    if (iErr) {
-      console.warn("order_items calc:", iErr.message);
-    }
+    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
+    if (iErr) console.warn("order_items calc:", iErr.message);
 
     const itemsCalcMap = new Map<string, number>();
     for (const r of (itemsRaw ?? []) as OrderItemRow[]) {
@@ -221,33 +215,22 @@ export default function FinanceiroFranqueadoPage() {
       itemsCalcMap.set(r.order_id, cur + line);
     }
 
-    // 4) saldo crédito (1 loja)
     const bal = await loadCreditBalance(sId);
 
-    // 5) monta UI com a MESMA lógica do ADM
     const ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
 
-      const viewTotal = totalsMap.get(o.id) ?? 0; // pode ser itens OU itens+frete
+      const viewTotal = totalsMap.get(o.id) ?? 0;
       const itemsCalc = itemsCalcMap.get(o.id) ?? 0;
 
       let mercadoria = viewTotal;
 
-      // se tem frete e conseguimos calcular itens reais, detecta se view inclui frete
       if (frete > 0 && itemsRaw) {
-        if (near(viewTotal, itemsCalc + frete)) {
-          mercadoria = Math.max(viewTotal - frete, 0); // remove frete
-        } else if (near(viewTotal, itemsCalc)) {
-          mercadoria = viewTotal; // já é itens
-        } else {
-          // fallback: se não bate, usar cálculo real (mais confiável)
-          if (!near(itemsCalc, 0)) mercadoria = itemsCalc;
-        }
+        if (near(viewTotal, itemsCalc + frete)) mercadoria = Math.max(viewTotal - frete, 0);
+        else if (near(viewTotal, itemsCalc)) mercadoria = viewTotal;
+        else if (!near(itemsCalc, 0)) mercadoria = itemsCalc;
       } else {
-        // sem frete: se divergir muito, preferir cálculo real
-        if (itemsRaw && !near(viewTotal, itemsCalc)) {
-          mercadoria = itemsCalc;
-        }
+        if (itemsRaw && !near(viewTotal, itemsCalc)) mercadoria = itemsCalc;
       }
 
       const total = mercadoria + frete;
@@ -278,24 +261,6 @@ export default function FinanceiroFranqueadoPage() {
     setRows(ui);
   }
 
-  async function loadCreditBalance(sId: string): Promise<number> {
-    const { data, error } = await supabase
-      .from("v_store_credit_balance")
-      .select("store_id,balance")
-      .eq("store_id", sId)
-      .maybeSingle();
-
-    if (error) {
-      console.warn("credit balance:", error.message);
-      setCreditBalance(0);
-      return 0;
-    }
-
-    const b = Number((data as CreditBalRow | null)?.balance ?? 0) || 0;
-    setCreditBalance(b);
-    return b;
-  }
-
   async function onReload() {
     if (!storeId) return;
     setLoading(true);
@@ -314,285 +279,137 @@ export default function FinanceiroFranqueadoPage() {
     return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto };
   }, [rows]);
 
+  const headers = ["Pedido", "Status", "Operação", "Entrega", "Mercadoria", "Frete", "Total", "Crédito", "A pagar", "Pago?", "Data pgto", "Saldo crédito"];
+
+  const tableRows = rows.map((r) => [
+    <span key="id" className="font-mono text-xs">{r.id}</span>,
+    <Badge key="st" tone={statusTone(r.status) as any}>{r.status}</Badge>,
+    <span key="op">{logisticLabel(r.logistic_status)}</span>,
+    <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
+    <span key="m" className="font-semibold">{money(r.mercadoria)}</span>,
+    <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
+    <span key="t" className="font-semibold">{money(r.total)}</span>,
+    <span key="c">- {money(r.credit_applied)}</span>,
+    <span key="ap" className="font-semibold">{money(r.a_pagar)}</span>,
+    <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
+    <span key="dt">{fmtBR(r.paid_at)}</span>,
+    <span key="bal" className="font-semibold">{money(r.credit_balance)}</span>,
+  ]);
+
   if (loading) {
     return (
-      <main style={styles.main}>
-        <FranchiseeTopbar />
-        <div style={styles.card}>Carregando...</div>
-      </main>
+      <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
+        <Card>
+          <div>Carregando...</div>
+        </Card>
+      </PortalShell>
     );
   }
 
   return (
-    <main style={styles.main}>
-      <FranchiseeTopbar />
+    <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
+      <div className="space-y-4">
+        <Card
+          title="Filtros"
+          right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}
+        >
+          {msg ? (
+            <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>
+          ) : null}
 
-      <div style={styles.card}>
-        <div style={styles.headerRow}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Financeiro</h1>
-            <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>Resumo de pedidos, crédito e pagamentos.</div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
+            <Select
+              label="Status"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "draft", label: "draft" },
+                { value: "submitted", label: "submitted" },
+                { value: "approved", label: "approved" },
+                { value: "rejected", label: "rejected" },
+              ]}
+            />
+
+            <Select
+              label="Pagamento"
+              value={paidFilter}
+              onChange={setPaidFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "paid", label: "Somente pagos" },
+                { value: "unpaid", label: "Somente não pagos" },
+              ]}
+            />
+
+            <Select
+              label="Entrega"
+              value={deliveryFilter}
+              onChange={setDeliveryFilter}
+              options={[
+                { value: "all", label: "Todas" },
+                { value: "RETIRADA", label: "Retirada" },
+                { value: "FRETE", label: "Frete" },
+              ]}
+            />
+
+            <Input label="De" type="date" value={dateFrom} onChange={setDateFrom} />
+            <Input label="Até" type="date" value={dateTo} onChange={setDateTo} />
           </div>
 
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.secondaryBtn} onClick={onReload}>
-              Recarregar
-            </button>
+          <div className="mt-4">
+            <Button onClick={onReload}>Aplicar filtros</Button>
           </div>
+        </Card>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard label="Mercadoria" value={money(resumo.totalMercadoria)} />
+          <StatCard label="Frete" value={money(resumo.totalFrete)} />
+          <StatCard label="Total" value={money(resumo.totalTotal)} />
+          <StatCard label="Crédito abatido" value={`- ${money(resumo.totalCredito)}`} />
+          <StatCard label="A pagar" value={money(resumo.totalApagar)} />
+          <StatCard label="Pago" value={money(resumo.totalPago)} />
+          <StatCard label="Em aberto" value={money(resumo.totalAberto)} />
+          <StatCard label="Saldo de crédito" value={money(creditBalance)} />
         </div>
 
-        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
-
-        {/* Filtros */}
-        <div style={styles.filters}>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={styles.select}>
-            <option value="all">Status: todos</option>
-            <option value="draft">draft</option>
-            <option value="submitted">submitted</option>
-            <option value="approved">approved</option>
-            <option value="rejected">rejected</option>
-          </select>
-
-          <select value={paidFilter} onChange={(e) => setPaidFilter(e.target.value)} style={styles.select}>
-            <option value="all">Pagamento: todos</option>
-            <option value="paid">Somente pagos</option>
-            <option value="unpaid">Somente não pagos</option>
-          </select>
-
-          <select value={deliveryFilter} onChange={(e) => setDeliveryFilter(e.target.value)} style={styles.select}>
-            <option value="all">Entrega: todas</option>
-            <option value="RETIRADA">Retirada</option>
-            <option value="FRETE">Frete</option>
-          </select>
-
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={styles.select} />
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={styles.select} />
-
-          <button style={styles.primaryBtn} onClick={onReload}>
-            Aplicar filtros
-          </button>
-        </div>
-
-        {/* Resumo */}
-        <div style={styles.summaryRow}>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Mercadoria</div>
-            <div style={styles.sumValue}>{money(resumo.totalMercadoria)}</div>
+        <Card
+          title="Pedidos"
+          subtitle="Clique em uma linha para abrir o pedido"
+          right={<Button variant="secondary" onClick={onReload}>Atualizar</Button>}
+        >
+          <div
+            className="cursor-pointer"
+            onClickCapture={(e) => {
+              const tr = (e.target as HTMLElement).closest("[data-order-id]") as HTMLElement | null;
+              if (!tr) return;
+              const id = tr.getAttribute("data-order-id");
+              if (id) router.push(`/pedidos/${id}`);
+            }}
+          >
+            <Table
+              headers={headers}
+              rows={
+                rows.length === 0
+                  ? []
+                  : rows.map((r, idx) => {
+                      const row = tableRows[idx];
+                      // envolvemos cada célula em <div> simples, e marcamos o row com data-order-id
+                      return row.map((cell, cidx) => (
+                        <div key={`${r.id}-${cidx}`} data-order-id={r.id}>
+                          {cell}
+                        </div>
+                      ));
+                    })
+              }
+            />
           </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Frete</div>
-            <div style={styles.sumValue}>{money(resumo.totalFrete)}</div>
-          </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Total</div>
-            <div style={styles.sumValue}>{money(resumo.totalTotal)}</div>
-          </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Crédito abatido</div>
-            <div style={styles.sumValue}>- {money(resumo.totalCredito)}</div>
-          </div>
-          <div style={styles.sumBoxStrong}>
-            <div style={styles.sumLabel}>A pagar</div>
-            <div style={styles.sumValueStrong}>{money(resumo.totalApagar)}</div>
-          </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Pago</div>
-            <div style={styles.sumValue}>{money(resumo.totalPago)}</div>
-          </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Em aberto</div>
-            <div style={styles.sumValue}>{money(resumo.totalAberto)}</div>
-          </div>
-        </div>
 
-        {/* Tabela (igual ADM) */}
-        <div style={{ overflowX: "auto", marginTop: 12 }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Pedido</th>
-                <th style={styles.th}>Operação</th>
-
-                <th style={styles.th}>Entrega</th>
-                <th style={styles.th}>Líquido (mercadoria)</th>
-                <th style={styles.th}>Frete</th>
-                <th style={styles.th}>Total</th>
-
-                <th style={styles.th}>Crédito abatido</th>
-                <th style={styles.th}>A pagar</th>
-
-                <th style={styles.th}>Pago?</th>
-                <th style={styles.th}>Data pagamento</th>
-
-                <th style={styles.th}>Saldo crédito</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.id}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => router.push(`/pedidos/${r.id}`)}
-                  title="Abrir pedido"
-                >
-                  <td style={styles.tdMono}>{r.id}</td>
-
-                  <td style={styles.td}>
-                    <span style={styles.pill}>{logisticLabel(r.logistic_status)}</span>
-                  </td>
-
-                  <td style={styles.td}>{deliveryLabel(r.delivery_mode)}</td>
-                  <td style={styles.tdStrong}>{money(r.mercadoria)}</td>
-                  <td style={styles.td}>{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</td>
-                  <td style={styles.tdStrong}>{money(r.total)}</td>
-
-                  <td style={styles.td}>- {money(r.credit_applied)}</td>
-                  <td style={styles.tdStrong}>{money(r.a_pagar)}</td>
-
-                  <td style={styles.td}>{r.is_paid ? "Sim" : "Não"}</td>
-                  <td style={styles.td}>{fmtBR(r.paid_at)}</td>
-
-                  <td style={styles.tdStrong}>{money(r.credit_balance)}</td>
-                </tr>
-              ))}
-
-              {rows.length === 0 ? (
-                <tr>
-                  <td colSpan={11} style={{ padding: 14, color: "#777" }}>
-                    Nenhum dado encontrado.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Faixa opcional (saldo de crédito) */}
-        <div style={styles.balanceBar}>
-          <div style={styles.smallMuted}>Saldo de crédito</div>
-          <div style={styles.balanceValue}>{money(creditBalance)}</div>
-        </div>
+          {rows.length === 0 ? (
+            <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div>
+          ) : null}
+        </Card>
       </div>
-    </main>
+    </PortalShell>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto",
-  },
-  headerRow: { display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" },
-
-  filters: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-    gap: 10,
-    alignItems: "center",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-  },
-
-  select: {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    background: "white",
-    fontWeight: 800,
-  },
-
-  summaryRow: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-    gap: 10,
-  },
-  sumBox: { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" },
-  sumBoxStrong: { border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "#fff" },
-  sumLabel: { fontSize: 12, color: "#666", fontWeight: 900 },
-  sumValue: { marginTop: 6, fontSize: 16, fontWeight: 900 },
-  sumValueStrong: { marginTop: 6, fontSize: 18, fontWeight: 1000 as any },
-
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", whiteSpace: "nowrap" },
-  tdStrong: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap" },
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    whiteSpace: "nowrap",
-  },
-
-  pill: {
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid #e6e7ee",
-    background: "#fff",
-    fontSize: 12,
-    fontWeight: 900,
-    color: "#111",
-  },
-
-  primaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-
-  balanceBar: {
-    marginTop: 12,
-    padding: 12,
-    borderRadius: 12,
-    border: "1px solid #eee",
-    background: "#fff",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  smallMuted: { fontSize: 12, color: "#666", fontWeight: 900 },
-  balanceValue: { fontSize: 16, fontWeight: 900 },
-
-  err: {
-    marginTop: 12,
-    padding: 10,
-    background: "#fff2f2",
-    border: "1px solid #ffd0d0",
-    borderRadius: 10,
-    color: "#a40000",
-    fontSize: 13,
-  },
-};

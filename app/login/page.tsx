@@ -1,9 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+
+import { Card, Button, Input, Badge } from "@/app/components/ui";
 
 type ProfileRow = {
   id: string;
@@ -45,6 +47,8 @@ export default function LoginPage() {
     city: "",
     state: "",
   });
+
+  const isAdmin = tab === "admin";
 
   function setPortalMode(mode: "admin" | "franchisee") {
     try {
@@ -111,7 +115,7 @@ export default function LoginPage() {
     setMsg("");
     setWorking(true);
 
-    setPortalMode(tab === "admin" ? "admin" : "franchisee");
+    setPortalMode(isAdmin ? "admin" : "franchisee");
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: email.trim(),
@@ -216,340 +220,199 @@ export default function LoginPage() {
     });
   }
 
+  const headerTitle = useMemo(
+    () => (isAdmin ? "Acesso administrativo" : "Portal do cliente"),
+    [isAdmin]
+  );
+
+  const headerSubtitle = useMemo(
+    () =>
+      isAdmin
+        ? "Entre com seu email e senha de administrador."
+        : "Entre com seu email e senha. Se ainda não tiver acesso, solicite cadastro.",
+    [isAdmin]
+  );
+
   if (loading) {
     return (
-      <main style={styles.main}>
-        <div style={styles.card}>Carregando...</div>
+      <main className="min-h-screen p-4 grid place-items-center bg-[radial-gradient(1200px_600px_at_20%_10%,rgba(0,0,0,0.06),transparent_60%),#f6f7fb]">
+        <div className="w-full max-w-xl">
+          <Card>
+            <div className="text-sm text-slate-700">Carregando...</div>
+          </Card>
+        </div>
       </main>
     );
   }
 
-  const isAdmin = tab === "admin";
-
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        {/* HEADER (logo + textos) */}
-        <div style={styles.header}>
-          <div style={styles.logoWrap}>
-            <Image
-              src="/logo.png"
-              alt="Logo"
-              fill
-              sizes="140px"
-              style={{ objectFit: "contain" }}
-              priority
-            />
-          </div>
+    <main className="min-h-screen p-4 grid place-items-center bg-[radial-gradient(1200px_600px_at_20%_10%,rgba(0,0,0,0.06),transparent_60%),#f6f7fb]">
+      <div className="w-full max-w-2xl space-y-4">
+        <Card>
+          {/* Header (logo + textos) */}
+          <div className="grid gap-4 md:grid-cols-[140px_1fr] md:items-center">
+            <div className="relative h-16 w-[140px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+              <Image
+                src="/logo.png"
+                alt="Logo"
+                fill
+                sizes="140px"
+                style={{ objectFit: "contain" }}
+                priority
+              />
+            </div>
 
-          <div style={styles.headerText}>
-            <div style={styles.title}>{isAdmin ? "Acesso administrativo" : "Portal do cliente"}</div>
-            <div style={styles.sub}>
-              {isAdmin
-                ? "Entre com seu email e senha de administrador."
-                : "Entre com seu email e senha. Se ainda não tiver acesso, solicite cadastro."}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xl font-semibold text-slate-900">{headerTitle}</div>
+                <Badge tone={isAdmin ? "red" : "green"}>{isAdmin ? "ADMIN" : "CLIENTE"}</Badge>
+              </div>
+              <div className="mt-1 text-sm text-slate-600">{headerSubtitle}</div>
             </div>
           </div>
-        </div>
 
-        {/* TABS */}
-        <div style={styles.tabs}>
-          <button
-            onClick={() => {
-              setTab("franchisee");
-              setPortalMode("franchisee");
-              setShowSignup(false);
-              setMsg("");
-            }}
-            style={{ ...styles.tab, ...(tab === "franchisee" ? styles.tabActive : {}) }}
-          >
-            Cliente
-          </button>
+          {/* Tabs */}
+          <div className="mt-4 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
+            <Button
+              variant={tab === "franchisee" ? "primary" : "secondary"}
+              onClick={() => {
+                setTab("franchisee");
+                setPortalMode("franchisee");
+                setShowSignup(false);
+                setMsg("");
+              }}
+              disabled={working}
+            >
+              Cliente
+            </Button>
 
-          <button
-            onClick={() => {
-              setTab("admin");
-              setPortalMode("admin");
-              setShowSignup(false);
-              setMsg("");
-            }}
-            style={{ ...styles.tab, ...(tab === "admin" ? styles.tabActive : {}) }}
-          >
-            Administrativo
-          </button>
-        </div>
-
-        {/* FORM */}
-        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
-          <label style={styles.label}>Email</label>
-          <input
-            style={styles.input}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="seuemail@..."
-            inputMode="email"
-            autoCapitalize="none"
-          />
-
-          <label style={styles.label}>Senha</label>
-          <input
-            style={styles.input}
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="********"
-          />
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
-            <button style={styles.primaryBtn} onClick={onLogin} disabled={working}>
-              {working ? "Aguarde..." : "Entrar"}
-            </button>
-
-            {!isAdmin ? (
-              <button
-                style={styles.secondaryBtn}
-                onClick={() => setShowSignup((v) => !v)}
-                disabled={working}
-              >
-                {showSignup ? "Fechar cadastro" : "Solicitar cadastro"}
-              </button>
-            ) : null}
+            <Button
+              variant={tab === "admin" ? "primary" : "secondary"}
+              onClick={() => {
+                setTab("admin");
+                setPortalMode("admin");
+                setShowSignup(false);
+                setMsg("");
+              }}
+              disabled={working}
+            >
+              Administrativo
+            </Button>
           </div>
 
-          {/* SIGNUP */}
-          {showSignup && !isAdmin ? (
-            <div style={styles.signupBox}>
-              <div style={{ fontWeight: 900, marginBottom: 8 }}>Solicitação de cadastro</div>
+          {/* Form */}
+          <div className="mt-4 grid gap-3">
+            <Input
+              label="Email"
+              value={email}
+              onChange={setEmail}
+              placeholder="seuemail@..."
+              inputMode="email"
+              autoCapitalize="none"
+            />
 
-              <div style={styles.grid2}>
-                <div>
-                  <label style={styles.label}>Seu nome</label>
-                  <input
-                    style={styles.input}
+            <Input
+              label="Senha"
+              value={password}
+              onChange={setPassword}
+              placeholder="********"
+              type="password"
+            />
+
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button onClick={onLogin} disabled={working}>
+                {working ? "Aguarde..." : "Entrar"}
+              </Button>
+
+              {!isAdmin ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowSignup((v) => !v)}
+                  disabled={working}
+                >
+                  {showSignup ? "Fechar cadastro" : "Solicitar cadastro"}
+                </Button>
+              ) : null}
+            </div>
+
+            {/* Signup */}
+            {showSignup && !isAdmin ? (
+              <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="text-sm font-semibold text-slate-900">Solicitação de cadastro</div>
+
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Seu nome"
                     value={signup.franchisee_name}
-                    onChange={(e) => setSignup((p) => ({ ...p, franchisee_name: e.target.value }))}
+                    onChange={(v) => setSignup((p) => ({ ...p, franchisee_name: v }))}
                     placeholder="Nome do responsável"
                   />
-                </div>
-
-                <div>
-                  <label style={styles.label}>Telefone (opcional)</label>
-                  <input
-                    style={styles.input}
+                  <Input
+                    label="Telefone (opcional)"
                     value={signup.phone}
-                    onChange={(e) => setSignup((p) => ({ ...p, phone: e.target.value }))}
+                    onChange={(v) => setSignup((p) => ({ ...p, phone: v }))}
                     placeholder="(xx) xxxxx-xxxx"
                   />
                 </div>
-              </div>
 
-              <div style={styles.grid2}>
-                <div>
-                  <label style={styles.label}>Nome da loja</label>
-                  <input
-                    style={styles.input}
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Nome da loja"
                     value={signup.store_name}
-                    onChange={(e) => setSignup((p) => ({ ...p, store_name: e.target.value }))}
+                    onChange={(v) => setSignup((p) => ({ ...p, store_name: v }))}
                     placeholder="Ex.: Loja Centerminas"
                   />
-                </div>
-
-                <div>
-                  <label style={styles.label}>CNPJ (opcional)</label>
-                  <input
-                    style={styles.input}
+                  <Input
+                    label="CNPJ (opcional)"
                     value={signup.cnpj}
-                    onChange={(e) => setSignup((p) => ({ ...p, cnpj: e.target.value }))}
+                    onChange={(v) => setSignup((p) => ({ ...p, cnpj: v }))}
                     placeholder="00.000.000/0000-00"
                   />
                 </div>
-              </div>
 
-              <div style={styles.grid2}>
-                <div>
-                  <label style={styles.label}>Cidade (opcional)</label>
-                  <input
-                    style={styles.input}
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Input
+                    label="Cidade (opcional)"
                     value={signup.city}
-                    onChange={(e) => setSignup((p) => ({ ...p, city: e.target.value }))}
+                    onChange={(v) => setSignup((p) => ({ ...p, city: v }))}
                     placeholder="Belo Horizonte"
                   />
-                </div>
-
-                <div>
-                  <label style={styles.label}>UF (opcional)</label>
-                  <input
-                    style={styles.input}
+                  <Input
+                    label="UF (opcional)"
                     value={signup.state}
-                    onChange={(e) => setSignup((p) => ({ ...p, state: e.target.value }))}
+                    onChange={(v) =>
+                      setSignup((p) => ({ ...p, state: (v || "").toUpperCase() }))
+                    }
                     placeholder="MG"
                     maxLength={2}
                   />
                 </div>
-              </div>
 
-              <button style={styles.primaryBtn} onClick={onCreateAccount} disabled={working}>
-                {working ? "Enviando..." : "Criar conta e enviar solicitação"}
-              </button>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-slate-500">
+                    Após enviar, o acesso só é liberado quando o administrador aprovar e vincular a loja.
+                  </div>
 
-              <div style={{ marginTop: 8, fontSize: 12, color: "#777" }}>
-                Após enviar, o acesso só é liberado quando o administrador aprovar e vincular a loja.
+                  <Button onClick={onCreateAccount} disabled={working}>
+                    {working ? "Enviando..." : "Criar conta e enviar solicitação"}
+                  </Button>
+                </div>
               </div>
+            ) : null}
+
+            {/* Msg */}
+            {msg ? (
+              <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-sm text-slate-800 whitespace-pre-wrap">{msg}</div>
+              </div>
+            ) : null}
+
+            <div className="pt-2 text-center text-xs text-slate-500">
+              © {new Date().getFullYear()} • Portal do cliente
             </div>
-          ) : null}
-
-          {msg ? <div style={styles.msgBox}>{msg}</div> : null}
-
-          <div style={styles.footerNote}>© {new Date().getFullYear()} • Portal do cliente</div>
-        </div>
+          </div>
+        </Card>
       </div>
     </main>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: {
-    minHeight: "100vh",
-    padding: 16,
-    display: "grid",
-    placeItems: "center",
-    background:
-      "radial-gradient(1200px 600px at 20% 10%, rgba(0,0,0,0.06), transparent 60%), #f6f7fb",
-  },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 16,
-    padding: 18,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(680px, 100%)",
-  },
-
-  // ✅ header fixo: nunca deixa a logo invadir
-  header: {
-    display: "grid",
-    gridTemplateColumns: "140px 1fr",
-    gap: 14,
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  logoWrap: {
-    position: "relative",
-    width: 140,
-    height: 64,
-    borderRadius: 14,
-    border: "1px solid #eee",
-    background: "#fafbff",
-    overflow: "hidden",
-  },
-  headerText: {
-    display: "grid",
-    gap: 6,
-    minWidth: 0,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 950,
-    color: "#111",
-    lineHeight: 1.15,
-  },
-  sub: {
-    fontSize: 13,
-    color: "#555",
-    fontWeight: 700,
-    lineHeight: 1.3,
-  },
-
-  tabs: {
-    display: "flex",
-    gap: 8,
-    padding: 6,
-    borderRadius: 12,
-    border: "1px solid #eee",
-    background: "#fafbff",
-  },
-  tab: {
-    flex: 1,
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid transparent",
-    background: "transparent",
-    cursor: "pointer",
-    fontWeight: 900,
-    color: "#111",
-  },
-  tabActive: {
-    background: "#111",
-    color: "#fff",
-    borderColor: "#111",
-  },
-
-  label: { fontSize: 12, color: "#666", fontWeight: 900 },
-  input: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #ddd",
-    outline: "none",
-    fontSize: 14,
-    background: "white",
-    color: "#111",
-  },
-
-  primaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-    width: "fit-content",
-  },
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-    color: "#111",
-  },
-
-  msgBox: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    background: "#fafbff",
-    color: "#111",
-    fontSize: 13,
-    lineHeight: 1.35,
-    whiteSpace: "pre-wrap",
-  },
-
-  signupBox: {
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 14,
-    border: "1px solid #e5e7eb",
-    background: "white",
-  },
-  grid2: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: 10,
-    marginBottom: 10,
-    marginTop: 10,
-  },
-
-  footerNote: {
-    marginTop: 10,
-    fontSize: 12,
-    color: "#888",
-    textAlign: "center",
-    fontWeight: 700,
-  },
-};

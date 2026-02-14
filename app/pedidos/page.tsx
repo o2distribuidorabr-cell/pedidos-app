@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-import FranchiseeTopbar from "@/app/components/FranchiseeTopbar";
+
+import PortalShell from "@/app/components/PortalShell";
+import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
 
 type OrderRow = {
   id: string;
@@ -23,7 +25,6 @@ type OrderRow = {
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
 
-  // ✅ NOVO: quanto foi abatido do crédito pré-pago neste pedido
   credit_applied: number | null;
 };
 
@@ -35,7 +36,6 @@ type TotalsRow = {
 
 type StoreRow = { id: string; name: string };
 
-// ✅ view do saldo
 type CreditBalanceRow = {
   store_id: string;
   balance: number | null;
@@ -48,7 +48,7 @@ function fmtBR(iso: string | null | undefined) {
   try {
     return new Date(iso).toLocaleString("pt-BR");
   } catch {
-    return iso;
+    return String(iso);
   }
 }
 
@@ -64,23 +64,35 @@ function logisticLabel(v: OrderRow["logistic_status"]) {
 }
 
 function deliveryLabel(v: OrderRow["delivery_mode"]) {
-  if (v === "FRETE") return "Frete";
-  return "Retirada";
+  return v === "FRETE" ? "Frete" : "Retirada";
+}
+
+function statusTone(status: string): "green" | "red" | "yellow" | "neutral" {
+  const s = (status || "").toLowerCase();
+  if (s === "approved") return "green";
+  if (s === "rejected") return "red";
+  if (s === "submitted") return "yellow";
+  return "neutral";
+}
+
+function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neutral" {
+  if (v === "ENTREGUE") return "green";
+  if (v === "EM_SEPARACAO") return "yellow";
+  return "neutral";
 }
 
 export default function HistoricoPedidosPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [userEmail, setUserEmail] = useState<string>("-");
   const [storeName, setStoreName] = useState<string>("-");
   const [storeId, setStoreId] = useState<string | null>(null);
 
-  // ✅ saldo do crédito
   const [creditBalance, setCreditBalance] = useState<number>(0);
-
   const [orders, setOrders] = useState<OrderUi[]>([]);
 
   // filtros
@@ -106,7 +118,7 @@ export default function HistoricoPedidosPage() {
     const toISO = dateTo ? toISOEnd(dateTo) : null;
 
     return orders.filter((o) => {
-      if (qq && !o.id.toLowerCase().includes(qq)) return false;
+      if (qq && !String(o.id).toLowerCase().includes(qq)) return false;
       if (statusFilter !== "all" && o.status !== statusFilter) return false;
       if (logFilter !== "all" && (o.logistic_status ?? "") !== logFilter) return false;
 
@@ -120,17 +132,12 @@ export default function HistoricoPedidosPage() {
     });
   }, [orders, q, statusFilter, logFilter, paidFilter, dateFrom, dateTo]);
 
-  const totalGeral = useMemo(() => {
-    return filtered.reduce((acc, o) => acc + (Number(o.total_cost) || 0), 0);
-  }, [filtered]);
-
-  const totalCreditoAplicado = useMemo(() => {
-    return filtered.reduce((acc, o) => acc + (Number(o.credit_applied ?? 0) || 0), 0);
-  }, [filtered]);
-
-  const totalAPagar = useMemo(() => {
-    return filtered.reduce((acc, o) => acc + (Number(o.amount_due ?? 0) || 0), 0);
-  }, [filtered]);
+  const totalGeral = useMemo(() => filtered.reduce((acc, o) => acc + (Number(o.total_cost) || 0), 0), [filtered]);
+  const totalCreditoAplicado = useMemo(
+    () => filtered.reduce((acc, o) => acc + (Number(o.credit_applied ?? 0) || 0), 0),
+    [filtered]
+  );
+  const totalAPagar = useMemo(() => filtered.reduce((acc, o) => acc + (Number(o.amount_due ?? 0) || 0), 0), [filtered]);
 
   useEffect(() => {
     (async () => {
@@ -168,7 +175,11 @@ export default function HistoricoPedidosPage() {
         return;
       }
 
-      const { data: store, error: sErr } = await supabase.from("stores").select("id, name").eq("id", sId).maybeSingle();
+      const { data: store, error: sErr } = await supabase
+        .from("stores")
+        .select("id, name")
+        .eq("id", sId)
+        .maybeSingle();
 
       if (sErr) {
         setMsg(sErr.message);
@@ -180,14 +191,17 @@ export default function HistoricoPedidosPage() {
       setStoreName(st?.name ?? "-");
 
       await Promise.all([loadCreditBalance(sId), loadOrders(sId)]);
-
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function loadCreditBalance(sId: string) {
-    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id, balance").eq("store_id", sId).maybeSingle();
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id, balance")
+      .eq("store_id", sId)
+      .maybeSingle();
 
     if (error) {
       setMsg((m) => (m ? m : error.message));
@@ -224,17 +238,15 @@ export default function HistoricoPedidosPage() {
 
     const ids = orderList.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id, store_id, total_cost").in("order_id", ids);
+    const { data: tots, error: tErr } = await supabase
+      .from("v_order_totals")
+      .select("order_id, store_id, total_cost")
+      .in("order_id", ids);
 
+    // Se der erro na view, ainda mostra pedidos (sem total)
     if (tErr) {
       setMsg(tErr.message);
-      setOrders(
-        orderList.map((o) => ({
-          ...o,
-          total_cost: 0,
-          amount_due: 0,
-        }))
-      );
+      setOrders(orderList.map((o) => ({ ...o, total_cost: 0, amount_due: 0 })));
       return;
     }
 
@@ -245,267 +257,242 @@ export default function HistoricoPedidosPage() {
     const ui: OrderUi[] = orderList.map((o) => {
       const total = map.get(o.id) ?? 0;
       const applied = Number(o.credit_applied ?? 0) || 0;
-
-      // ✅ Aqui mantém exatamente o que você já quer:
-      // total = (itens + frete) vindo da view
-      // devido = total - crédito
       const due = Math.max(total - applied, 0);
-
-      return {
-        ...o,
-        total_cost: total,
-        amount_due: due,
-      };
+      return { ...o, total_cost: total, amount_due: due };
     });
 
     setOrders(ui);
   }
 
-  if (loading) {
-    return (
-      <main style={styles.main}>
-        <FranchiseeTopbar />
-        <div style={styles.card}>Carregando...</div>
-      </main>
-    );
+  async function refresh() {
+    if (!storeId) return;
+    setWorking(true);
+    await Promise.all([loadCreditBalance(storeId), loadOrders(storeId)]);
+    setWorking(false);
   }
 
   return (
-    <main style={styles.main}>
-      <FranchiseeTopbar />
+    <PortalShell title="Pedidos" subtitle="Histórico de pedidos">
+      <div className="space-y-4">
+        <PageHeader
+          title="Histórico de pedidos"
+          subtitle="Clique em um pedido para ver os itens."
+          right={
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={refresh} disabled={working || loading || !storeId}>
+                {working ? "Atualizando..." : "Atualizar"}
+              </Button>
+              <Button onClick={() => router.push("/pedido")}>Novo pedido</Button>
+            </div>
+          }
+        />
 
-      <div style={styles.card}>
-        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
+        {msg ? (
+          <Card title="Aviso">
+            <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+          </Card>
+        ) : null}
 
-        <h1 style={{ margin: 0, fontSize: 22 }}>Histórico de pedidos</h1>
-        <p style={{ marginTop: 6, color: "#555" }}>Aqui aparecem os pedidos já enviados. Clique em um pedido para ver os itens.</p>
+        {/* Contexto */}
+        <Card title="Resumo" subtitle="Loja / usuário / crédito">
+          <div className="grid gap-3 md:grid-cols-3">
+            <div>
+              <div className="text-xs font-semibold text-slate-500">Loja</div>
+              <div className="mt-1 text-sm font-semibold text-slate-900 truncate">{storeName}</div>
+              {storeId ? <div className="mt-1 font-mono text-xs text-slate-500 truncate">{storeId}</div> : null}
+            </div>
 
-        {/* ✅ Faixa de saldo (opcional, mas útil) */}
-        <div style={styles.balanceBar}>
-          <div>
-            <div style={styles.smallMuted}>Saldo de crédito</div>
-            <div style={styles.balanceValue}>{money(creditBalance)}</div>
+            <div>
+              <div className="text-xs font-semibold text-slate-500">Usuário</div>
+              <div className="mt-1 text-sm font-semibold text-slate-900 truncate">{userEmail}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-xs font-semibold text-slate-600">Saldo de crédito</div>
+              <div className="mt-1 text-base font-semibold text-slate-900">{money(creditBalance)}</div>
+            </div>
           </div>
-
-          <button
-            style={styles.secondaryBtn}
-            onClick={() => storeId && Promise.all([loadCreditBalance(storeId), loadOrders(storeId)])}
-          >
-            Recarregar
-          </button>
-        </div>
+        </Card>
 
         {/* Filtros */}
-        <div style={styles.filters}>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por ID do pedido..." style={styles.input} />
+        <Card title="Filtros">
+          <div className="grid gap-3 lg:grid-cols-6">
+            <div className="lg:col-span-2">
+              <Input value={q} onChange={setQ} placeholder="Buscar por ID do pedido..." />
+            </div>
 
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={styles.select}>
-            <option value="all">Status: todos</option>
-            <option value="draft">draft</option>
-            <option value="submitted">submitted</option>
-            <option value="approved">approved</option>
-            <option value="rejected">rejected</option>
-          </select>
+            <Select
+              label="Status"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "draft", label: "draft" },
+                { value: "submitted", label: "submitted" },
+                { value: "approved", label: "approved" },
+                { value: "rejected", label: "rejected" },
+              ]}
+            />
 
-          <select value={logFilter} onChange={(e) => setLogFilter(e.target.value)} style={styles.select}>
-            <option value="all">Logística: todos</option>
-            <option value="RECEBIDO">RECEBIDO</option>
-            <option value="EM_SEPARACAO">EM_SEPARACAO</option>
-            <option value="ENTREGUE">ENTREGUE</option>
-          </select>
+            <Select
+              label="Logística"
+              value={logFilter}
+              onChange={setLogFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "RECEBIDO", label: "RECEBIDO" },
+                { value: "EM_SEPARACAO", label: "EM_SEPARACAO" },
+                { value: "ENTREGUE", label: "ENTREGUE" },
+              ]}
+            />
 
-          <select value={paidFilter} onChange={(e) => setPaidFilter(e.target.value)} style={styles.select}>
-            <option value="all">Pago: todos</option>
-            <option value="paid">Somente pagos</option>
-            <option value="unpaid">Somente não pagos</option>
-          </select>
+            <Select
+              label="Pagamento"
+              value={paidFilter}
+              onChange={setPaidFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "paid", label: "Somente pagos" },
+                { value: "unpaid", label: "Somente não pagos" },
+              ]}
+            />
 
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={styles.select} />
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={styles.select} />
-        </div>
+            <div className="grid gap-1">
+              <div className="text-xs font-semibold text-slate-600">De</div>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
 
-        <div style={{ overflowX: "auto", marginTop: 10 }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Pedido</th>
-                <th style={styles.th}>Status</th>
-                <th style={styles.th}>Operação</th>
-                <th style={styles.th}>Entrega</th>
-                <th style={styles.th}>Frete</th>
-                <th style={styles.th}>Criado</th>
-                <th style={styles.th}>Enviado</th>
-                <th style={styles.th}>Aprovado</th>
-                <th style={styles.th}>Total</th>
-                <th style={styles.th}>Crédito aplicado</th>
-                <th style={styles.th}>A pagar</th>
-              </tr>
-            </thead>
+            <div className="grid gap-1">
+              <div className="text-xs font-semibold text-slate-600">Até</div>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              />
+            </div>
 
-            <tbody>
-              {filtered.map((o) => (
-                <tr key={o.id} style={{ cursor: "pointer" }} onClick={() => router.push(`/pedidos/${o.id}`)} title="Abrir pedido">
-                  <td style={styles.tdMono}>{o.id}</td>
-                  <td style={styles.td}>{o.status}</td>
+            <div className="lg:col-span-6 flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={() => { setQ(""); setStatusFilter("all"); setLogFilter("all"); setPaidFilter("all"); setDateFrom(""); setDateTo(""); }}>
+                Limpar filtros
+              </Button>
+              <Button variant="secondary" onClick={refresh} disabled={working || loading || !storeId}>
+                Recarregar
+              </Button>
+            </div>
+          </div>
+        </Card>
 
-                  <td style={styles.td}>
-                    <span style={styles.pill}>{logisticLabel(o.logistic_status)}</span>
-                  </td>
+        {/* Lista */}
+        <Card title="Pedidos" subtitle={loading ? "Carregando..." : `${filtered.length} pedido(s) no filtro`}>
+          {loading ? (
+            <div className="text-sm text-slate-600">Carregando...</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-sm text-slate-600">Nenhum pedido encontrado.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-separate border-spacing-0">
+                <thead>
+                  <tr className="text-left text-xs text-slate-600">
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Pedido</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Status</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Operação</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Entrega</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Frete</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Criado</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Enviado</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Aprovado</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Crédito</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">A pagar</th>
+                  </tr>
+                </thead>
 
-                  <td style={styles.td}>{deliveryLabel(o.delivery_mode)}</td>
-                  <td style={styles.td}>{o.delivery_mode === "FRETE" ? money(Number(o.freight_fee ?? 0)) : "-"}</td>
+                <tbody>
+                  {filtered.map((o) => {
+                    const frete = o.delivery_mode === "FRETE" ? money(Number(o.freight_fee ?? 0)) : "-";
 
-                  <td style={styles.td}>{fmtBR(o.created_at)}</td>
-                  <td style={styles.td}>{fmtBR(o.submitted_at)}</td>
-                  <td style={styles.td}>{fmtBR(o.approved_at)}</td>
+                    return (
+                      <tr
+                        key={o.id}
+                        className="cursor-pointer hover:bg-slate-50"
+                        onClick={() => router.push(`/pedidos/${o.id}`)}
+                        title="Abrir pedido"
+                      >
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                          <div className="font-mono text-xs text-slate-600">{o.id}</div>
+                        </td>
 
-                  <td style={styles.tdStrong}>{money(Number(o.total_cost) || 0)}</td>
-                  <td style={styles.tdStrong}>{money(Number(o.credit_applied ?? 0) || 0)}</td>
-                  <td style={styles.tdStrong}>{money(Number(o.amount_due ?? 0) || 0)}</td>
-                </tr>
-              ))}
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                          <Badge tone={statusTone(o.status)}>{o.status}</Badge>
+                        </td>
 
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={11} style={{ padding: 14, color: "#777" }}>
-                    Nenhum pedido encontrado.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                          <Badge tone={logisticTone(o.logistic_status)}>{logisticLabel(o.logistic_status)}</Badge>
+                        </td>
 
-        <div style={styles.totalBox}>
-          <span>Total exibido</span>
-          <b>{money(totalGeral)}</b>
-        </div>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                          {deliveryLabel(o.delivery_mode)}
+                        </td>
 
-        <div style={styles.totalBox}>
-          <span>Crédito aplicado (exibido)</span>
-          <b>{money(totalCreditoAplicado)}</b>
-        </div>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                          {frete}
+                        </td>
 
-        <div style={styles.totalBoxStrong}>
-          <span>A pagar (exibido)</span>
-          <b>{money(totalAPagar)}</b>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                          {fmtBR(o.created_at)}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                          {fmtBR(o.submitted_at)}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                          {fmtBR(o.approved_at)}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                          {money(Number(o.total_cost) || 0)}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                          {money(Number(o.credit_applied ?? 0) || 0)}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                          {money(Number(o.amount_due ?? 0) || 0)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              <div className="mt-3 text-xs text-slate-500">Clique em um pedido para abrir os itens.</div>
+            </div>
+          )}
+        </Card>
+
+        {/* Totais */}
+        <div className="grid gap-3 md:grid-cols-3">
+          <Card title="Total exibido">
+            <div className="text-lg font-semibold text-slate-900">{money(totalGeral)}</div>
+          </Card>
+
+          <Card title="Crédito aplicado (exibido)">
+            <div className="text-lg font-semibold text-slate-900">{money(totalCreditoAplicado)}</div>
+          </Card>
+
+          <Card title="A pagar (exibido)">
+            <div className="text-lg font-semibold text-slate-900">{money(totalAPagar)}</div>
+          </Card>
         </div>
       </div>
-    </main>
+    </PortalShell>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1200px, 100%)",
-    margin: "0 auto",
-  },
-
-  smallMuted: { fontSize: 12, color: "#777", fontWeight: 700 },
-
-  balanceBar: {
-    marginTop: 12,
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    alignItems: "center",
-    flexWrap: "wrap",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-  },
-  balanceValue: { marginTop: 6, fontSize: 16, fontWeight: 900, color: "#111" },
-
-  filters: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-    gap: 10,
-    alignItems: "center",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-    marginTop: 10,
-  },
-
-  input: { padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", outline: "none" },
-  select: { padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", background: "white", fontWeight: 800 },
-
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", whiteSpace: "nowrap" },
-  tdStrong: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap" },
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    whiteSpace: "nowrap",
-  },
-
-  pill: {
-    padding: "6px 10px",
-    borderRadius: 999,
-    border: "1px solid #e6e7ee",
-    background: "#fff",
-    fontSize: 12,
-    fontWeight: 900,
-    color: "#111",
-  },
-
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-
-  totalBox: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    border: "1px solid #eee",
-    background: "#fff",
-    fontSize: 14,
-  },
-  totalBoxStrong: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginTop: 10,
-    padding: 12,
-    borderRadius: 12,
-    border: "1px solid #ddd",
-    background: "#fafbff",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-
-  err: {
-    padding: 10,
-    background: "#fff2f2",
-    border: "1px solid #ffd0d0",
-    borderRadius: 10,
-    color: "#a40000",
-    fontSize: 13,
-  },
-};

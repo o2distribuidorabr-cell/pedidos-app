@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
-import TopNav from "@/app/components/TopNav";
+import PortalShell from "@/app/components/PortalShell";
 
 export default function AdmLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -17,9 +17,8 @@ export default function AdmLayout({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <>
-      <TopNav />
+    <PortalShell title="Administrativo" subtitle="Gestão do portal de pedidos">
       {children}
-    </>
+    </PortalShell>
   );
 }

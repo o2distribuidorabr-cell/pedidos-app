@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
+
 type StoreRow = {
   id: string;
   name: string;
@@ -14,6 +16,10 @@ type StoreRow = {
   code?: string | null;
   freight_fee?: number | null;
 };
+
+function money(n: number) {
+  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 
 export default function AdmLojasPage() {
   const router = useRouter();
@@ -32,14 +38,13 @@ export default function AdmLojasPage() {
   const [city, setCity] = useState("");
   const [stateUf, setStateUf] = useState("");
   const [active, setActive] = useState(true);
-
   const [freightFee, setFreightFee] = useState<string>("");
 
   // crédito
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
   const [creditAmount, setCreditAmount] = useState<string>("");
   const [creditNote, setCreditNote] = useState<string>("");
-  const [creditMode, setCreditMode] = useState<"ADD" | "REMOVE">("ADD"); // ✅ NOVO
+  const [creditMode, setCreditMode] = useState<"ADD" | "REMOVE">("ADD");
 
   async function requireAuth() {
     const { data } = await supabase.auth.getUser();
@@ -91,7 +96,6 @@ export default function AdmLojasPage() {
 
     const rows = (data ?? []) as StoreRow[];
     setStores(rows);
-
     await loadBalances(rows.map((s) => s.id));
   }
 
@@ -235,11 +239,10 @@ export default function AdmLojasPage() {
       return;
     }
 
-    // Opcional: impedir remover mais do que o saldo exibido
     const currentBal = balancesByStore[creditStoreId] ?? 0;
     if (creditMode === "REMOVE" && amt > currentBal) {
       setWorking(false);
-      setMsg(`Saldo insuficiente. Saldo atual: R$ ${currentBal.toFixed(2)}`);
+      setMsg(`Saldo insuficiente. Saldo atual: ${money(currentBal)}`);
       return;
     }
 
@@ -255,7 +258,6 @@ export default function AdmLojasPage() {
         return;
       }
     } else {
-      // ✅ NOVO: débito via RPC
       const { error } = await supabase.rpc("remove_store_credit", {
         p_store_id: creditStoreId,
         p_amount: amt,
@@ -274,7 +276,7 @@ export default function AdmLojasPage() {
   }
 
   const creditStore = creditStoreId ? stores.find((s) => s.id === creditStoreId) : null;
-  const creditBalance = creditStoreId ? (balancesByStore[creditStoreId] ?? 0) : 0;
+  const creditBalance = creditStoreId ? balancesByStore[creditStoreId] ?? 0 : 0;
 
   const previewAfter = useMemo(() => {
     const amt = parseAmountBR(creditAmount);
@@ -283,306 +285,198 @@ export default function AdmLojasPage() {
   }, [creditStoreId, creditAmount, creditMode, creditBalance]);
 
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        <div style={styles.header}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 20 }}>Lojas</h1>
-            <div style={{ fontSize: 13, opacity: 0.75 }}>
-              Cadastre e edite lojas. Gerencie crédito pré-pago (adicionar/remover) por loja.
-            </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Lojas"
+        subtitle="Cadastre e edite lojas. Gerencie crédito pré-pago (adicionar/remover) por loja."
+        right={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => router.push("/adm/financeiro")}>
+              Financeiro
+            </Button>
+            <Button variant="secondary" onClick={loadStores} disabled={working}>
+              Atualizar
+            </Button>
           </div>
+        }
+      />
 
-          <button style={styles.secondaryBtn} onClick={loadStores} disabled={working}>
-            Atualizar
-          </button>
-        </div>
+      {msg ? (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      ) : null}
 
-        {msg ? <div style={styles.msgBox}>{msg}</div> : null}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Form */}
+        <Card title={editingId ? "Editar loja" : "Nova loja"}>
+          <div className="grid gap-3">
+            <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Loja Shopping Cidade" />
 
-        <div style={styles.grid2}>
-          {/* Form */}
-          <section style={styles.panel}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>
-              {editingId ? "Editar loja" : "Nova loja"}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Cidade" value={city} onChange={setCity} placeholder="Belo Horizonte" />
+              <Input label="UF" value={stateUf} onChange={(v) => setStateUf(v.toUpperCase())} placeholder="MG" maxLength={2} />
             </div>
 
-            <label style={styles.label}>Nome</label>
-            <input
-              style={styles.input}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ex.: Loja Shopping Cidade"
-            />
+            <Input label="Frete padrão (opcional)" value={freightFee} onChange={setFreightFee} placeholder="Ex.: 65.00" />
 
-            <div style={styles.grid2inner}>
-              <div>
-                <label style={styles.label}>Cidade</label>
-                <input
-                  style={styles.input}
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  placeholder="Belo Horizonte"
-                />
-              </div>
-              <div>
-                <label style={styles.label}>UF</label>
-                <input
-                  style={styles.input}
-                  value={stateUf}
-                  onChange={(e) => setStateUf(e.target.value)}
-                  placeholder="MG"
-                  maxLength={2}
-                />
-              </div>
-            </div>
-
-            <label style={styles.label}>Frete padrão (opcional)</label>
-            <input
-              style={styles.input}
-              value={freightFee}
-              onChange={(e) => setFreightFee(e.target.value)}
-              placeholder="Ex.: 65.00"
-            />
-
-            <label style={styles.label}>Ativa?</label>
-            <select
-              style={styles.select}
+            <Select
+              label="Ativa?"
               value={active ? "true" : "false"}
-              onChange={(e) => setActive(e.target.value === "true")}
-            >
-              <option value="true">Sim</option>
-              <option value="false">Não</option>
-            </select>
+              onChange={(v) => setActive(v === "true")}
+              options={[
+                { value: "true", label: "Sim" },
+                { value: "false", label: "Não" },
+              ]}
+            />
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-              <button style={styles.primaryBtn} onClick={saveStore} disabled={working}>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <Button onClick={saveStore} disabled={working}>
                 {working ? "Salvando..." : "Salvar"}
-              </button>
-              <button style={styles.secondaryBtn} onClick={resetForm} disabled={working}>
+              </Button>
+              <Button variant="secondary" onClick={resetForm} disabled={working}>
                 Limpar
-              </button>
+              </Button>
             </div>
 
             {editingId ? (
-              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.7 }}>
-                ID: {editingId}
+              <div className="pt-2 text-xs text-slate-500">
+                ID: <span className="font-mono">{editingId}</span>
               </div>
             ) : null}
-          </section>
+          </div>
+        </Card>
 
-          {/* List */}
-          <section style={styles.panel}>
-            <div style={{ fontWeight: 900, marginBottom: 8 }}>Lista</div>
+        {/* List */}
+        <Card title="Lista">
+          <div className="grid gap-3">
+            <Input value={q} onChange={setQ} placeholder="Buscar por nome, cidade, UF..." />
 
-            <input
-              style={styles.input}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por nome, cidade, UF..."
-            />
-
-            {loading ? <div style={{ marginTop: 10 }}>Carregando...</div> : null}
+            {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
 
             {!loading && filtered.length === 0 ? (
-              <div style={{ marginTop: 10, color: "#666" }}>Nenhuma loja encontrada.</div>
+              <div className="text-sm text-slate-600">Nenhuma loja encontrada.</div>
             ) : null}
 
             {!loading && filtered.length > 0 ? (
-              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              <div className="grid gap-2">
                 {filtered.map((s) => {
                   const bal = balancesByStore[s.id] ?? 0;
                   return (
-                    <div key={s.id} style={styles.row}>
-                      <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontWeight: 900,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {s.name}
+                    <div
+                      key={s.id}
+                      className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="truncate font-semibold text-slate-900">{s.name}</div>
+                          <Badge tone={s.active ? "green" : "red"}>{s.active ? "Ativa" : "Inativa"}</Badge>
                         </div>
 
-                        <div style={{ fontSize: 12, opacity: 0.75 }}>
+                        <div className="mt-1 text-sm text-slate-600">
                           {(s.city ?? "-")}
-                          {s.state ? `/${s.state}` : ""} · {s.active ? "Ativa" : "Inativa"}
-                          {s.freight_fee != null ? ` · Frete: R$ ${Number(s.freight_fee).toFixed(2)}` : ""}
+                          {s.state ? `/${s.state}` : ""}{" "}
+                          {s.freight_fee != null ? `· Frete: ${money(Number(s.freight_fee))}` : ""}
                         </div>
 
-                        <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4 }}>
-                          <b>Crédito:</b> R$ {Number(bal).toFixed(2)}
+                        <div className="mt-2 text-sm">
+                          <span className="font-semibold text-slate-900">Crédito:</span>{" "}
+                          <span className="font-semibold text-slate-900">{money(bal)}</span>
                         </div>
 
-                        <div
-                          style={{
-                            fontSize: 12,
-                            opacity: 0.55,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {s.id}
-                        </div>
+                        <div className="mt-2 truncate font-mono text-xs text-slate-500">{s.id}</div>
                       </div>
 
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <button style={styles.secondaryBtn} onClick={() => startEdit(s)} disabled={working}>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="secondary" onClick={() => startEdit(s)} disabled={working}>
                           Editar
-                        </button>
-                        <button style={styles.secondaryBtn} onClick={() => openCredit(s)} disabled={working}>
+                        </Button>
+                        <Button variant="secondary" onClick={() => openCredit(s)} disabled={working}>
                           Crédito
-                        </button>
-                        <button style={styles.warnBtn} onClick={() => toggleActive(s)} disabled={working}>
+                        </Button>
+                        <Button
+                          variant="warn"
+                          onClick={() => toggleActive(s)}
+                          disabled={working}
+                          title={s.active ? "Desativar loja" : "Ativar loja"}
+                        >
                           {s.active ? "Desativar" : "Ativar"}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             ) : null}
-          </section>
-        </div>
+          </div>
+        </Card>
+      </div>
 
-        {/* Modal crédito */}
-        {creditStoreId ? (
-          <div style={styles.modalBackdrop} onClick={closeCredit}>
-            <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                <div>
-                  <div style={{ fontWeight: 900, fontSize: 16 }}>Crédito pré-pago</div>
-                  <div style={{ fontSize: 12, opacity: 0.75 }}>
-                    Loja: <b>{creditStore?.name ?? creditStoreId}</b>
-                    {" · "}
-                    Saldo atual: <b>R$ {Number(creditBalance).toFixed(2)}</b>
-                    {" · "}
-                    Após: <b>R$ {Number(previewAfter).toFixed(2)}</b>
-                  </div>
+      {/* Modal crédito */}
+      {creditStoreId ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+          onClick={closeCredit}
+        >
+          <div
+            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-slate-900">Crédito pré-pago</div>
+                <div className="mt-1 text-xs text-slate-600">
+                  Loja: <b>{creditStore?.name ?? creditStoreId}</b> · Saldo atual: <b>{money(creditBalance)}</b> · Após:{" "}
+                  <b>{money(previewAfter)}</b>
                 </div>
-                <button style={styles.secondaryBtn} onClick={closeCredit} disabled={working}>
-                  Fechar
-                </button>
               </div>
 
-              {/* ✅ Modo */}
-              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                <button
-                  style={creditMode === "ADD" ? styles.modeBtnActive : styles.modeBtn}
-                  onClick={() => setCreditMode("ADD")}
-                  disabled={working}
-                >
-                  Adicionar
-                </button>
-                <button
-                  style={creditMode === "REMOVE" ? styles.modeBtnActive : styles.modeBtn}
-                  onClick={() => setCreditMode("REMOVE")}
-                  disabled={working}
-                >
-                  Remover
-                </button>
-              </div>
+              <Button variant="secondary" onClick={closeCredit} disabled={working}>
+                Fechar
+              </Button>
+            </div>
 
-              <label style={styles.label}>Valor (R$)</label>
-              <input
-                style={styles.input}
-                value={creditAmount}
-                onChange={(e) => setCreditAmount(e.target.value)}
-                placeholder="Ex.: 1000.00"
-              />
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                variant={creditMode === "ADD" ? "primary" : "secondary"}
+                onClick={() => setCreditMode("ADD")}
+                disabled={working}
+              >
+                Adicionar
+              </Button>
+              <Button
+                variant={creditMode === "REMOVE" ? "primary" : "secondary"}
+                onClick={() => setCreditMode("REMOVE")}
+                disabled={working}
+              >
+                Remover
+              </Button>
+            </div>
 
-              <label style={styles.label}>Observação (opcional)</label>
-              <input
-                style={styles.input}
+            <div className="mt-4 grid gap-3">
+              <Input label="Valor (R$)" value={creditAmount} onChange={setCreditAmount} placeholder="Ex.: 1000.00" />
+              <Input
+                label="Observação (opcional)"
                 value={creditNote}
-                onChange={(e) => setCreditNote(e.target.value)}
+                onChange={setCreditNote}
                 placeholder={creditMode === "ADD" ? "Ex.: Crédito antecipado do mês" : "Ex.: Ajuste / Estorno"}
               />
 
-              <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-                <button style={styles.primaryBtn} onClick={applyCredit} disabled={working}>
+              <div className="flex justify-end pt-1">
+                <Button onClick={applyCredit} disabled={working}>
                   {working ? "Salvando..." : creditMode === "ADD" ? "Adicionar" : "Remover"}
-                </button>
+                </Button>
               </div>
 
               {creditMode === "REMOVE" ? (
-                <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                <div className="text-xs text-slate-500">
                   Observação: a remoção só funciona se você rodou o SQL da função <b>remove_store_credit</b>.
                 </div>
               ) : null}
             </div>
           </div>
-        ) : null}
-      </div>
-    </main>
+        </div>
+      ) : null}
+    </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 0 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto",
-  },
-  header: { display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" },
-  grid2: { display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 12, marginTop: 12 },
-  panel: { border: "1px solid #e5e7eb", borderRadius: 14, padding: 12, background: "white" },
-  grid2inner: { display: "grid", gridTemplateColumns: "1fr 120px", gap: 10, marginTop: 10 },
-
-  label: { fontSize: 12, color: "#666", fontWeight: 900, marginTop: 10, display: "block" },
-  input: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", outline: "none" },
-  select: { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb" },
-
-  primaryBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", cursor: "pointer", fontWeight: 900 },
-  secondaryBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff", cursor: "pointer", fontWeight: 900 },
-  warnBtn: { padding: "10px 12px", borderRadius: 10, border: "1px solid #f0b429", background: "#fff8e1", cursor: "pointer", fontWeight: 900 },
-
-  row: { display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", border: "1px solid #eee", borderRadius: 12, padding: 10 },
-
-  msgBox: { marginTop: 12, padding: 10, background: "#fff2f2", border: "1px solid #ffd0d0", borderRadius: 10, color: "#a40000", fontSize: 13 },
-
-  modalBackdrop: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.35)",
-    display: "grid",
-    placeItems: "center",
-    padding: 12,
-    zIndex: 50,
-  },
-  modalCard: {
-    width: "min(520px, 100%)",
-    background: "#fff",
-    borderRadius: 14,
-    border: "1px solid #e6e7ee",
-    boxShadow: "0 20px 50px rgba(0,0,0,0.20)",
-    padding: 14,
-  },
-
-  // ✅ botões modo
-  modeBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-  modeBtnActive: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-    fontWeight: 900,
-  },
-};

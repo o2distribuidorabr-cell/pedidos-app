@@ -4,6 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+import {
+  PageHeader,
+  Card,
+  Button,
+  Select,
+  Badge,
+  Table,
+} from "@/app/components/ui";
+
 type StoreRow = { id: string; name: string | null };
 
 type LedgerRow = {
@@ -15,8 +24,6 @@ type LedgerRow = {
   created_at: string | null;
   created_by: string | null;
 };
-
-type BalanceRow = { store_id: string; balance: number | null };
 
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -98,7 +105,6 @@ export default function AdmCreditoExtratoPage() {
       .in("store_id", list.map((s) => s.id));
 
     if (bErr) {
-      // não trava a página por isso
       console.warn("balances:", bErr.message);
       setBalances({});
       return;
@@ -151,210 +157,136 @@ export default function AdmCreditoExtratoPage() {
     return balances[storeFilter] ?? 0;
   }, [balances, storeFilter]);
 
+  const tableRows = useMemo(() => {
+    return rows.map((r) => {
+      const amt = Number(r.amount ?? 0) || 0;
+      const isCredit = amt >= 0;
+      const tipo = isCredit ? "Crédito" : "Débito/Ajuste";
+
+      return [
+        <span key="dt" className="text-slate-700">{fmtBR(r.created_at)}</span>,
+        <span key="store" className="font-semibold text-slate-900">{r.store_name}</span>,
+        <span
+          key="amt"
+          className={isCredit ? "font-semibold text-slate-900" : "font-semibold text-red-600"}
+        >
+          {isCredit ? money(amt) : `- ${money(Math.abs(amt))}`}
+        </span>,
+        <Badge key="tipo" tone={isCredit ? "green" : "red"}>
+          {tipo}
+        </Badge>,
+        <span key="note" className="text-slate-700">{r.note ?? "-"}</span>,
+        <span key="by" className="font-mono text-xs text-slate-600">{r.created_by ?? "-"}</span>,
+      ];
+    });
+  }, [rows]);
+
   return (
-    <main style={styles.main}>
-      <div style={styles.card}>
-        <div style={styles.headerRow}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 22 }}>Extrato de crédito (Admin)</h1>
-            <div style={{ marginTop: 6, color: "#666", fontSize: 13 }}>
-              Histórico de lançamentos (crédito pré-pago). Valores negativos = remoção/ajuste.
-            </div>
-          </div>
-
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button style={styles.secondaryBtn} onClick={() => router.push("/adm/lojas")}>
-              ← Lojas
-            </button>
-            <button style={styles.secondaryBtn} onClick={onReload} disabled={loading}>
+    <div className="space-y-6">
+      <PageHeader
+        title="Extrato de crédito"
+        subtitle="Histórico de lançamentos (crédito pré-pago). Valores negativos = remoção/ajuste."
+        right={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => router.push("/adm/lojas")}>
+              Lojas
+            </Button>
+            <Button variant="secondary" onClick={onReload} disabled={loading}>
               Recarregar
-            </button>
+            </Button>
           </div>
-        </div>
+        }
+      />
 
-        {msg ? <div style={{ marginTop: 12, ...styles.err }}>{msg}</div> : null}
+      {msg ? (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      ) : null}
 
-        <div style={styles.filters}>
-          <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value)} style={styles.select}>
-            <option value="all">Loja: todas</option>
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name ?? s.id}
-              </option>
-            ))}
-          </select>
+      <Card title="Filtros">
+        <div className="grid gap-3 md:grid-cols-5">
+          <Select
+            label="Loja"
+            value={storeFilter}
+            onChange={setStoreFilter}
+            options={[
+              { value: "all", label: "Todas" },
+              ...stores.map((s) => ({ value: s.id, label: s.name ?? s.id })),
+            ]}
+          />
 
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={styles.select} />
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={styles.select} />
+          <div>
+            <div className="text-xs font-semibold text-slate-600 mb-1">De</div>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
 
-          <button style={styles.primaryBtn} onClick={loadLedger} disabled={loading}>
-            Aplicar filtros
-          </button>
+          <div>
+            <div className="text-xs font-semibold text-slate-600 mb-1">Até</div>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+            />
+          </div>
 
-          {saldoLojaSelecionada != null ? (
-            <div style={styles.balancePill}>
-              Saldo atual: <b style={{ marginLeft: 6 }}>{money(saldoLojaSelecionada)}</b>
+          <div className="flex items-end">
+            <Button onClick={loadLedger} disabled={loading}>
+              Aplicar filtros
+            </Button>
+          </div>
+
+          <div className="flex items-end">
+            <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
+              {saldoLojaSelecionada != null ? (
+                <>
+                  Saldo atual: <b className="ml-1">{money(saldoLojaSelecionada)}</b>
+                </>
+              ) : (
+                "Selecione uma loja para ver o saldo atual"
+              )}
             </div>
-          ) : (
-            <div style={styles.balancePill}>Selecione uma loja para ver o saldo atual</div>
-          )}
-        </div>
-
-        <div style={styles.summaryRow}>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Entradas</div>
-            <div style={styles.sumValue}>{money(resumo.entradas)}</div>
-          </div>
-          <div style={styles.sumBox}>
-            <div style={styles.sumLabel}>Saídas</div>
-            <div style={styles.sumValue}>- {money(resumo.saidas)}</div>
-          </div>
-          <div style={styles.sumBoxStrong}>
-            <div style={styles.sumLabel}>Saldo líquido no período</div>
-            <div style={styles.sumValueStrong}>{money(resumo.net)}</div>
           </div>
         </div>
+      </Card>
 
-        {loading ? <div style={{ marginTop: 12 }}>Carregando...</div> : null}
+      <Card title="Resumo do período">
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Entradas</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.entradas)}</div>
+          </div>
 
-        <div style={{ overflowX: "auto", marginTop: 12 }}>
-          <table style={styles.table}>
-            <thead>
-              <tr>
-                <th style={styles.th}>Data</th>
-                <th style={styles.th}>Loja</th>
-                <th style={styles.th}>Valor</th>
-                <th style={styles.th}>Tipo</th>
-                <th style={styles.th}>Observação</th>
-                <th style={styles.th}>Criado por</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => {
-                const amt = Number(r.amount ?? 0) || 0;
-                const tipo = amt >= 0 ? "Crédito" : "Débito/Ajuste";
-                return (
-                  <tr key={r.id}>
-                    <td style={styles.td}>{fmtBR(r.created_at)}</td>
-                    <td style={styles.td}>{r.store_name}</td>
-                    <td style={amt >= 0 ? styles.tdStrong : styles.tdStrongNeg}>
-                      {amt >= 0 ? money(amt) : `- ${money(Math.abs(amt))}`}
-                    </td>
-                    <td style={styles.td}>{tipo}</td>
-                    <td style={styles.td}>{r.note ?? "-"}</td>
-                    <td style={styles.tdMono}>{r.created_by ?? "-"}</td>
-                  </tr>
-                );
-              })}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Saídas</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">- {money(resumo.saidas)}</div>
+          </div>
 
-              {!loading && rows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} style={{ padding: 14, color: "#777" }}>
-                    Nenhum lançamento encontrado.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold text-slate-500">Saldo líquido no período</div>
+            <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.net)}</div>
+          </div>
         </div>
-      </div>
-    </main>
+      </Card>
+
+      <Card title="Lançamentos" subtitle={`${rows.length} registro(s)`}>
+        {loading ? (
+          <div>Carregando...</div>
+        ) : rows.length === 0 ? (
+          <div className="text-sm text-slate-600">Nenhum lançamento encontrado.</div>
+        ) : (
+          <Table
+            headers={["Data", "Loja", "Valor", "Tipo", "Observação", "Criado por"]}
+            rows={tableRows}
+          />
+        )}
+      </Card>
+    </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  main: { minHeight: "100vh", background: "#f6f7fb", padding: 16 },
-  card: {
-    background: "#fff",
-    border: "1px solid #e6e7ee",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 25px rgba(0,0,0,0.06)",
-    width: "min(1300px, 100%)",
-    margin: "0 auto",
-  },
-  headerRow: { display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" },
-
-  filters: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "1.4fr 180px 180px 180px 1fr",
-    gap: 10,
-    alignItems: "center",
-    padding: 12,
-    border: "1px solid #e5e7eb",
-    borderRadius: 14,
-    background: "white",
-  },
-  select: { padding: "10px 12px", borderRadius: 12, border: "1px solid #e5e7eb", background: "white", fontWeight: 800 },
-  primaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #111",
-    background: "#111",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-  secondaryBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #ddd",
-    background: "#fff",
-    cursor: "pointer",
-    fontSize: 14,
-    fontWeight: 900,
-  },
-  balancePill: {
-    padding: "10px 12px",
-    borderRadius: 12,
-    border: "1px solid #e5e7eb",
-    background: "#fafbff",
-    fontWeight: 800,
-    color: "#111",
-    textAlign: "center",
-  },
-
-  summaryRow: {
-    marginTop: 12,
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-    gap: 10,
-  },
-  sumBox: { border: "1px solid #eee", borderRadius: 12, padding: 12, background: "#fff" },
-  sumBoxStrong: { border: "1px solid #ddd", borderRadius: 12, padding: 12, background: "#fff" },
-  sumLabel: { fontSize: 12, color: "#666", fontWeight: 900 },
-  sumValue: { marginTop: 6, fontSize: 16, fontWeight: 900 },
-  sumValueStrong: { marginTop: 6, fontSize: 18, fontWeight: 1000 as any },
-
-  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0 },
-  th: {
-    textAlign: "left",
-    padding: "10px 10px",
-    fontSize: 12,
-    color: "#555",
-    borderBottom: "1px solid #eee",
-    background: "#fafbff",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", whiteSpace: "nowrap" },
-  tdStrong: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap" },
-  tdStrongNeg: { padding: "10px 10px", borderBottom: "1px solid #f1f1f6", fontWeight: 900, whiteSpace: "nowrap", color: "#a40000" },
-  tdMono: {
-    padding: "10px 10px",
-    borderBottom: "1px solid #f1f1f6",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 13,
-    whiteSpace: "nowrap",
-  },
-
-  err: {
-    padding: 10,
-    background: "#fff2f2",
-    border: "1px solid #ffd0d0",
-    borderRadius: 10,
-    color: "#a40000",
-    fontSize: 13,
-  },
-};
