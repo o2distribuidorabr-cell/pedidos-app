@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import PortalShell from "@/app/components/PortalShell";
 import { PageHeader, Card, Button, Select, StatCard, Table, Badge } from "@/app/components/ui";
 
 type ProfileRow = {
@@ -223,10 +224,7 @@ export default function DashboardFranqueadoPage() {
   const kpis = useMemo(() => {
     const totalMes = statusMonthly.reduce((acc, r) => acc + (Number(r.total_value) || 0), 0);
 
-    // Ajuste aqui conforme seu fluxo de status:
-    // - "submitted" geralmente = pedido enviado, aguardando aprovação/pagamento
-    // - "approved" = aprovado
-    // Você pode depois criar status "paid" e "delivered" etc.
+    // Ajuste aqui conforme seu fluxo de status
     const emAbertoStatuses = new Set(["submitted", "approved"]);
     const emAberto = statusMonthly
       .filter((r) => emAbertoStatuses.has(r.status))
@@ -260,14 +258,12 @@ export default function DashboardFranqueadoPage() {
   }, [topItems]);
 
   const weeklySummary = useMemo(() => {
-    // resumo semanal total (somando todos itens), só para visão rápida
-    const map = new Map<string, { value: number; orders: Set<string> }>();
+    const map = new Map<string, { value: number }>();
 
     for (const r of weekly) {
       const wk = r.week_ref;
-      const cur = map.get(wk) ?? { value: 0, orders: new Set<string>() };
+      const cur = map.get(wk) ?? { value: 0 };
       cur.value += Number(r.total_value || 0);
-      // aqui não temos order_id na view semanal; então orders_count já existe
       map.set(wk, cur);
     }
 
@@ -279,95 +275,99 @@ export default function DashboardFranqueadoPage() {
   }, [weekly]);
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Dashboard"
-        subtitle="Resumo de compras, itens e valores do período"
-        right={
-          <>
-            <Select
-              value={monthYM}
-              onChange={setMonthYM}
-              options={Array.from({ length: 12 }).map((_, i) => {
-                const d = new Date();
-                d.setMonth(d.getMonth() - i);
-                const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-                return { value: ym, label: ym };
-              })}
-            />
-            <Button variant="secondary" onClick={refresh} disabled={loading}>
-              Atualizar
-            </Button>
-          </>
-        }
-      />
+    <PortalShell title="Dashboard" subtitle="Resumo de compras, itens e valores do período">
+      <div className="space-y-6">
+        <PageHeader
+          title="Dashboard"
+          subtitle="Resumo de compras, itens e valores do período"
+          right={
+            <>
+              <Select
+                value={monthYM}
+                onChange={setMonthYM}
+                options={Array.from({ length: 12 }).map((_, i) => {
+                  const d = new Date();
+                  d.setMonth(d.getMonth() - i);
+                  const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                  return { value: ym, label: ym };
+                })}
+              />
+              <Button variant="secondary" onClick={refresh} disabled={loading}>
+                Atualizar
+              </Button>
+            </>
+          }
+        />
 
-      {msg ? (
-        <Card>
-          <div className="text-sm text-red-600">{msg}</div>
-        </Card>
-      ) : null}
+        {msg ? (
+          <Card>
+            <div className="text-sm text-red-600">{msg}</div>
+          </Card>
+        ) : null}
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard title="Compras no mês" value={money(kpis.totalMes)} subtitle={`Referência: ${monthYM}`} />
-        <StatCard title="Em aberto (por status)" value={money(kpis.emAberto)} subtitle="Considerando submitted/approved" />
-        <StatCard title="Qtd. de pedidos (mês)" value={kpis.pedidosMes} subtitle="Total de pedidos por status" />
-      </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          <StatCard title="Compras no mês" value={money(kpis.totalMes)} subtitle={`Referência: ${monthYM}`} />
+          <StatCard title="Em aberto (por status)" value={money(kpis.emAberto)} subtitle="Considerando submitted/approved" />
+          <StatCard title="Qtd. de pedidos (mês)" value={kpis.pedidosMes} subtitle="Total de pedidos por status" />
+        </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Top itens do mês (valor)">
-          {loading ? (
-            <div className="text-sm text-slate-600">Carregando...</div>
-          ) : topItems.length === 0 ? (
-            <div className="text-sm text-slate-600">Nenhum item encontrado para este mês.</div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card title="Top itens do mês (valor)">
+            {loading ? (
+              <div className="text-sm text-slate-600">Carregando...</div>
+            ) : topItems.length === 0 ? (
+              <div className="text-sm text-slate-600">Nenhum item encontrado para este mês.</div>
+            ) : (
+              <Table headers={["Item", "Qtd", "Pedidos", "Valor"]} rows={tableTopItems} />
+            )}
+          </Card>
+
+          <Card title="Compras por semana (últimas 8)">
+            {weeklySummary.length === 0 ? (
+              <div className="text-sm text-slate-600">Sem dados semanais ainda.</div>
+            ) : (
+              <div className="space-y-2">
+                {weeklySummary.map((w) => (
+                  <div
+                    key={w.week_ref}
+                    className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2"
+                  >
+                    <div className="text-sm text-slate-700">
+                      <span className="font-semibold text-slate-900">{w.week_ref}</span>
+                      <span className="text-slate-500"> (semana)</span>
+                    </div>
+                    <Badge tone="blue">{money(w.total_value)}</Badge>
+                  </div>
+                ))}
+                <div className="text-xs text-slate-500">Dica: depois colocamos um gráfico (sem depender de biblioteca externa).</div>
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <Card title="Status do mês">
+          {statusMonthly.length === 0 ? (
+            <div className="text-sm text-slate-600">Sem status para este mês.</div>
           ) : (
             <Table
-              headers={["Item", "Qtd", "Pedidos", "Valor"]}
-              rows={tableTopItems}
+              headers={["Status", "Pedidos", "Qtd Itens", "Valor"]}
+              rows={statusMonthly
+                .slice()
+                .sort((a, b) => (Number(b.total_value) || 0) - (Number(a.total_value) || 0))
+                .map((r, idx) => [
+                  <div key={`st-${idx}`} className="font-semibold text-slate-900">
+                    {r.status}
+                  </div>,
+                  <div key={`od-${idx}`}>{Number(r.orders_count || 0)}</div>,
+                  <div key={`qt-${idx}`}>{Number(r.total_qty || 0).toLocaleString("pt-BR")}</div>,
+                  <div key={`vl-${idx}`} className="font-semibold">
+                    {money(Number(r.total_value || 0))}
+                  </div>,
+                ])}
             />
           )}
         </Card>
-
-        <Card title="Compras por semana (últimas 8)">
-          {weeklySummary.length === 0 ? (
-            <div className="text-sm text-slate-600">Sem dados semanais ainda.</div>
-          ) : (
-            <div className="space-y-2">
-              {weeklySummary.map((w) => (
-                <div key={w.week_ref} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <div className="text-sm text-slate-700">
-                    <span className="font-semibold text-slate-900">{w.week_ref}</span>
-                    <span className="text-slate-500"> (semana)</span>
-                  </div>
-                  <Badge tone="blue">{money(w.total_value)}</Badge>
-                </div>
-              ))}
-              <div className="text-xs text-slate-500">
-                Dica: depois colocamos um gráfico (sem depender de biblioteca externa).
-              </div>
-            </div>
-          )}
-        </Card>
       </div>
-
-      <Card title="Status do mês">
-        {statusMonthly.length === 0 ? (
-          <div className="text-sm text-slate-600">Sem status para este mês.</div>
-        ) : (
-          <Table
-            headers={["Status", "Pedidos", "Qtd Itens", "Valor"]}
-            rows={statusMonthly
-              .slice()
-              .sort((a, b) => (Number(b.total_value) || 0) - (Number(a.total_value) || 0))
-              .map((r, idx) => [
-                <div key={`st-${idx}`} className="font-semibold text-slate-900">{r.status}</div>,
-                <div key={`od-${idx}`}>{Number(r.orders_count || 0)}</div>,
-                <div key={`qt-${idx}`}>{Number(r.total_qty || 0).toLocaleString("pt-BR")}</div>,
-                <div key={`vl-${idx}`} className="font-semibold">{money(Number(r.total_value || 0))}</div>,
-              ])}
-          />
-        )}
-      </Card>
-    </div>
+    </PortalShell>
   );
 }
