@@ -19,11 +19,7 @@ function initialsFrom(s: string) {
 
 function Chevron({ dir }: { dir: "left" | "right" }) {
   // ícone simples (sem lib)
-  return (
-    <span className="text-slate-500">
-      {dir === "left" ? "◀" : "▶"}
-    </span>
-  );
+  return <span className="text-slate-500">{dir === "left" ? "◀" : "▶"}</span>;
 }
 
 function NavItem({
@@ -144,7 +140,12 @@ export default function PortalShell({
       setUserEmail(user.email ?? "-");
 
       if (m !== "admin") {
-        const { data: profile } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("store_id")
+          .eq("id", user.id)
+          .maybeSingle();
+
         const storeId = (profile?.store_id as string | null) ?? null;
 
         if (!storeId) {
@@ -153,7 +154,12 @@ export default function PortalShell({
           return;
         }
 
-        const { data: store } = await supabase.from("stores").select("name").eq("id", storeId).maybeSingle();
+        const { data: store } = await supabase
+          .from("stores")
+          .select("name")
+          .eq("id", storeId)
+          .maybeSingle();
+
         setStoreName((store?.name as string) ?? "-");
       } else {
         setStoreName("-");
@@ -187,7 +193,9 @@ export default function PortalShell({
     });
   }
 
+  // ✅ ADICIONADO: Dashboard no Admin e no Franqueado
   const adminItems = [
+    { label: "Dashboard", href: "/adm/dashboard" },
     { label: "Pedidos", href: "/adm/pedidos" },
     { label: "Cadastros", href: "/adm/cadastros" },
     { label: "Usuários", href: "/adm/usuarios" },
@@ -198,6 +206,7 @@ export default function PortalShell({
   ];
 
   const franchiseeItems = [
+    { label: "Dashboard", href: "/dashboard" },
     { label: "Pedidos", href: "/pedidos" },
     { label: "Novo pedido", href: "/pedido" },
     { label: "Financeiro", href: "/financeiro" },
@@ -226,7 +235,11 @@ export default function PortalShell({
           ].join(" ")}
         >
           {/* Topo: logo + toggle discreto */}
-          <div className={["flex items-center", collapsed ? "justify-center px-3 py-5" : "justify-between px-6 py-5"].join(" ")}>
+          <div
+            className={["flex items-center", collapsed ? "justify-center px-3 py-5" : "justify-between px-6 py-5"].join(
+              " "
+            )}
+          >
             <BrandMark compact={collapsed} />
 
             {/* Toggle como ícone pequeno (só aparece no expandido; no colapsado fica abaixo) */}
@@ -333,7 +346,9 @@ export default function PortalShell({
 
                 <div className="hidden md:block">
                   <div className="text-sm font-semibold text-slate-900">{title}</div>
-                  <div className="text-xs text-slate-500">{subtitle ?? (isAdminMode ? "Administrativo" : "Franqueado")}</div>
+                  <div className="text-xs text-slate-500">
+                    {subtitle ?? (isAdminMode ? "Administrativo" : "Franqueado")}
+                  </div>
                 </div>
               </div>
 
@@ -353,7 +368,9 @@ export default function PortalShell({
 
                   <div>
                     <div className="text-[11px] font-semibold text-slate-500">Portal</div>
-                    <div className="text-sm font-semibold text-slate-900">{isAdminMode ? "Administrador" : "Franqueado"}</div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      {isAdminMode ? "Administrador" : "Franqueado"}
+                    </div>
                   </div>
                 </div>
 

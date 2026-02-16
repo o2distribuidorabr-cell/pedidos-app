@@ -26,6 +26,11 @@ type OrderRow = {
   freight_fee: number | null;
 
   credit_applied: number | null;
+
+  // ✅ novos campos refletidos
+  due_date: string | null; // DATE => "YYYY-MM-DD"
+  edited_by_admin: boolean | null;
+  edited_at: string | null;
 };
 
 type TotalsRow = {
@@ -79,6 +84,24 @@ function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neu
   if (v === "ENTREGUE") return "green";
   if (v === "EM_SEPARACAO") return "yellow";
   return "neutral";
+}
+
+function todayYMD() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function dueTone(due: string | null): "green" | "red" | "neutral" {
+  if (!due) return "neutral";
+  return due < todayYMD() ? "red" : "green";
+}
+
+function dueLabel(due: string | null) {
+  if (!due) return "Sem venc.";
+  return due;
 }
 
 export default function HistoricoPedidosPage() {
@@ -219,7 +242,7 @@ export default function HistoricoPedidosPage() {
     const { data: ords, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee, credit_applied"
+        "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee, credit_applied, due_date, edited_by_admin, edited_at"
       )
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
@@ -378,7 +401,17 @@ export default function HistoricoPedidosPage() {
             </div>
 
             <div className="lg:col-span-6 flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => { setQ(""); setStatusFilter("all"); setLogFilter("all"); setPaidFilter("all"); setDateFrom(""); setDateTo(""); }}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setQ("");
+                  setStatusFilter("all");
+                  setLogFilter("all");
+                  setPaidFilter("all");
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+              >
                 Limpar filtros
               </Button>
               <Button variant="secondary" onClick={refresh} disabled={working || loading || !storeId}>
@@ -404,6 +437,7 @@ export default function HistoricoPedidosPage() {
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Operação</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Entrega</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Frete</th>
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Vencimento</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Criado</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Enviado</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Aprovado</th>
@@ -415,7 +449,8 @@ export default function HistoricoPedidosPage() {
 
                 <tbody>
                   {filtered.map((o) => {
-                    const frete = o.delivery_mode === "FRETE" ? money(Number(o.freight_fee ?? 0)) : "-";
+                    const freteTxt = o.delivery_mode === "FRETE" ? money(Number(o.freight_fee ?? 0)) : "-";
+                    const isEdited = !!o.edited_by_admin;
 
                     return (
                       <tr
@@ -425,7 +460,13 @@ export default function HistoricoPedidosPage() {
                         title="Abrir pedido"
                       >
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                          <div className="font-mono text-xs text-slate-600">{o.id}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-mono text-xs text-slate-600">{o.id}</div>
+                            {isEdited ? <Badge tone="blue">EDITADO</Badge> : null}
+                          </div>
+                          {isEdited && o.edited_at ? (
+                            <div className="mt-1 text-[11px] text-slate-500">em {fmtBR(o.edited_at)}</div>
+                          ) : null}
                         </td>
 
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
@@ -441,7 +482,14 @@ export default function HistoricoPedidosPage() {
                         </td>
 
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
-                          {frete}
+                          {freteTxt}
+                        </td>
+
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <Badge tone={dueTone(o.due_date)}>{dueLabel(o.due_date)}</Badge>
+                            {o.due_date ? (o.due_date < todayYMD() ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">OK</Badge>) : null}
+                          </div>
                         </td>
 
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">

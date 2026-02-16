@@ -22,6 +22,9 @@ type OrderRow = {
   freight_fee: number | null;
 
   credit_applied: number | null;
+
+  // ✅ NOVO
+  due_date: string | null; // DATE no Postgres (YYYY-MM-DD)
 };
 
 type TotalsRow = {
@@ -59,6 +62,10 @@ type RowUi = {
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
+  // ✅ NOVO
+  due_date: string | null;
+  due_status: "PAGO" | "VENCIDO" | "A_VENCER" | "SEM_VENCIMENTO";
+
   credit_balance: number;
 };
 
@@ -70,7 +77,7 @@ function fmtBR(iso: string | null | undefined) {
   try {
     return new Date(iso).toLocaleString("pt-BR");
   } catch {
-    return iso;
+    return iso as any;
   }
 }
 function toISOStart(dateStr: string) {
@@ -100,6 +107,30 @@ function statusTone(s: string) {
   return "neutral";
 }
 
+// ✅ NOVO: hoje em YYYY-MM-DD (compatível com Postgres DATE)
+function todayYMD() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// ✅ NOVO: calcula status de vencimento
+function calcDueStatus(due: string | null, isPaid: boolean) {
+  if (isPaid) return "PAGO" as const;
+  if (!due) return "SEM_VENCIMENTO" as const;
+  return due < todayYMD() ? ("VENCIDO" as const) : ("A_VENCER" as const);
+}
+
+// ✅ NOVO: badge do vencimento
+function dueBadge(s: RowUi["due_status"]) {
+  if (s === "PAGO") return <Badge tone="green">Pago</Badge>;
+  if (s === "VENCIDO") return <Badge tone="red">Vencido</Badge>;
+  if (s === "A_VENCER") return <Badge tone="yellow">A vencer</Badge>;
+  return <Badge tone="neutral">—</Badge>;
+}
+
 export default function FinanceiroFranqueadoPage() {
   const router = useRouter();
 
@@ -117,6 +148,9 @@ export default function FinanceiroFranqueadoPage() {
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
+  // ✅ NOVO: filtro de vencimento
+  const [dueFilter, setDueFilter] = useState<string>("all"); // all | A_VENCER | VENCIDO | PAGO | SEM_VENCIMENTO
+
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -129,7 +163,12 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
+      const { data: profile, error: pErr } = await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", user.id)
+        .maybeSingle();
+
       if (pErr) {
         setMsg(pErr.message);
         setLoading(false);
@@ -152,7 +191,11 @@ export default function FinanceiroFranqueadoPage() {
   }, []);
 
   async function loadCreditBalance(sId: string): Promise<number> {
-    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id,balance").eq("store_id", sId).maybeSingle();
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id,balance")
+      .eq("store_id", sId)
+      .maybeSingle();
 
     if (error) {
       console.warn("credit balance:", error.message);
@@ -170,7 +213,9 @@ export default function FinanceiroFranqueadoPage() {
 
     let q = supabase
       .from("orders")
-      .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied")
+      .select(
+        "id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied,due_date"
+      )
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
 
@@ -199,13 +244,21 @@ export default function FinanceiroFranqueadoPage() {
 
     const orderIds = orders.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
+    const { data: tots, error: tErr } = await supabase
+      .from("v_order_totals")
+      .select("order_id,store_id,total_cost")
+      .in("order_id", orderIds);
+
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
+    const { data: itemsRaw, error: iErr } = await supabase
+      .from("order_items")
+      .select("order_id,qty,unit_cost")
+      .in("order_id", orderIds);
+
     if (iErr) console.warn("order_items calc:", iErr.message);
 
     const itemsCalcMap = new Map<string, number>();
@@ -237,6 +290,9 @@ export default function FinanceiroFranqueadoPage() {
       const credit = Number(o.credit_applied ?? 0);
       const a_pagar = Math.max(total - credit, 0);
 
+      const isPaid = !!o.is_paid;
+      const due_status = calcDueStatus(o.due_date ?? null, isPaid);
+
       return {
         id: o.id,
         status: o.status,
@@ -250,15 +306,21 @@ export default function FinanceiroFranqueadoPage() {
         credit_applied: credit,
         a_pagar,
 
-        is_paid: !!o.is_paid,
+        is_paid: isPaid,
         paid_at: o.paid_at,
         payment_method: o.payment_method,
+
+        due_date: o.due_date ?? null,
+        due_status,
 
         credit_balance: bal,
       };
     });
 
-    setRows(ui);
+    // ✅ aplica filtro de vencimento no front (não complica a query)
+    const filtered = dueFilter === "all" ? ui : ui.filter((r) => r.due_status === dueFilter);
+
+    setRows(filtered);
   }
 
   async function onReload() {
@@ -276,24 +338,77 @@ export default function FinanceiroFranqueadoPage() {
     const totalApagar = rows.reduce((a, r) => a + r.a_pagar, 0);
     const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar : 0), 0);
     const totalAberto = totalApagar - totalPago;
-    return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto };
+
+    const totalVencido = rows
+      .filter((r) => r.due_status === "VENCIDO")
+      .reduce((a, r) => a + r.a_pagar, 0);
+
+    const totalAVencer = rows
+      .filter((r) => r.due_status === "A_VENCER")
+      .reduce((a, r) => a + r.a_pagar, 0);
+
+    return {
+      totalMercadoria,
+      totalFrete,
+      totalTotal,
+      totalCredito,
+      totalApagar,
+      totalPago,
+      totalAberto,
+      totalVencido,
+      totalAVencer,
+    };
   }, [rows]);
 
-  const headers = ["Pedido", "Status", "Operação", "Entrega", "Mercadoria", "Frete", "Total", "Crédito", "A pagar", "Pago?", "Data pgto", "Saldo crédito"];
+  const headers = [
+    "Pedido",
+    "Status",
+    "Operação",
+    "Entrega",
+    "Vencimento",
+    "Situação",
+    "Forma pgto",
+    "Mercadoria",
+    "Frete",
+    "Total",
+    "Crédito",
+    "A pagar",
+    "Pago?",
+    "Data pgto",
+    "Saldo crédito",
+  ];
 
   const tableRows = rows.map((r) => [
-    <span key="id" className="font-mono text-xs">{r.id}</span>,
-    <Badge key="st" tone={statusTone(r.status) as any}>{r.status}</Badge>,
+    <span key="id" className="font-mono text-xs">
+      {r.id}
+    </span>,
+    <Badge key="st" tone={statusTone(r.status) as any}>
+      {r.status}
+    </Badge>,
     <span key="op">{logisticLabel(r.logistic_status)}</span>,
     <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
-    <span key="m" className="font-semibold">{money(r.mercadoria)}</span>,
+
+    // ✅ NOVO
+    <span key="due">{r.due_date ?? "-"}</span>,
+    <span key="dueSt">{dueBadge(r.due_status)}</span>,
+    <span key="pm">{r.payment_method ?? "-"}</span>,
+
+    <span key="m" className="font-semibold">
+      {money(r.mercadoria)}
+    </span>,
     <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
-    <span key="t" className="font-semibold">{money(r.total)}</span>,
+    <span key="t" className="font-semibold">
+      {money(r.total)}
+    </span>,
     <span key="c">- {money(r.credit_applied)}</span>,
-    <span key="ap" className="font-semibold">{money(r.a_pagar)}</span>,
+    <span key="ap" className="font-semibold">
+      {money(r.a_pagar)}
+    </span>,
     <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
     <span key="dt">{fmtBR(r.paid_at)}</span>,
-    <span key="bal" className="font-semibold">{money(r.credit_balance)}</span>,
+    <span key="bal" className="font-semibold">
+      {money(r.credit_balance)}
+    </span>,
   ]);
 
   if (loading) {
@@ -309,15 +424,14 @@ export default function FinanceiroFranqueadoPage() {
   return (
     <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
       <div className="space-y-4">
-        <Card
-          title="Filtros"
-          right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}
-        >
+        <PageHeader title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos" />
+
+        <Card title="Filtros" right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}>
           {msg ? (
             <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
             <Select
               label="Status"
               value={statusFilter}
@@ -353,12 +467,39 @@ export default function FinanceiroFranqueadoPage() {
               ]}
             />
 
+            {/* ✅ NOVO: filtro de vencimento */}
+            <Select
+              label="Vencimento"
+              value={dueFilter}
+              onChange={setDueFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "A_VENCER", label: "A vencer" },
+                { value: "VENCIDO", label: "Vencidos" },
+                { value: "PAGO", label: "Pagos" },
+                { value: "SEM_VENCIMENTO", label: "Sem vencimento" },
+              ]}
+            />
+
             <Input label="De" type="date" value={dateFrom} onChange={setDateFrom} />
             <Input label="Até" type="date" value={dateTo} onChange={setDateTo} />
           </div>
 
-          <div className="mt-4">
+          <div className="mt-4 flex flex-wrap gap-2">
             <Button onClick={onReload}>Aplicar filtros</Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPaidFilter("all");
+                setStatusFilter("all");
+                setDeliveryFilter("all");
+                setDueFilter("all");
+                setDateFrom("");
+                setDateTo("");
+              }}
+            >
+              Limpar filtros
+            </Button>
           </div>
         </Card>
 
@@ -371,13 +512,12 @@ export default function FinanceiroFranqueadoPage() {
           <StatCard label="Pago" value={money(resumo.totalPago)} />
           <StatCard label="Em aberto" value={money(resumo.totalAberto)} />
           <StatCard label="Saldo de crédito" value={money(creditBalance)} />
+          {/* ✅ NOVO: destaque */}
+          <StatCard label="Vencidos (no filtro)" value={money(resumo.totalVencido)} />
+          <StatCard label="A vencer (no filtro)" value={money(resumo.totalAVencer)} />
         </div>
 
-        <Card
-          title="Pedidos"
-          subtitle="Clique em uma linha para abrir o pedido"
-          right={<Button variant="secondary" onClick={onReload}>Atualizar</Button>}
-        >
+        <Card title="Pedidos" subtitle="Clique em uma linha para abrir o pedido" right={<Button variant="secondary" onClick={onReload}>Atualizar</Button>}>
           <div
             className="cursor-pointer"
             onClickCapture={(e) => {
@@ -394,7 +534,6 @@ export default function FinanceiroFranqueadoPage() {
                   ? []
                   : rows.map((r, idx) => {
                       const row = tableRows[idx];
-                      // envolvemos cada célula em <div> simples, e marcamos o row com data-order-id
                       return row.map((cell, cidx) => (
                         <div key={`${r.id}-${cidx}`} data-order-id={r.id}>
                           {cell}
@@ -405,9 +544,7 @@ export default function FinanceiroFranqueadoPage() {
             />
           </div>
 
-          {rows.length === 0 ? (
-            <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div>
-          ) : null}
+          {rows.length === 0 ? <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div> : null}
         </Card>
       </div>
     </PortalShell>

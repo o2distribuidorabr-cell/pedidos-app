@@ -25,6 +25,13 @@ type OrderRow = {
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
+
+  // ✅ novos campos refletidos
+  due_date: string | null; // DATE => "YYYY-MM-DD"
+
+  edited_by_admin: boolean | null;
+  edited_at: string | null;
+  original_items: OriginalItem[] | null;
 };
 
 type ProductRow = { sku: string | null; name: string | null; unit: string | null };
@@ -36,6 +43,17 @@ type ItemRow = {
   unit_cost: number | null;
   product_id: string;
   products: ProductRow | ProductRow[] | null;
+};
+
+type OriginalItem = {
+  id: string;
+  product_id: string;
+  qty: number;
+  unit: string | null;
+  unit_cost: number | null;
+  sku: string | null;
+  name: string | null;
+  product_unit: string | null;
 };
 
 function money(n: number) {
@@ -76,6 +94,14 @@ function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neu
   return "neutral";
 }
 
+function todayYMD() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 // Normaliza products para SEMPRE virar 1 objeto (ou null)
 function getProduct(p: ItemRow["products"]): ProductRow | null {
   if (!p) return null;
@@ -96,6 +122,7 @@ export default function PedidoDetalhePage() {
 
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
+  const [originalItems, setOriginalItems] = useState<OriginalItem[] | null>(null);
 
   const totalItens = useMemo(() => {
     return items.reduce((acc, it) => {
@@ -112,6 +139,12 @@ export default function PedidoDetalhePage() {
 
   const totalComFrete = useMemo(() => totalItens + frete, [totalItens, frete]);
 
+  const edited = useMemo(() => !!order?.edited_by_admin, [order?.edited_by_admin]);
+  const overdue = useMemo(() => {
+    if (!order?.due_date) return false;
+    return order.due_date < todayYMD();
+  }, [order?.due_date]);
+
   useEffect(() => {
     (async () => {
       setMsg("");
@@ -127,6 +160,7 @@ export default function PedidoDetalhePage() {
         setMsg("Pedido inválido.");
         setOrder(null);
         setItems([]);
+        setOriginalItems(null);
         setLoading(false);
         return;
       }
@@ -144,7 +178,7 @@ export default function PedidoDetalhePage() {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,edited_by_admin,edited_at,original_items"
       )
       .eq("id", id)
       .maybeSingle();
@@ -153,9 +187,13 @@ export default function PedidoDetalhePage() {
       setMsg(oErr?.message || "Pedido não encontrado.");
       setOrder(null);
       setItems([]);
+      setOriginalItems(null);
       return;
     }
-    setOrder(o as OrderRow);
+
+    const ord = o as OrderRow;
+    setOrder(ord);
+    setOriginalItems((ord.original_items ?? null) as any);
 
     // Itens (alias products:products para relação)
     const { data: it, error: itErr } = await supabase
@@ -181,6 +219,14 @@ export default function PedidoDetalhePage() {
   }
 
   const backTo = "/pedidos";
+
+  const originalTotal = useMemo(() => {
+    if (!originalItems || originalItems.length === 0) return 0;
+    return originalItems.reduce((acc, it) => {
+      const unitCost = Number(it.unit_cost ?? 0);
+      return acc + (Number(it.qty ?? 0) || 0) * unitCost;
+    }, 0);
+  }, [originalItems]);
 
   return (
     <PortalShell title="Pedidos" subtitle="Detalhe do pedido">
@@ -216,6 +262,46 @@ export default function PedidoDetalhePage() {
           </Card>
         ) : (
           <>
+            {/* Aviso de edição + vencimento */}
+            <Card title="Informações importantes">
+              <div className="flex flex-wrap items-center gap-2">
+                {edited ? (
+                  <Badge tone="blue">Pedido ajustado pela franqueadora</Badge>
+                ) : (
+                  <Badge tone="neutral">Pedido original</Badge>
+                )}
+
+                {order.due_date ? (
+                  overdue ? (
+                    <Badge tone="red">Vencido • {order.due_date}</Badge>
+                  ) : (
+                    <Badge tone="green">Vence em • {order.due_date}</Badge>
+                  )
+                ) : (
+                  <Badge tone="neutral">Sem vencimento</Badge>
+                )}
+              </div>
+
+              <div className="mt-3 text-sm text-slate-700">
+                <div>
+                  <span className="font-semibold text-slate-900">Vencimento:</span>{" "}
+                  {order.due_date ? order.due_date : "—"}
+                </div>
+                {edited ? (
+                  <div className="mt-1">
+                    <span className="font-semibold text-slate-900">Editado em:</span>{" "}
+                    {fmtDT(order.edited_at)}
+                  </div>
+                ) : null}
+              </div>
+
+              {edited && originalItems && originalItems.length > 0 ? (
+                <div className="mt-3 text-sm text-slate-600">
+                  Abaixo você verá o <b>pedido original</b> e o <b>pedido atual</b> após ajustes de estoque.
+                </div>
+              ) : null}
+            </Card>
+
             {/* Cards de informações */}
             <div className="grid gap-3 lg:grid-cols-3">
               <Card title="Status">
@@ -262,9 +348,9 @@ export default function PedidoDetalhePage() {
               <div className="whitespace-pre-wrap text-sm text-slate-700">{order.notes ?? "—"}</div>
             </Card>
 
-            {/* Resumo */}
+            {/* Resumo atual */}
             <div className="grid gap-3 md:grid-cols-3">
-              <Card title="Itens">
+              <Card title="Itens (atual)">
                 <div className="text-lg font-semibold text-slate-900">{money(totalItens)}</div>
               </Card>
               <Card title="Frete">
@@ -275,8 +361,8 @@ export default function PedidoDetalhePage() {
               </Card>
             </div>
 
-            {/* Itens */}
-            <Card title={`Itens (${items.length})`}>
+            {/* Itens atuais */}
+            <Card title={`Itens atuais (${items.length})`}>
               {items.length === 0 ? (
                 <div className="text-sm text-slate-600">Nenhum item.</div>
               ) : (
@@ -331,6 +417,69 @@ export default function PedidoDetalhePage() {
                 </div>
               )}
             </Card>
+
+            {/* Pedido original (snapshot) */}
+            {edited && originalItems && originalItems.length > 0 ? (
+              <Card
+                title={`Pedido original do franqueado (${originalItems.length})`}
+                subtitle={`Snapshot salvo em ${fmtDT(order.edited_at)}`}
+              >
+                <div className="mb-3 grid gap-3 md:grid-cols-3">
+                  <Card title="Total original (itens)">
+                    <div className="text-lg font-semibold text-slate-900">{money(originalTotal)}</div>
+                  </Card>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full border-separate border-spacing-0">
+                    <thead>
+                      <tr className="text-left text-xs text-slate-600">
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Produto</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Qtd</th>
+                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {originalItems.map((it) => {
+                        const sku = it.sku ?? "-";
+                        const name = it.name ?? "-";
+                        const unit = it.product_unit ?? it.unit ?? "-";
+                        const unitCost = Number(it.unit_cost ?? 0) || 0;
+                        const qty = Number(it.qty ?? 0) || 0;
+                        const line = qty * unitCost;
+
+                        return (
+                          <tr key={it.id} className="hover:bg-slate-50">
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                              <div className="font-mono text-xs text-slate-600">{sku}</div>
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-900">
+                              {name}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
+                              {unit}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
+                              {money(unitCost)}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                              {qty}
+                            </td>
+                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
+                              {money(line)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Card>
+            ) : null}
           </>
         )}
       </div>
