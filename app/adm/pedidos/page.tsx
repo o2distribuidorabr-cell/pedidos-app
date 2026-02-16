@@ -5,14 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import {
-  PageHeader,
-  Card,
-  Button,
-  Input,
-  Select,
-  Badge,
-} from "@/app/components/ui";
+import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
 
 type PaymentMethod = "PIX" | "CARTAO" | "BOLETO";
 type DeliveryMode = "RETIRADA" | "FRETE";
@@ -63,6 +56,12 @@ function isPastDateYMD(ymd: string) {
   return ymd < t;
 }
 
+type OrdersAdminListRow = OrderRow;
+
+function isOrdersAdminListRowArray(v: unknown): v is OrdersAdminListRow[] {
+  return Array.isArray(v);
+}
+
 export default function AdmPedidosPage() {
   const router = useRouter();
 
@@ -88,14 +87,18 @@ export default function AdmPedidosPage() {
       return;
     }
 
-    setOrders((data as any) ?? []);
+    const safe = isOrdersAdminListRowArray(data) ? data : [];
+    setOrders(safe);
     setLoading(false);
   }
 
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) return router.push("/login");
+      if (!auth?.user) {
+        router.push("/login");
+        return;
+      }
       await loadOrders();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,7 +142,7 @@ export default function AdmPedidosPage() {
     setDeleting(false);
   }
 
-  async function updateOrder(id: string, patch: any) {
+  async function updateOrder(id: string, patch: Partial<OrderRow>) {
     const { error } = await supabase.from("orders").update(patch).eq("id", id);
     if (error) console.error("updateOrder error:", error);
     await loadOrders();
@@ -167,12 +170,7 @@ export default function AdmPedidosPage() {
       />
 
       <Card>
-        <Input
-          label="Buscar"
-          placeholder="ID ou loja..."
-          value={q}
-          onChange={setQ}
-        />
+        <Input label="Buscar" placeholder="ID ou loja..." value={q} onChange={setQ} />
       </Card>
 
       {loading && <Card>Carregando...</Card>}
@@ -194,20 +192,16 @@ export default function AdmPedidosPage() {
                   />
                   <div className="flex items-center gap-2">
                     <span>{o.store_name ?? "Loja não vinculada"}</span>
-                    {isOverdue && <Badge variant="danger">Vencido</Badge>}
-                    {!!due && !isOverdue && <Badge variant="secondary">Com vencimento</Badge>}
+                    {isOverdue ? <Badge tone="red">Vencido</Badge> : null}
+                    {!!due && !isOverdue ? <Badge tone="neutral">Com vencimento</Badge> : null}
                   </div>
                 </div>
               }
               subtitle={`Criado em ${fmtDT(o.created_at)}`}
               right={
                 <div className="text-right">
-                  <div className="text-lg font-semibold">
-                    {fmtBRL(o.total_with_freight)}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    Itens {fmtBRL(o.total)}
-                  </div>
+                  <div className="text-lg font-semibold">{fmtBRL(o.total_with_freight)}</div>
+                  <div className="text-xs text-slate-500">Itens {fmtBRL(o.total)}</div>
                 </div>
               }
             >
@@ -248,9 +242,7 @@ export default function AdmPedidosPage() {
                     onChange={(e) => updateOrder(o.id, { due_date: e.target.value || null })}
                   />
                   {due ? (
-                    <div className="mt-1 text-xs text-slate-500">
-                      {isOverdue ? "Vencido" : "OK"}
-                    </div>
+                    <div className="mt-1 text-xs text-slate-500">{isOverdue ? "Vencido" : "OK"}</div>
                   ) : (
                     <div className="mt-1 text-xs text-slate-500">—</div>
                   )}

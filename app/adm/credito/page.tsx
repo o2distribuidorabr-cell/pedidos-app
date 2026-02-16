@@ -25,6 +25,11 @@ type LedgerRow = {
   created_by: string | null;
 };
 
+type CreditBalanceRow = {
+  store_id: string;
+  balance: number | null;
+};
+
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -111,7 +116,9 @@ export default function AdmCreditoExtratoPage() {
     }
 
     const map: Record<string, number> = {};
-    (bData ?? []).forEach((r: any) => (map[String(r.store_id)] = Number(r.balance ?? 0)));
+    ((bData ?? []) as CreditBalanceRow[]).forEach((r) => {
+      map[String(r.store_id)] = Number(r.balance ?? 0);
+    });
     setBalances(map);
   }
 

@@ -25,6 +25,8 @@ type SignupRow = {
   decided_by: string | null;
 };
 
+type StatusFilter = SignupRow["status"] | "all";
+
 function fmtDT(iso: string | null | undefined) {
   if (!iso) return "-";
   try {
@@ -50,9 +52,7 @@ export default function AdmCadastrosPage() {
   const [stores, setStores] = useState<StoreRow[]>([]);
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "all">(
-    "pending"
-  );
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
 
   const [storePick, setStorePick] = useState<Record<string, string>>({});
 
@@ -61,9 +61,7 @@ export default function AdmCadastrosPage() {
 
     const { data, error } = await supabase
       .from("signup_requests")
-      .select(
-        "id,user_id,email,franchisee_name,phone,store_name,cnpj,city,state,status,created_at,decided_at,decided_by"
-      )
+      .select("id,user_id,email,franchisee_name,phone,store_name,cnpj,city,state,status,created_at,decided_at,decided_by")
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -83,8 +81,7 @@ export default function AdmCadastrosPage() {
   }
 
   async function bootstrap() {
-    setLoading(true);
-
+    // loading já começa como true no useState, então não precisamos setar aqui (evita lint react-hooks/set-state-in-effect)
     const ok = await requireAdminOrRedirect(router);
     if (!ok) return;
 
@@ -105,6 +102,7 @@ export default function AdmCadastrosPage() {
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     bootstrap();
     // eslint-disable-next-line
   }, []);
@@ -116,15 +114,7 @@ export default function AdmCadastrosPage() {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
 
       if (qq) {
-        const blob = [
-          r.email,
-          r.franchisee_name,
-          r.store_name,
-          r.cnpj ?? "",
-          r.city ?? "",
-          r.state ?? "",
-          r.user_id,
-        ]
+        const blob = [r.email, r.franchisee_name, r.store_name, r.cnpj ?? "", r.city ?? "", r.state ?? "", r.user_id]
           .join(" ")
           .toLowerCase();
 
@@ -203,10 +193,7 @@ export default function AdmCadastrosPage() {
     }
 
     // opcional: manter approved=false no profile
-    await supabase.from("profiles").update({ approved: false, role: "pending", store_id: null }).eq(
-      "id",
-      r.user_id
-    );
+    await supabase.from("profiles").update({ approved: false, role: "pending", store_id: null }).eq("id", r.user_id);
 
     await loadRequests();
   }
@@ -230,7 +217,7 @@ export default function AdmCadastrosPage() {
           <Select
             label="Status"
             value={statusFilter}
-            onChange={(v) => setStatusFilter(v as any)}
+            onChange={(v) => setStatusFilter(v as StatusFilter)}
             options={[
               { value: "pending", label: "Pendentes" },
               { value: "approved", label: "Aprovados" },
@@ -264,9 +251,7 @@ export default function AdmCadastrosPage() {
                     <div className="text-sm font-semibold text-slate-900">
                       {r.franchisee_name} — {r.email}
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-600">
-                      Criado em {fmtDT(r.created_at)}
-                    </div>
+                    <div className="mt-0.5 text-xs text-slate-600">Criado em {fmtDT(r.created_at)}</div>
                   </div>
 
                   <Badge tone={toneByStatus(r.status)}>{r.status}</Badge>
@@ -291,9 +276,7 @@ export default function AdmCadastrosPage() {
                     </div>
                     <div className="text-xs text-slate-500">user_id: {r.user_id}</div>
 
-                    {r.decided_at ? (
-                      <div className="text-xs text-slate-500">Decidido em: {fmtDT(r.decided_at)}</div>
-                    ) : null}
+                    {r.decided_at ? <div className="text-xs text-slate-500">Decidido em: {fmtDT(r.decided_at)}</div> : null}
                   </div>
 
                   <div className="space-y-2">

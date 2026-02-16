@@ -115,7 +115,7 @@ export default function AdmDashboardPage() {
       setStatusMonthly((sm ?? []) as StoreStatusMonthlyRow[]);
     }
 
-    // Itens do mês (rede ou loja) -> vamos agregar no JS para TOP itens
+    // Itens do mês (rede ou loja)
     let q2 = supabase
       .from("v_item_totals")
       .select("store_id,product_id,sku,product_name,unit,month_ref,total_qty,total_value,orders_count")
@@ -139,7 +139,6 @@ export default function AdmDashboardPage() {
   }, []);
 
   useEffect(() => {
-    // ao trocar filtros
     (async () => {
       setLoading(true);
       await loadAll(monthYM, storeId);
@@ -167,7 +166,6 @@ export default function AdmDashboardPage() {
   }, [statusMonthly]);
 
   const topStores = useMemo(() => {
-    // agrega por store_id
     const map = new Map<string, number>();
     for (const r of statusMonthly) {
       map.set(r.store_id, (map.get(r.store_id) ?? 0) + (Number(r.total_value) || 0));
@@ -180,7 +178,6 @@ export default function AdmDashboardPage() {
   }, [statusMonthly]);
 
   const topItems = useMemo(() => {
-    // agrega por product_id
     const map = new Map<
       string,
       { product_name: string; sku: string; unit: string; total_value: number; total_qty: number; orders: number }
@@ -273,7 +270,10 @@ export default function AdmDashboardPage() {
           ) : (
             <div className="space-y-2">
               {topStores.map((s) => (
-                <div key={s.store_id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
+                <div
+                  key={s.store_id}
+                  className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2"
+                >
                   <div className="text-sm text-slate-800">
                     <span className="font-semibold text-slate-900">{storeNameMap.get(s.store_id) ?? s.store_id}</span>
                   </div>
