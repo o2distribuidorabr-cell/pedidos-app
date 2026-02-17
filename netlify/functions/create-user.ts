@@ -26,6 +26,15 @@ function getHeader(headers: Record<string, string | undefined>, name: string) {
   return key ? headers[key] : undefined;
 }
 
+async function safeJsonOrText(res: Response) {
+  const text = await res.text().catch(() => "");
+  try {
+    return { kind: "json" as const, value: JSON.parse(text), raw: text };
+  } catch {
+    return { kind: "text" as const, value: text, raw: text };
+  }
+}
+
 export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
   // Preflight CORS
   if (event.httpMethod === "OPTIONS") {
@@ -45,13 +54,8 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
   }
 
   // ====== ENV VARS (Netlify) ======
-  // Para segurança, SUPABASE_SERVICE_ROLE_KEY deve estar marcado como "secret" no Netlify.
-  const SUPABASE_URL =
-    process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-  const SERVICE_ROLE =
-    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-
+  const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
   const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!SUPABASE_URL) return json(500, { error: "Faltando SUPABASE_URL no Netlify." });
@@ -59,8 +63,11 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
   if (!ANON_KEY) return json(500, { error: "Faltando NEXT_PUBLIC_SUPABASE_ANON_KEY no Netlify." });
 
   // ====== 1) Ler token do caller (quem está criando o novo admin) ======
-  const auth = getHeader(event.headers, "authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const authHeader = (getHeader(event.headers, "authorization") || "").trim();
+  const bearer =
+    authHeader.toLowerCase().startsWith("bearer ")
+      ? authHeader.slice(7).trim()
+      : "";
 
   if (!bearer) {
     return json(401, { error: "Sem token. Faça login e envie Authorization: Bearer <token>." });
@@ -72,22 +79,23 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
     headers: {
       Authorization: `Bearer ${bearer}`,
       apikey: ANON_KEY,
+      Accept: "application/json",
     },
   });
 
   if (!userResp.ok) {
-    const t = await userResp.text().catch(() => "");
-    return json(401, { error: "Token inválido / não autenticado.", detail: t });
+    const detail = await safeJsonOrText(userResp);
+    return json(401, { error: "Token inválido / não autenticado.", detail: detail.value });
   }
 
-  const userData = await userResp.json();
+  const userData = await userResp.json().catch(() => ({} as any));
   const callerId = userData?.id;
+
   if (!callerId) {
     return json(401, { error: "Não foi possível identificar o usuário logado." });
   }
 
   // ====== 3) Conferir se o caller é ADMIN na tabela profiles ======
-  // Ajuste aqui se sua tabela tiver outro nome/colunas.
   const profResp = await fetch(
     `${SUPABASE_URL}/rest/v1/profiles?id=eq.${callerId}&select=role,approved`,
     {
@@ -101,21 +109,16 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
   );
 
   if (!profResp.ok) {
-    const t = await profResp.text().catch(() => "");
-    return json(500, { error: "Falha ao consultar profiles.", detail: t });
+    const detail = await safeJsonOrText(profResp);
+    return json(500, { error: "Falha ao consultar profiles.", detail: detail.value });
   }
 
-  const profRows = await profResp.json();
+  const profRows = await profResp.json().catch(() => []);
   const prof = Array.isArray(profRows) ? profRows[0] : null;
 
   if (!prof || prof.role !== "admin") {
     return json(403, { error: "Acesso negado. Somente admin pode criar outro admin." });
   }
-
-  // Se você quiser exigir approved=true para admins, descomente:
-  // if (prof.approved !== true) {
-  //   return json(403, { error: "Admin não aprovado não pode criar usuários." });
-  // }
 
   // ====== 4) Ler o body (novo admin) ======
   let payload: any = {};
@@ -144,6 +147,7 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
       Authorization: `Bearer ${SERVICE_ROLE}`,
       apikey: SERVICE_ROLE,
       "Content-Type": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify({
       email,
@@ -153,12 +157,12 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
     }),
   });
 
-  const createText = await createResp.text().catch(() => "");
   if (!createResp.ok) {
-    return json(400, { error: "Falha ao criar usuário no Auth.", detail: createText });
+    const detail = await safeJsonOrText(createResp);
+    return json(400, { error: "Falha ao criar usuário no Auth.", detail: detail.value });
   }
 
-  const created = JSON.parse(createText);
+  const created = await createResp.json().catch(() => ({} as any));
   const newUserId = created?.id;
 
   if (!newUserId) {
@@ -166,14 +170,13 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
   }
 
   // ====== 6) Criar/atualizar linha em profiles com role=admin ======
-  // Se sua tabela tiver campos diferentes, me avise que eu ajusto.
-  // Aqui estamos fazendo UPSERT pela coluna id.
   const upsertResp = await fetch(`${SUPABASE_URL}/rest/v1/profiles`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${SERVICE_ROLE}`,
       apikey: SERVICE_ROLE,
       "Content-Type": "application/json",
+      Accept: "application/json",
       Prefer: "resolution=merge-duplicates,return=representation",
     },
     body: JSON.stringify([
@@ -186,11 +189,11 @@ export async function handler(event: NetlifyEvent, _context: NetlifyContext) {
     ]),
   });
 
-  const upsertText = await upsertResp.text().catch(() => "");
   if (!upsertResp.ok) {
+    const detail = await safeJsonOrText(upsertResp);
     return json(500, {
       error: "Usuário criado no Auth, mas falhou ao gravar profiles.",
-      detail: upsertText,
+      detail: detail.value,
       created_user_id: newUserId,
     });
   }

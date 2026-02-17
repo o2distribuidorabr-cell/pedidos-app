@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 
 import { PageHeader, Card, Button, Input, Badge } from "@/app/components/ui";
 
@@ -22,9 +24,36 @@ export default function AdmUsuariosPage() {
     setTone("slate");
 
     try {
+      // ✅ garante que está logado e é admin
+      const ok = await requireAdminOrRedirect(router);
+      if (!ok) {
+        setWorking(false);
+        return;
+      }
+
+      // ✅ pega token da sessão do Supabase e manda no Authorization
+      const { data: sess, error: sErr } = await supabase.auth.getSession();
+      if (sErr) {
+        setTone("red");
+        setMensagem("Erro ao obter sessão: " + sErr.message);
+        setWorking(false);
+        return;
+      }
+
+      const token = sess.session?.access_token;
+      if (!token) {
+        setTone("red");
+        setMensagem("Sem token de sessão. Faça login novamente e tente de novo.");
+        setWorking(false);
+        return;
+      }
+
       const res = await fetch("/.netlify/functions/create-user", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           email: email.trim(),
           password: senha,
@@ -47,15 +76,14 @@ export default function AdmUsuariosPage() {
       setSenha("");
       setNome("");
       setWorking(false);
-    } catch (err) {
+    } catch (err: any) {
       setTone("red");
       setMensagem("Erro ao conectar com servidor");
       setWorking(false);
     }
   }
 
-  const canSubmit =
-    nome.trim().length > 0 && email.trim().length > 0 && senha.length > 0 && !working;
+  const canSubmit = nome.trim().length > 0 && email.trim().length > 0 && senha.length > 0 && !working;
 
   return (
     <div className="space-y-6">
@@ -78,7 +106,11 @@ export default function AdmUsuariosPage() {
         <Card>
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={tone}>{tone === "green" ? "OK" : tone === "red" ? "ERRO" : "INFO"}</Badge>
-            <div className={`text-sm ${tone === "red" ? "text-red-600" : tone === "green" ? "text-green-700" : "text-slate-700"}`}>
+            <div
+              className={`text-sm ${
+                tone === "red" ? "text-red-600" : tone === "green" ? "text-green-700" : "text-slate-700"
+              }`}
+            >
               {mensagem}
             </div>
           </div>
@@ -89,22 +121,9 @@ export default function AdmUsuariosPage() {
         <div className="grid gap-3 max-w-lg">
           <Input label="Nome" placeholder="Nome" value={nome} onChange={setNome} />
 
-          <Input
-            label="Email"
-            placeholder="email@dominio.com"
-            value={email}
-            onChange={setEmail}
-          />
+          <Input label="Email" placeholder="email@dominio.com" value={email} onChange={setEmail} />
 
-          {/* Se o seu componente Input não suportar type, deixe sem type e mantenha como texto.
-              Se suportar, pode usar type="password". */}
-          <Input
-            label="Senha"
-            placeholder="Senha"
-            value={senha}
-            onChange={setSenha}
-            type="password"
-          />
+          <Input label="Senha" placeholder="Senha" value={senha} onChange={setSenha} type="password" />
 
           <div className="flex justify-end pt-1">
             <Button onClick={criarUsuario} disabled={!canSubmit}>
@@ -113,7 +132,8 @@ export default function AdmUsuariosPage() {
           </div>
 
           <div className="text-xs text-slate-500">
-            Observação: esta tela chama <span className="font-mono">/.netlify/functions/create-user</span>.
+            Observação: esta tela chama <span className="font-mono">/.netlify/functions/create-user</span> com{" "}
+            <span className="font-mono">Authorization: Bearer</span>.
           </div>
         </div>
       </Card>
