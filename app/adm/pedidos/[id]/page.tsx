@@ -4,15 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import {
-  PageHeader,
-  Card,
-  Button,
-  Input,
-  Select,
-  Badge,
-  Table,
-} from "@/app/components/ui";
+import { PageHeader, Card, Button, Input, Select, Badge, Table } from "@/app/components/ui";
 
 type OrderRow = {
   id: string;
@@ -37,10 +29,31 @@ type OrderRow = {
 
   due_date: string | null; // DATE => "YYYY-MM-DD"
 
+  // ✅ NOVO: previsão de entrega (DATE => "YYYY-MM-DD")
+  delivery_forecast: string | null;
+
   // ✅ Auditoria
   edited_by_admin: boolean | null;
   edited_at: string | null;
   original_items: any[] | null;
+};
+
+type StoreInfo = {
+  id: string;
+  name: string | null;
+
+  // (se existirem no seu schema)
+  legal_name?: string | null;
+  cnpj?: string | null;
+
+  address_zip?: string | null;
+  address_street?: string | null;
+  address_number?: string | null;
+  address_complement?: string | null;
+  address_neighborhood?: string | null;
+
+  city?: string | null;
+  state?: string | null;
 };
 
 type ProductEmbed = { sku: string | null; name: string | null; unit: string | null };
@@ -76,7 +89,7 @@ const PAY_METHODS = ["PIX", "CARTAO", "BOLETO"] as const;
 const DELIVERY_OPTIONS = ["RETIRADA", "FRETE"] as const;
 
 function fmtBRL(v: number) {
-  return (Number(v ?? 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return Number(v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 function fmtDT(v: string | null | undefined) {
   if (!v) return "-";
@@ -111,6 +124,28 @@ function todayYMD() {
   return `${y}-${m}-${day}`;
 }
 
+function fmtYMD(ymd: string | null | undefined) {
+  if (!ymd) return "-";
+  try {
+    // input "YYYY-MM-DD"
+    const [y, m, d] = ymd.split("-").map(Number);
+    if (!y || !m || !d) return ymd;
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
+    return dt.toLocaleDateString("pt-BR");
+  } catch {
+    return String(ymd);
+  }
+}
+
+function onlyDigits(v: string | null | undefined) {
+  return (v ?? "").replace(/\D/g, "");
+}
+function fmtCNPJ(v: string | null | undefined) {
+  const d = onlyDigits(v);
+  if (d.length !== 14) return v ?? "-";
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+}
+
 export default function AdmPedidoDetalhePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -126,6 +161,10 @@ export default function AdmPedidoDetalhePage() {
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [creditBalance, setCreditBalance] = useState<number>(0);
+
+  // ✅ DANFE print
+  const [printMode, setPrintMode] = useState(false);
+  const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
 
   // ✅ auditoria visível
   const [originalItems, setOriginalItems] = useState<OriginalItem[] | null>(null);
@@ -173,6 +212,13 @@ export default function AdmPedidoDetalhePage() {
     return order.due_date < todayYMD();
   }, [order?.due_date]);
 
+  // ✅ NOVO: atraso da previsão (somente se não entregue)
+  const forecastOverdue = useMemo(() => {
+    if (!order?.delivery_forecast) return false;
+    if ((order.logistic_status ?? null) === "ENTREGUE") return false;
+    return order.delivery_forecast < todayYMD();
+  }, [order?.delivery_forecast, order?.logistic_status]);
+
   useEffect(() => {
     (async () => {
       setMsg("");
@@ -208,12 +254,15 @@ export default function AdmPedidoDetalhePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMode, order?.id]);
 
+  // ✅ restaura UI após impressão
+  useEffect(() => {
+    const onAfterPrint = () => setPrintMode(false);
+    window.addEventListener("afterprint", onAfterPrint);
+    return () => window.removeEventListener("afterprint", onAfterPrint);
+  }, []);
+
   async function loadCreditBalance(storeId: string) {
-    const { data, error } = await supabase
-      .from("v_store_credit_balance")
-      .select("balance")
-      .eq("store_id", storeId)
-      .maybeSingle();
+    const { data, error } = await supabase.from("v_store_credit_balance").select("balance").eq("store_id", storeId).maybeSingle();
 
     if (error) {
       console.warn("loadCreditBalance error:", error.message);
@@ -224,11 +273,31 @@ export default function AdmPedidoDetalhePage() {
     setCreditBalance(Number((data as any)?.balance ?? 0));
   }
 
+  async function loadStoreInfo(storeId: string) {
+    // mantém resiliente: se alguma coluna não existir no seu schema, ajuste aqui.
+    const { data, error } = await supabase
+      .from("stores")
+      .select(
+        "id,name,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state"
+      )
+      .eq("id", storeId)
+      .maybeSingle();
+
+    if (error) {
+      // não derruba a página
+      console.warn("loadStoreInfo error:", error.message);
+      setStoreInfo(null);
+      return;
+    }
+
+    setStoreInfo((data ?? null) as any);
+  }
+
   async function loadAll(id: string) {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,edited_by_admin,edited_at,original_items"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,delivery_forecast,edited_by_admin,edited_at,original_items"
       )
       .eq("id", id)
       .maybeSingle();
@@ -239,6 +308,7 @@ export default function AdmPedidoDetalhePage() {
       setItems([]);
       setCreditBalance(0);
       setOriginalItems(null);
+      setStoreInfo(null);
       return;
     }
 
@@ -249,8 +319,12 @@ export default function AdmPedidoDetalhePage() {
     const snap = (ord.original_items ?? null) as OriginalItem[] | null;
     setOriginalItems(snap);
 
-    if (ord.store_id) await loadCreditBalance(ord.store_id);
-    else setCreditBalance(0);
+    if (ord.store_id) {
+      await Promise.all([loadCreditBalance(ord.store_id), loadStoreInfo(ord.store_id)]);
+    } else {
+      setCreditBalance(0);
+      setStoreInfo(null);
+    }
 
     const { data: it, error: itErr } = await supabase
       .from("order_items")
@@ -290,7 +364,7 @@ export default function AdmPedidoDetalhePage() {
       .update(patch)
       .eq("id", order.id)
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,edited_by_admin,edited_at,original_items"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,delivery_forecast,edited_by_admin,edited_at,original_items"
       )
       .single();
 
@@ -470,16 +544,18 @@ export default function AdmPedidoDetalhePage() {
     }
   }
 
+  function handlePrint() {
+    // deixa DANFE visível só no print (via CSS) e chama print
+    setPrintMode(true);
+    setTimeout(() => window.print(), 50);
+  }
+
   if (loading) return <Card>Carregando...</Card>;
 
   if (!order) {
     return (
       <div className="space-y-4">
-        <PageHeader
-          title="Pedido"
-          subtitle="Não foi possível carregar"
-          right={<Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Voltar</Button>}
-        />
+        <PageHeader title="Pedido" subtitle="Não foi possível carregar" right={<Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Voltar</Button>} />
         <Card>
           <div className="text-sm text-red-600">{msg || "Pedido não encontrado."}</div>
         </Card>
@@ -533,11 +609,7 @@ export default function AdmPedidoDetalhePage() {
           min={0}
           step={1}
         />
-        <Button
-          variant={removed ? "secondary" : "danger"}
-          disabled={saving || lockedByLogistics}
-          onClick={() => toggleRemoveItem(it.id)}
-        >
+        <Button variant={removed ? "secondary" : "danger"} disabled={saving || lockedByLogistics} onClick={() => toggleRemoveItem(it.id)}>
           {removed ? "Desfazer" : "Remover"}
         </Button>
       </div>,
@@ -559,29 +631,326 @@ export default function AdmPedidoDetalhePage() {
       ];
     }) ?? [];
 
+  // ✅ dados para impressão (DANFE-like)
+  const s = storeInfo;
+  const emitName = "O2 Distribuidora";
+  const emitDoc = "-";
+  const emitAddr = "-";
+
+  const destName = s?.name ?? "-";
+  const destLegal = s?.legal_name ?? null;
+  const destCnpj = s?.cnpj ?? null;
+  const destZip = s?.address_zip ?? null;
+  const destStreet = s?.address_street ?? null;
+  const destNumber = s?.address_number ?? null;
+  const destComp = s?.address_complement ?? null;
+  const destNeigh = s?.address_neighborhood ?? null;
+  const destCity = s?.city ?? null;
+  const destState = s?.state ?? null;
+
+  const destAddrLine1 = [destStreet, destNumber ? `nº ${destNumber}` : null, destComp ? `(${destComp})` : null].filter(Boolean).join(", ");
+  const destAddrLine2 = [destNeigh, destCity ? `${destCity}${destState ? `/${destState}` : ""}` : null, destZip ? `CEP ${destZip}` : null]
+    .filter(Boolean)
+    .join(" • ");
+
+  const entregaTxt = order.delivery_mode === "FRETE" ? "FRETE" : "RETIRADA";
+  const logTxt =
+    order.logistic_status === "RECEBIDO"
+      ? "RECEBIDO"
+      : order.logistic_status === "EM_SEPARACAO"
+      ? "EM SEPARAÇÃO"
+      : order.logistic_status === "ENTREGUE"
+      ? "ENTREGUE"
+      : "-";
+
   return (
     <div className="space-y-6">
+      {/* ✅ CSS somente para impressão (não altera o restante da UI) */}
+      <style jsx global>{`
+        #print-danfe {
+          display: none;
+        }
+        @media print {
+          body {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          /* esconde tudo */
+          body * {
+            visibility: hidden !important;
+          }
+          /* mostra só DANFE */
+          #print-danfe,
+          #print-danfe * {
+            visibility: visible !important;
+          }
+          #print-danfe {
+            display: block !important;
+            position: fixed;
+            left: 0;
+            top: 0;
+            width: 100%;
+            padding: 12mm;
+            background: #fff;
+            color: #111;
+          }
+          .danfe-box {
+            border: 1px solid #111;
+          }
+          .danfe-row {
+            display: grid;
+            gap: 0;
+          }
+          .danfe-cell {
+            border-right: 1px solid #111;
+            border-bottom: 1px solid #111;
+            padding: 6px 8px;
+            font-size: 11px;
+            line-height: 1.25;
+          }
+          .danfe-cell:last-child {
+            border-right: 0;
+          }
+          .danfe-title {
+            font-weight: 700;
+            font-size: 12px;
+            text-transform: uppercase;
+          }
+          .danfe-muted {
+            color: #444;
+          }
+          .danfe-kv {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2px;
+          }
+          .danfe-k {
+            font-size: 10px;
+            text-transform: uppercase;
+          }
+          .danfe-v {
+            font-size: 12px;
+            font-weight: 700;
+          }
+          table.danfe-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+          }
+          table.danfe-table th,
+          table.danfe-table td {
+            border: 1px solid #111;
+            padding: 6px 6px;
+            vertical-align: top;
+          }
+          table.danfe-table th {
+            font-size: 10px;
+            text-transform: uppercase;
+            background: #f3f3f3;
+          }
+          .danfe-right {
+            text-align: right;
+          }
+          .danfe-center {
+            text-align: center;
+          }
+          .danfe-big {
+            font-size: 16px;
+            font-weight: 800;
+          }
+        }
+      `}</style>
+
+      {/* ✅ Área de impressão DANFE-like */}
+      <div id="print-danfe" aria-hidden={!printMode}>
+        <div className="danfe-box">
+          {/* Cabeçalho */}
+          <div className="danfe-row" style={{ gridTemplateColumns: "2fr 1fr 1fr" }}>
+            <div className="danfe-cell">
+              <div className="danfe-title">Documento Auxiliar - Pedido</div>
+              <div className="danfe-muted" style={{ marginTop: 2 }}>
+                Layout estilo DANFE (informativo)
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <div className="danfe-k">Emitente</div>
+                <div className="danfe-v">{emitName}</div>
+                <div className="danfe-muted">{emitDoc}</div>
+                <div className="danfe-muted">{emitAddr}</div>
+              </div>
+            </div>
+
+            <div className="danfe-cell">
+              <div className="danfe-kv">
+                <div className="danfe-k">Número do pedido</div>
+                <div className="danfe-v" style={{ wordBreak: "break-all" }}>{order.id}</div>
+              </div>
+              <div className="danfe-kv" style={{ marginTop: 8 }}>
+                <div className="danfe-k">Emissão</div>
+                <div className="danfe-v">{fmtDT(order.created_at)}</div>
+              </div>
+            </div>
+
+            <div className="danfe-cell">
+              <div className="danfe-kv">
+                <div className="danfe-k">Status</div>
+                <div className="danfe-v">{String(order.status ?? "-").toUpperCase()}</div>
+              </div>
+              <div className="danfe-kv" style={{ marginTop: 8 }}>
+                <div className="danfe-k">Operação</div>
+                <div className="danfe-v">{logTxt}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Destinatário + Entrega/Pagamento */}
+          <div className="danfe-row" style={{ gridTemplateColumns: "2fr 1fr" }}>
+            <div className="danfe-cell">
+              <div className="danfe-title">Destinatário</div>
+              <div style={{ marginTop: 6 }}>
+                <div className="danfe-v">{destLegal ?? destName}</div>
+                <div className="danfe-muted">{destLegal ? destName : ""}</div>
+                <div className="danfe-muted">CNPJ: {fmtCNPJ(destCnpj)}</div>
+                <div className="danfe-muted">{destAddrLine1 || "-"}</div>
+                <div className="danfe-muted">{destAddrLine2 || "-"}</div>
+              </div>
+            </div>
+
+            <div className="danfe-cell">
+              <div className="danfe-title">Entrega / Pagamento</div>
+
+              <div className="danfe-kv" style={{ marginTop: 6 }}>
+                <div className="danfe-k">Modalidade</div>
+                <div className="danfe-v">{entregaTxt}</div>
+              </div>
+
+              <div className="danfe-kv" style={{ marginTop: 6 }}>
+                <div className="danfe-k">Frete</div>
+                <div className="danfe-v">{order.delivery_mode === "FRETE" ? fmtBRL(Number(order.freight_fee ?? 0)) : "-"}</div>
+              </div>
+
+              <div className="danfe-kv" style={{ marginTop: 6 }}>
+                <div className="danfe-k">Previsão de entrega</div>
+                <div className="danfe-v">{fmtYMD(order.delivery_forecast)}</div>
+              </div>
+
+              <div className="danfe-kv" style={{ marginTop: 6 }}>
+                <div className="danfe-k">Forma</div>
+                <div className="danfe-v">{order.payment_method ?? "-"}</div>
+              </div>
+
+              <div className="danfe-kv" style={{ marginTop: 6 }}>
+                <div className="danfe-k">Vencimento</div>
+                <div className="danfe-v">{fmtYMD(order.due_date)}</div>
+              </div>
+
+              <div className="danfe-kv" style={{ marginTop: 6 }}>
+                <div className="danfe-k">Pago</div>
+                <div className="danfe-v">{order.is_paid ? `SIM (${fmtDT(order.paid_at)})` : "NÃO"}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Itens */}
+          <div className="danfe-cell" style={{ borderRight: 0 }}>
+            <div className="danfe-title">Itens</div>
+            <div style={{ marginTop: 8 }}>
+              <table className="danfe-table">
+                <thead>
+                  <tr>
+                    <th className="danfe-center" style={{ width: 40 }}>#</th>
+                    <th style={{ width: 110 }}>SKU</th>
+                    <th>Descrição</th>
+                    <th className="danfe-center" style={{ width: 70 }}>Unid.</th>
+                    <th className="danfe-right" style={{ width: 70 }}>Qtd</th>
+                    <th className="danfe-right" style={{ width: 110 }}>Vlr Unit.</th>
+                    <th className="danfe-right" style={{ width: 110 }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((it, idx) => {
+                    const sku = it.products?.sku ?? "-";
+                    const name = it.products?.name ?? "-";
+                    const unit = it.products?.unit ?? it.unit ?? "-";
+                    const unitCost = Number(it.unit_cost ?? 0);
+                    const qty = Number(it.qty ?? 0);
+                    const line = qty * unitCost;
+
+                    return (
+                      <tr key={it.id}>
+                        <td className="danfe-center">{idx + 1}</td>
+                        <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{sku}</td>
+                        <td>{name}</td>
+                        <td className="danfe-center">{unit}</td>
+                        <td className="danfe-right">{qty}</td>
+                        <td className="danfe-right">{fmtBRL(unitCost)}</td>
+                        <td className="danfe-right">{fmtBRL(line)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Totais */}
+            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
+              <div>
+                <div className="danfe-title">Observações</div>
+                <div className="danfe-muted" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+                  {order.notes ?? "-"}
+                </div>
+                <div className="danfe-muted" style={{ marginTop: 8 }}>
+                  Criado: {fmtDT(order.created_at)} • Enviado: {fmtDT(order.submitted_at)} • Aprovado: {fmtDT(order.approved_at)}
+                </div>
+              </div>
+
+              <div>
+                <table className="danfe-table">
+                  <tbody>
+                    <tr>
+                      <th style={{ width: "60%" }}>Subtotal itens</th>
+                      <td className="danfe-right">{fmtBRL(totalItens)}</td>
+                    </tr>
+                    <tr>
+                      <th>Frete</th>
+                      <td className="danfe-right">{fmtBRL(frete)}</td>
+                    </tr>
+                    <tr>
+                      <th>Total bruto</th>
+                      <td className="danfe-right">{fmtBRL(totalComFrete)}</td>
+                    </tr>
+                    <tr>
+                      <th>Crédito abatido</th>
+                      <td className="danfe-right">- {fmtBRL(creditApplied)}</td>
+                    </tr>
+                    <tr>
+                      <th className="danfe-big">Total líquido</th>
+                      <td className="danfe-right danfe-big">{fmtBRL(totalLiquido)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="danfe-muted" style={{ marginTop: 10, fontSize: 10 }}>
+              Documento informativo para conferência/expedição (não é NF-e).
+            </div>
+          </div>
+        </div>
+      </div>
+
       <PageHeader
         title="Detalhe do pedido"
         subtitle={`ID: ${order.id}`}
         right={
           <div className="flex flex-wrap items-center gap-2">
-            {edited ? (
-              <Badge tone="blue">EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}</Badge>
-            ) : (
-              <Badge tone="neutral">ORIGINAL</Badge>
-            )}
+            {edited ? <Badge tone="blue">EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}</Badge> : <Badge tone="neutral">ORIGINAL</Badge>}
 
             <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Voltar</Button>
             <Button variant="secondary" onClick={() => loadAll(order.id)} disabled={saving}>Recarregar</Button>
-            <Button variant="secondary" onClick={() => window.print()}>Imprimir</Button>
+            <Button variant="secondary" onClick={handlePrint}>Imprimir</Button>
 
             {!editMode ? (
-              <Button
-                variant="primary"
-                onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)}
-                disabled={saving || lockedByLogistics}
-              >
+              <Button variant="primary" onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)} disabled={saving || lockedByLogistics}>
                 Editar itens
               </Button>
             ) : (
@@ -610,11 +979,7 @@ export default function AdmPedidoDetalhePage() {
         title="Vencimento"
         right={
           <div className="flex items-center gap-2">
-            {order.due_date ? (
-              overdue ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">OK</Badge>
-            ) : (
-              <Badge tone="neutral">Sem vencimento</Badge>
-            )}
+            {order.due_date ? (overdue ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">OK</Badge>) : <Badge tone="neutral">Sem vencimento</Badge>}
           </div>
         }
       >
@@ -627,6 +992,35 @@ export default function AdmPedidoDetalhePage() {
               value={order.due_date ?? ""}
               disabled={saving}
               onChange={(e) => updateOrder({ due_date: e.target.value || null })}
+            />
+          </div>
+        </div>
+      </Card>
+
+      {/* ✅ NOVO: Previsão de entrega (mantendo o resto idêntico) */}
+      <Card
+        title="Previsão de entrega"
+        right={
+          <div className="flex items-center gap-2">
+            {!order.delivery_forecast ? (
+              <Badge tone="neutral">Sem previsão</Badge>
+            ) : forecastOverdue ? (
+              <Badge tone="red">Atrasado</Badge>
+            ) : (
+              <Badge tone="green">OK</Badge>
+            )}
+          </div>
+        }
+      >
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-xs text-slate-500">Previsão de entrega</label>
+            <input
+              className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-300 disabled:bg-slate-50"
+              type="date"
+              value={order.delivery_forecast ?? ""}
+              disabled={saving}
+              onChange={(e) => updateOrder({ delivery_forecast: e.target.value || null })}
             />
           </div>
         </div>
@@ -664,10 +1058,7 @@ export default function AdmPedidoDetalhePage() {
         </div>
       </Card>
 
-      <Card
-        title="Status, logística, entrega e pagamento"
-        right={<Badge tone={statusBadgeTone(order.status) as any}>{order.status}</Badge>}
-      >
+      <Card title="Status, logística, entrega e pagamento" right={<Badge tone={statusBadgeTone(order.status) as any}>{order.status}</Badge>}>
         <div className="grid gap-4 md:grid-cols-3">
           <Select
             label="Status"
@@ -699,16 +1090,10 @@ export default function AdmPedidoDetalhePage() {
 
           <div className="space-y-2">
             <div className="text-xs font-semibold text-slate-600">Pagamento</div>
-            <Button
-              variant={order.is_paid ? "secondary" : "primary"}
-              onClick={onTogglePaid}
-              disabled={saving}
-            >
+            <Button variant={order.is_paid ? "secondary" : "primary"} onClick={onTogglePaid} disabled={saving}>
               {order.is_paid ? "Pago" : "Marcar como pago"}
             </Button>
-            <div className="text-xs text-slate-500">
-              {order.paid_at ? `Pago em: ${fmtDT(order.paid_at)}` : "Não pago"}
-            </div>
+            <div className="text-xs text-slate-500">{order.paid_at ? `Pago em: ${fmtDT(order.paid_at)}` : "Não pago"}</div>
           </div>
 
           <div className="grid gap-2">
@@ -719,16 +1104,11 @@ export default function AdmPedidoDetalhePage() {
               onChange={(v) =>
                 updateOrder({
                   paid_at: v ? dateInputToISO(v) : null,
-                  // se você escolhe data, faz sentido marcar como pago
                   is_paid: v ? true : false,
                 })
               }
             />
 
-            {/* ✅ AJUSTE AQUI:
-                - NÃO setar is_paid: true só por trocar a forma.
-                - Isso evita marcar pago e evita “zerar” forma em outros fluxos.
-            */}
             <Select
               label="Forma"
               value={order.payment_method ?? "PIX"}
@@ -752,50 +1132,27 @@ export default function AdmPedidoDetalhePage() {
         </div>
       </Card>
 
-      {/* Itens atuais */}
       <Card
         title="Itens do pedido (atual)"
-        subtitle={
-          editMode
-            ? "Modo edição: ajuste quantidades e remova itens. Depois clique em Salvar alterações."
-            : `${items.length} item(ns)`
-        }
-        right={
-          lockedByLogistics
-            ? <Badge tone="red">ENTREGUE (itens bloqueados)</Badge>
-            : (editMode ? <Badge tone="blue">EDITANDO</Badge> : null)
-        }
+        subtitle={editMode ? "Modo edição: ajuste quantidades e remova itens. Depois clique em Salvar alterações." : `${items.length} item(ns)`}
+        right={lockedByLogistics ? <Badge tone="red">ENTREGUE (itens bloqueados)</Badge> : editMode ? <Badge tone="blue">EDITANDO</Badge> : null}
       >
-        <Table
-          headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Total"]}
-          rows={itemsRows}
-        />
+        <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Total"]} rows={itemsRows} />
       </Card>
 
-      {/* ✅ Pedido original */}
       {originalItems && originalItems.length > 0 ? (
         <Card
           title="Pedido original do franqueado"
           subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"}
           right={<Badge tone="neutral">ORIGINAL</Badge>}
         >
-          <Table
-            headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Total"]}
-            rows={originalRows}
-          />
+          <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Total"]} rows={originalRows} />
         </Card>
       ) : null}
 
-      {/* Modal crédito */}
       {creditModalOpen ? (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-          onClick={closeCreditModal}
-        >
-          <div
-            className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCreditModal}>
+          <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-base font-semibold text-slate-900">Abater crédito</div>
@@ -809,18 +1166,8 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-4 grid gap-3">
-              <Input
-                label="Valor (opcional)"
-                placeholder="Vazio = abater o máximo possível"
-                value={creditAmount}
-                onChange={setCreditAmount}
-              />
-              <Input
-                label="Observação (opcional)"
-                placeholder="Ex.: abatimento parcial"
-                value={creditNote}
-                onChange={setCreditNote}
-              />
+              <Input label="Valor (opcional)" placeholder="Vazio = abater o máximo possível" value={creditAmount} onChange={setCreditAmount} />
+              <Input label="Observação (opcional)" placeholder="Ex.: abatimento parcial" value={creditNote} onChange={setCreditNote} />
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
@@ -829,9 +1176,7 @@ export default function AdmPedidoDetalhePage() {
               </Button>
             </div>
 
-            <div className="mt-3 text-xs text-slate-500">
-              Regra: abate até o limite do saldo e até o limite do total do pedido.
-            </div>
+            <div className="mt-3 text-xs text-slate-500">Regra: abate até o limite do saldo e até o limite do total do pedido.</div>
           </div>
         </div>
       ) : null}

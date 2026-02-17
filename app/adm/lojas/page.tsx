@@ -15,10 +15,32 @@ type StoreRow = {
 
   code?: string | null;
   freight_fee?: number | null;
+
+  // ✅ NOVOS CAMPOS (cadastro completo)
+  legal_name: string | null; // Razão social
+  cnpj: string | null;
+
+  address_zip: string | null; // CEP
+  address_street: string | null; // Rua/Av
+  address_number: string | null; // Número
+  address_complement: string | null; // Complemento
+  address_neighborhood: string | null; // Bairro
 };
 
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function onlyDigits(v: string) {
+  return String(v ?? "").replace(/\D/g, "");
+}
+
+function normalizeCNPJ(v: string) {
+  return onlyDigits(v).slice(0, 14);
+}
+
+function normalizeCEP(v: string) {
+  return onlyDigits(v).slice(0, 8);
 }
 
 export default function AdmLojasPage() {
@@ -39,6 +61,15 @@ export default function AdmLojasPage() {
   const [stateUf, setStateUf] = useState("");
   const [active, setActive] = useState(true);
   const [freightFee, setFreightFee] = useState<string>("");
+
+  // ✅ NOVO: campos completos
+  const [legalName, setLegalName] = useState("");
+  const [cnpj, setCnpj] = useState("");
+  const [zip, setZip] = useState("");
+  const [street, setStreet] = useState("");
+  const [numberAddr, setNumberAddr] = useState("");
+  const [complement, setComplement] = useState("");
+  const [neighborhood, setNeighborhood] = useState("");
 
   // crédito
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
@@ -95,7 +126,9 @@ export default function AdmLojasPage() {
 
     const { data, error } = await supabase
       .from("stores")
-      .select("id,name,city,state,active,freight_fee,code")
+      .select(
+        "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood"
+      )
       .order("name", { ascending: true });
 
     if (error) {
@@ -122,7 +155,9 @@ export default function AdmLojasPage() {
     const qq = q.trim().toLowerCase();
     if (!qq) return stores;
     return stores.filter((s) => {
-      const blob = `${s.name} ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.id}`.toLowerCase();
+      const blob = `${s.name} ${s.legal_name ?? ""} ${s.cnpj ?? ""} ${s.address_street ?? ""} ${s.address_neighborhood ?? ""} ${
+        s.address_zip ?? ""
+      } ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.id}`.toLowerCase();
       return blob.includes(qq);
     });
   }, [stores, q]);
@@ -134,6 +169,15 @@ export default function AdmLojasPage() {
     setStateUf("");
     setActive(true);
     setFreightFee("");
+
+    // ✅ NOVO
+    setLegalName("");
+    setCnpj("");
+    setZip("");
+    setStreet("");
+    setNumberAddr("");
+    setComplement("");
+    setNeighborhood("");
   }
 
   function startEdit(s: StoreRow) {
@@ -144,6 +188,15 @@ export default function AdmLojasPage() {
     setActive(s.active ?? true);
     setFreightFee(s.freight_fee != null ? String(s.freight_fee) : "");
     setMsg("");
+
+    // ✅ NOVO
+    setLegalName(s.legal_name ?? "");
+    setCnpj(s.cnpj ?? "");
+    setZip(s.address_zip ?? "");
+    setStreet(s.address_street ?? "");
+    setNumberAddr(s.address_number ?? "");
+    setComplement(s.address_complement ?? "");
+    setNeighborhood(s.address_neighborhood ?? "");
   }
 
   async function saveStore() {
@@ -154,6 +207,63 @@ export default function AdmLojasPage() {
     if (!nm) {
       setWorking(false);
       setMsg("Preencha o nome da loja.");
+      return;
+    }
+
+    // ✅ NOVO: validações obrigatórias (cadastro completo)
+    const ln = legalName.trim();
+    if (!ln) {
+      setWorking(false);
+      setMsg("Preencha a Razão Social.");
+      return;
+    }
+
+    const cnpjNorm = normalizeCNPJ(cnpj);
+    if (cnpjNorm.length !== 14) {
+      setWorking(false);
+      setMsg("CNPJ inválido. Informe 14 dígitos.");
+      return;
+    }
+
+    const zipNorm = normalizeCEP(zip);
+    if (zipNorm.length !== 8) {
+      setWorking(false);
+      setMsg("CEP inválido. Informe 8 dígitos.");
+      return;
+    }
+
+    const st = street.trim();
+    if (!st) {
+      setWorking(false);
+      setMsg("Preencha o Logradouro (rua/avenida).");
+      return;
+    }
+
+    const num = numberAddr.trim();
+    if (!num) {
+      setWorking(false);
+      setMsg("Preencha o Número do endereço.");
+      return;
+    }
+
+    const neigh = neighborhood.trim();
+    if (!neigh) {
+      setWorking(false);
+      setMsg("Preencha o Bairro.");
+      return;
+    }
+
+    const ct = city.trim();
+    if (!ct) {
+      setWorking(false);
+      setMsg("Preencha a Cidade.");
+      return;
+    }
+
+    const uf = stateUf.trim().toUpperCase();
+    if (uf.length !== 2) {
+      setWorking(false);
+      setMsg("UF inválida. Use 2 letras (ex.: MG).");
       return;
     }
 
@@ -170,8 +280,19 @@ export default function AdmLojasPage() {
 
     const payload: any = {
       name: nm,
-      city: city.trim() || null,
-      state: stateUf.trim().toUpperCase() || null,
+
+      // ✅ cadastro completo
+      legal_name: ln,
+      cnpj: cnpjNorm,
+      address_zip: zipNorm,
+      address_street: st,
+      address_number: num,
+      address_complement: complement.trim() || null,
+      address_neighborhood: neigh,
+
+      city: ct || null,
+      state: uf || null,
+
       active: !!active,
       freight_fee: ff,
     };
@@ -201,10 +322,7 @@ export default function AdmLojasPage() {
     setMsg("");
     setWorking(true);
 
-    const { error } = await supabase
-      .from("stores")
-      .update({ active: !(s.active ?? true) })
-      .eq("id", s.id);
+    const { error } = await supabase.from("stores").update({ active: !(s.active ?? true) }).eq("id", s.id);
 
     if (error) {
       setWorking(false);
@@ -354,6 +472,32 @@ export default function AdmLojasPage() {
           <div className="grid gap-3">
             <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Loja Shopping Cidade" />
 
+            {/* ✅ NOVO: Razão social / CNPJ */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="Razão social" value={legalName} onChange={setLegalName} placeholder="Ex.: Minha Empresa LTDA" />
+              <Input
+                label="CNPJ"
+                value={cnpj}
+                onChange={(v) => setCnpj(v)}
+                placeholder="Somente números (14 dígitos)"
+              />
+            </div>
+
+            {/* ✅ NOVO: Endereço completo */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="CEP" value={zip} onChange={(v) => setZip(v)} placeholder="Somente números (8 dígitos)" />
+              <Input label="Bairro" value={neighborhood} onChange={setNeighborhood} placeholder="Ex.: Centro" />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="sm:col-span-2">
+                <Input label="Logradouro" value={street} onChange={setStreet} placeholder="Rua / Av / etc." />
+              </div>
+              <Input label="Número" value={numberAddr} onChange={setNumberAddr} placeholder="Ex.: 123" />
+            </div>
+
+            <Input label="Complemento (opcional)" value={complement} onChange={setComplement} placeholder="Ex.: Sala 12" />
+
             <div className="grid gap-3 sm:grid-cols-2">
               <Input label="Cidade" value={city} onChange={setCity} placeholder="Belo Horizonte" />
               <Input label="UF" value={stateUf} onChange={(v) => setStateUf(v.toUpperCase())} placeholder="MG" maxLength={2} />
@@ -395,9 +539,7 @@ export default function AdmLojasPage() {
 
             {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
 
-            {!loading && filtered.length === 0 ? (
-              <div className="text-sm text-slate-600">Nenhuma loja encontrada.</div>
-            ) : null}
+            {!loading && filtered.length === 0 ? <div className="text-sm text-slate-600">Nenhuma loja encontrada.</div> : null}
 
             {!loading && filtered.length > 0 ? (
               <div className="grid gap-2">
@@ -416,8 +558,7 @@ export default function AdmLojasPage() {
 
                         <div className="mt-1 text-sm text-slate-600">
                           {(s.city ?? "-")}
-                          {s.state ? `/${s.state}` : ""}{" "}
-                          {s.freight_fee != null ? `· Frete: ${money(Number(s.freight_fee))}` : ""}
+                          {s.state ? `/${s.state}` : ""} {s.freight_fee != null ? `· Frete: ${money(Number(s.freight_fee))}` : ""}
                         </div>
 
                         <div className="mt-2 text-sm">

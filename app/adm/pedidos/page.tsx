@@ -24,12 +24,14 @@ type OrderRow = {
   total: number;
   total_with_freight: number;
 
-  // ✅ NOVO: vencimento (precisa existir em orders e na view v_orders_admin_list)
-  due_date: string | null; // se no banco for DATE, virá "YYYY-MM-DD"
+  // ✅ vencimento (precisa existir em orders e na view v_orders_admin_list)
+  due_date: string | null; // DATE => "YYYY-MM-DD"
 };
 
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
 const LOG_OPTIONS = ["RECEBIDO", "EM_SEPARACAO", "ENTREGUE"] as const;
+
+type TabKey = "OPEN" | "DELIVERED";
 
 function fmtBRL(v: number) {
   return (Number(v) || 0).toLocaleString("pt-BR", {
@@ -51,7 +53,6 @@ function todayYMD() {
 }
 
 function isPastDateYMD(ymd: string) {
-  // compara só data (YYYY-MM-DD)
   const t = todayYMD();
   return ymd < t;
 }
@@ -68,6 +69,8 @@ export default function AdmPedidosPage() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+
+  const [tab, setTab] = useState<TabKey>("OPEN");
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -104,15 +107,38 @@ export default function AdmPedidosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ separa por aba (ENTREGUE vai pra aba "Entregues")
+  const ordersByTab = useMemo(() => {
+    const delivered = orders.filter((o) => (o.logistic_status ?? "") === "ENTREGUE");
+    const open = orders.filter((o) => (o.logistic_status ?? "") !== "ENTREGUE");
+    return { open, delivered };
+  }, [orders]);
+
+  const counts = useMemo(() => {
+    return {
+      open: ordersByTab.open.length,
+      delivered: ordersByTab.delivered.length,
+    };
+  }, [ordersByTab]);
+
+  // ✅ aplica busca dentro da aba atual
   const filtered = useMemo(() => {
-    const qq = q.toLowerCase();
-    return orders.filter(
+    const base = tab === "DELIVERED" ? ordersByTab.delivered : ordersByTab.open;
+
+    const qq = q.trim().toLowerCase();
+    if (!qq) return base;
+
+    return base.filter(
       (o) =>
-        !qq ||
         o.id.toLowerCase().includes(qq) ||
         (o.store_name ?? "").toLowerCase().includes(qq)
     );
-  }, [orders, q]);
+  }, [ordersByTab, tab, q]);
+
+  // ✅ limpa seleção quando troca aba (evita excluir coisas “invisíveis”)
+  useEffect(() => {
+    setSelected(new Set());
+  }, [tab]);
 
   function toggleSelect(id: string) {
     setSelected((prev) => {
@@ -145,6 +171,13 @@ export default function AdmPedidosPage() {
   async function updateOrder(id: string, patch: Partial<OrderRow>) {
     const { error } = await supabase.from("orders").update(patch).eq("id", id);
     if (error) console.error("updateOrder error:", error);
+
+    // ✅ melhor UX: atualiza localmente antes e depois sincroniza
+    setOrders((prev) =>
+      prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o))
+    );
+
+    // garante que view/refetch reflita tudo (totais, store_name, etc.)
     await loadOrders();
   }
 
@@ -169,11 +202,42 @@ export default function AdmPedidosPage() {
         }
       />
 
+      {/* ✅ Abas */}
       <Card>
-        <Input label="Buscar" placeholder="ID ou loja..." value={q} onChange={setQ} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant={tab === "OPEN" ? "primary" : "secondary"}
+            onClick={() => setTab("OPEN")}
+          >
+            Em aberto <span className="ml-2 opacity-80">({counts.open})</span>
+          </Button>
+
+          <Button
+            variant={tab === "DELIVERED" ? "primary" : "secondary"}
+            onClick={() => setTab("DELIVERED")}
+          >
+            Entregues <span className="ml-2 opacity-80">({counts.delivered})</span>
+          </Button>
+
+          <div className="ml-auto w-full md:w-[360px]">
+            <Input label="Buscar" placeholder="ID ou loja..." value={q} onChange={setQ} />
+          </div>
+        </div>
+
+        <div className="mt-2 text-xs text-slate-500">
+          Regra: ao marcar <b>Logística = ENTREGUE</b>, o pedido vai para a aba <b>Entregues</b>.
+        </div>
       </Card>
 
       {loading && <Card>Carregando...</Card>}
+
+      {!loading && filtered.length === 0 ? (
+        <Card>
+          <div className="text-sm text-slate-600">
+            Nenhum pedido encontrado nesta aba.
+          </div>
+        </Card>
+      ) : null}
 
       <div className="space-y-4">
         {filtered.map((o) => {
@@ -194,6 +258,9 @@ export default function AdmPedidosPage() {
                     <span>{o.store_name ?? "Loja não vinculada"}</span>
                     {isOverdue ? <Badge tone="red">Vencido</Badge> : null}
                     {!!due && !isOverdue ? <Badge tone="neutral">Com vencimento</Badge> : null}
+                    {(o.logistic_status ?? "") === "ENTREGUE" ? (
+                      <Badge tone="green">Entregue</Badge>
+                    ) : null}
                   </div>
                 </div>
               }
@@ -232,7 +299,6 @@ export default function AdmPedidosPage() {
                   {o.is_paid ? "Pago" : "Marcar pago"}
                 </Button>
 
-                {/* ✅ NOVO: Vencimento */}
                 <div>
                   <label className="mb-1 block text-xs text-slate-500">Vencimento</label>
                   <input

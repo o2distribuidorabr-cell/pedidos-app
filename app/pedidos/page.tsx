@@ -29,6 +29,10 @@ type OrderRow = {
 
   // ✅ novos campos refletidos
   due_date: string | null; // DATE => "YYYY-MM-DD"
+
+  // ✅ NOVO: previsão de entrega (DATE => "YYYY-MM-DD")
+  delivery_forecast: string | null;
+
   edited_by_admin: boolean | null;
   edited_at: string | null;
 };
@@ -104,6 +108,18 @@ function dueLabel(due: string | null) {
   return due;
 }
 
+// ✅ Previsão de entrega: tom e label
+function forecastTone(forecast: string | null, logistic: OrderRow["logistic_status"]): "green" | "red" | "neutral" {
+  if (!forecast) return "neutral";
+  if (logistic === "ENTREGUE") return "green";
+  return forecast < todayYMD() ? "red" : "green";
+}
+
+function forecastLabel(forecast: string | null) {
+  if (!forecast) return "—";
+  return forecast;
+}
+
 export default function HistoricoPedidosPage() {
   const router = useRouter();
 
@@ -177,11 +193,7 @@ export default function HistoricoPedidosPage() {
 
       setUserEmail(user.email ?? "-");
 
-      const { data: profile, error: pErr } = await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .maybeSingle();
+      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
 
       if (pErr) {
         setMsg(pErr.message);
@@ -198,11 +210,7 @@ export default function HistoricoPedidosPage() {
         return;
       }
 
-      const { data: store, error: sErr } = await supabase
-        .from("stores")
-        .select("id, name")
-        .eq("id", sId)
-        .maybeSingle();
+      const { data: store, error: sErr } = await supabase.from("stores").select("id, name").eq("id", sId).maybeSingle();
 
       if (sErr) {
         setMsg(sErr.message);
@@ -220,11 +228,7 @@ export default function HistoricoPedidosPage() {
   }, []);
 
   async function loadCreditBalance(sId: string) {
-    const { data, error } = await supabase
-      .from("v_store_credit_balance")
-      .select("store_id, balance")
-      .eq("store_id", sId)
-      .maybeSingle();
+    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id, balance").eq("store_id", sId).maybeSingle();
 
     if (error) {
       setMsg((m) => (m ? m : error.message));
@@ -242,7 +246,7 @@ export default function HistoricoPedidosPage() {
     const { data: ords, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee, credit_applied, due_date, edited_by_admin, edited_at"
+        "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee, credit_applied, due_date, delivery_forecast, edited_by_admin, edited_at"
       )
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
@@ -261,12 +265,8 @@ export default function HistoricoPedidosPage() {
 
     const ids = orderList.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase
-      .from("v_order_totals")
-      .select("order_id, store_id, total_cost")
-      .in("order_id", ids);
+    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id, store_id, total_cost").in("order_id", ids);
 
-    // Se der erro na view, ainda mostra pedidos (sem total)
     if (tErr) {
       setMsg(tErr.message);
       setOrders(orderList.map((o) => ({ ...o, total_cost: 0, amount_due: 0 })));
@@ -316,7 +316,6 @@ export default function HistoricoPedidosPage() {
           </Card>
         ) : null}
 
-        {/* Contexto */}
         <Card title="Resumo" subtitle="Loja / usuário / crédito">
           <div className="grid gap-3 md:grid-cols-3">
             <div>
@@ -337,7 +336,6 @@ export default function HistoricoPedidosPage() {
           </div>
         </Card>
 
-        {/* Filtros */}
         <Card title="Filtros">
           <div className="grid gap-3 lg:grid-cols-6">
             <div className="lg:col-span-2">
@@ -421,7 +419,6 @@ export default function HistoricoPedidosPage() {
           </div>
         </Card>
 
-        {/* Lista */}
         <Card title="Pedidos" subtitle={loading ? "Carregando..." : `${filtered.length} pedido(s) no filtro`}>
           {loading ? (
             <div className="text-sm text-slate-600">Carregando...</div>
@@ -436,6 +433,10 @@ export default function HistoricoPedidosPage() {
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Status</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Operação</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Entrega</th>
+
+                    {/* ✅ NOVO */}
+                    <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Previsão</th>
+
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Frete</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Vencimento</th>
                     <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Criado</th>
@@ -464,9 +465,7 @@ export default function HistoricoPedidosPage() {
                             <div className="font-mono text-xs text-slate-600">{o.id}</div>
                             {isEdited ? <Badge tone="blue">EDITADO</Badge> : null}
                           </div>
-                          {isEdited && o.edited_at ? (
-                            <div className="mt-1 text-[11px] text-slate-500">em {fmtBR(o.edited_at)}</div>
-                          ) : null}
+                          {isEdited && o.edited_at ? <div className="mt-1 text-[11px] text-slate-500">em {fmtBR(o.edited_at)}</div> : null}
                         </td>
 
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
@@ -481,6 +480,18 @@ export default function HistoricoPedidosPage() {
                           {deliveryLabel(o.delivery_mode)}
                         </td>
 
+                        {/* ✅ NOVO: Previsão de entrega */}
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <Badge tone={forecastTone(o.delivery_forecast, o.logistic_status)}>
+                              {forecastLabel(o.delivery_forecast)}
+                            </Badge>
+                            {o.delivery_forecast && o.logistic_status !== "ENTREGUE" && o.delivery_forecast < todayYMD() ? (
+                              <Badge tone="red">Atrasado</Badge>
+                            ) : null}
+                          </div>
+                        </td>
+
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
                           {freteTxt}
                         </td>
@@ -492,17 +503,9 @@ export default function HistoricoPedidosPage() {
                           </div>
                         </td>
 
-                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
-                          {fmtBR(o.created_at)}
-                        </td>
-
-                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
-                          {fmtBR(o.submitted_at)}
-                        </td>
-
-                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
-                          {fmtBR(o.approved_at)}
-                        </td>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">{fmtBR(o.created_at)}</td>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">{fmtBR(o.submitted_at)}</td>
+                        <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">{fmtBR(o.approved_at)}</td>
 
                         <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
                           {money(Number(o.total_cost) || 0)}
@@ -526,7 +529,6 @@ export default function HistoricoPedidosPage() {
           )}
         </Card>
 
-        {/* Totais */}
         <div className="grid gap-3 md:grid-cols-3">
           <Card title="Total exibido">
             <div className="text-lg font-semibold text-slate-900">{money(totalGeral)}</div>
