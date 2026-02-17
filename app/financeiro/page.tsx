@@ -44,6 +44,15 @@ type CreditBalRow = {
   balance: number | null;
 };
 
+// ✅ NOVO: configurações globais do financeiro (admin)
+type FinanceSettingsRow = {
+  id: number;
+  pix_key: string | null;
+  apply_late_charges: boolean | null;
+  late_fee_percent: number | null; // % uma vez
+  daily_interest_percent: number | null; // % ao dia
+};
+
 type RowUi = {
   id: string;
 
@@ -57,6 +66,12 @@ type RowUi = {
   total: number;
   credit_applied: number;
   a_pagar: number;
+
+  // ✅ NOVO: encargos (calculados)
+  late_days: number;
+  late_fee: number;
+  late_interest: number;
+  a_pagar_com_encargos: number;
 
   is_paid: boolean;
   paid_at: string | null;
@@ -131,6 +146,17 @@ function dueBadge(s: RowUi["due_status"]) {
   return <Badge tone="neutral">—</Badge>;
 }
 
+// ✅ NOVO: dias em atraso (baseado em DATE YMD)
+function daysLateYMD(dueYmd: string) {
+  const [y, m, d] = dueYmd.split("-").map(Number);
+  const due = new Date(y, m - 1, d, 12, 0, 0);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  const diff = today.getTime() - due.getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  return Math.max(days, 0);
+}
+
 export default function FinanceiroFranqueadoPage() {
   const router = useRouter();
 
@@ -140,6 +166,9 @@ export default function FinanceiroFranqueadoPage() {
   const [storeId, setStoreId] = useState<string | null>(null);
   const [rows, setRows] = useState<RowUi[]>([]);
   const [creditBalance, setCreditBalance] = useState<number>(0);
+
+  // ✅ NOVO: settings globais (pix/multa/juros)
+  const [financeSettings, setFinanceSettings] = useState<FinanceSettingsRow | null>(null);
 
   // filtros
   const [paidFilter, setPaidFilter] = useState<string>("all");
@@ -163,11 +192,7 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      const { data: profile, error: pErr } = await supabase
-        .from("profiles")
-        .select("store_id")
-        .eq("id", user.id)
-        .maybeSingle();
+      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
 
       if (pErr) {
         setMsg(pErr.message);
@@ -184,18 +209,35 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
+      await loadFinanceSettings(); // ✅ NOVO
       await loadFinanceForStore(sId);
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadCreditBalance(sId: string): Promise<number> {
+  // ✅ NOVO: carrega settings do financeiro (PIX/multa/juros)
+  async function loadFinanceSettings() {
     const { data, error } = await supabase
-      .from("v_store_credit_balance")
-      .select("store_id,balance")
-      .eq("store_id", sId)
+      .from("finance_settings")
+      .select("id,pix_key,apply_late_charges,late_fee_percent,daily_interest_percent")
+      .eq("id", 1)
       .maybeSingle();
+
+    if (error) {
+      // não trava a tela do franqueado se faltar policy; só registra
+      console.warn("finance_settings:", error.message);
+      setFinanceSettings(null);
+      return null;
+    }
+
+    const row = (data ?? null) as FinanceSettingsRow | null;
+    setFinanceSettings(row);
+    return row;
+  }
+
+  async function loadCreditBalance(sId: string): Promise<number> {
+    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id,balance").eq("store_id", sId).maybeSingle();
 
     if (error) {
       console.warn("credit balance:", error.message);
@@ -244,20 +286,14 @@ export default function FinanceiroFranqueadoPage() {
 
     const orderIds = orders.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase
-      .from("v_order_totals")
-      .select("order_id,store_id,total_cost")
-      .in("order_id", orderIds);
+    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
 
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    const { data: itemsRaw, error: iErr } = await supabase
-      .from("order_items")
-      .select("order_id,qty,unit_cost")
-      .in("order_id", orderIds);
+    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
 
     if (iErr) console.warn("order_items calc:", iErr.message);
 
@@ -269,6 +305,11 @@ export default function FinanceiroFranqueadoPage() {
     }
 
     const bal = await loadCreditBalance(sId);
+
+    // ✅ NOVO: parâmetros de cobrança (defaults seguros)
+    const applyCharges = !!financeSettings?.apply_late_charges;
+    const feePct = Number(financeSettings?.late_fee_percent ?? 0) || 0;
+    const dailyPct = Number(financeSettings?.daily_interest_percent ?? 0) || 0;
 
     const ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
@@ -293,6 +334,19 @@ export default function FinanceiroFranqueadoPage() {
       const isPaid = !!o.is_paid;
       const due_status = calcDueStatus(o.due_date ?? null, isPaid);
 
+      // ✅ NOVO: encargos (apenas se vencido + em aberto + habilitado)
+      let late_days = 0;
+      let late_fee = 0;
+      let late_interest = 0;
+      let a_pagar_com_encargos = a_pagar;
+
+      if (applyCharges && !isPaid && due_status === "VENCIDO" && o.due_date) {
+        late_days = daysLateYMD(o.due_date);
+        late_fee = a_pagar * (feePct / 100); // uma vez
+        late_interest = a_pagar * (dailyPct / 100) * late_days; // por dia
+        a_pagar_com_encargos = Math.max(a_pagar + late_fee + late_interest, 0);
+      }
+
       return {
         id: o.id,
         status: o.status,
@@ -305,6 +359,11 @@ export default function FinanceiroFranqueadoPage() {
         total,
         credit_applied: credit,
         a_pagar,
+
+        late_days,
+        late_fee,
+        late_interest,
+        a_pagar_com_encargos,
 
         is_paid: isPaid,
         paid_at: o.paid_at,
@@ -326,6 +385,7 @@ export default function FinanceiroFranqueadoPage() {
   async function onReload() {
     if (!storeId) return;
     setLoading(true);
+    await loadFinanceSettings(); // ✅ NOVO (garante refletir alteração do admin)
     await loadFinanceForStore(storeId);
     setLoading(false);
   }
@@ -335,17 +395,15 @@ export default function FinanceiroFranqueadoPage() {
     const totalFrete = rows.reduce((a, r) => a + r.frete, 0);
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
+
+    // ✅ mantém exatamente o que você já tinha
     const totalApagar = rows.reduce((a, r) => a + r.a_pagar, 0);
     const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar : 0), 0);
     const totalAberto = totalApagar - totalPago;
 
-    const totalVencido = rows
-      .filter((r) => r.due_status === "VENCIDO")
-      .reduce((a, r) => a + r.a_pagar, 0);
+    const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + r.a_pagar, 0);
 
-    const totalAVencer = rows
-      .filter((r) => r.due_status === "A_VENCER")
-      .reduce((a, r) => a + r.a_pagar, 0);
+    const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + r.a_pagar, 0);
 
     return {
       totalMercadoria,
@@ -378,38 +436,50 @@ export default function FinanceiroFranqueadoPage() {
     "Saldo crédito",
   ];
 
-  const tableRows = rows.map((r) => [
-    <span key="id" className="font-mono text-xs">
-      {r.id}
-    </span>,
-    <Badge key="st" tone={statusTone(r.status) as any}>
-      {r.status}
-    </Badge>,
-    <span key="op">{logisticLabel(r.logistic_status)}</span>,
-    <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
+  const tableRows = rows.map((r) => {
+    const hasCharges = r.late_days > 0 && (r.late_fee > 0 || r.late_interest > 0) && !r.is_paid && r.due_status === "VENCIDO";
 
-    // ✅ NOVO
-    <span key="due">{r.due_date ?? "-"}</span>,
-    <span key="dueSt">{dueBadge(r.due_status)}</span>,
-    <span key="pm">{r.payment_method ?? "-"}</span>,
+    return [
+      <span key="id" className="font-mono text-xs">
+        {r.id}
+      </span>,
+      <Badge key="st" tone={statusTone(r.status) as any}>
+        {r.status}
+      </Badge>,
+      <span key="op">{logisticLabel(r.logistic_status)}</span>,
+      <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
 
-    <span key="m" className="font-semibold">
-      {money(r.mercadoria)}
-    </span>,
-    <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
-    <span key="t" className="font-semibold">
-      {money(r.total)}
-    </span>,
-    <span key="c">- {money(r.credit_applied)}</span>,
-    <span key="ap" className="font-semibold">
-      {money(r.a_pagar)}
-    </span>,
-    <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
-    <span key="dt">{fmtBR(r.paid_at)}</span>,
-    <span key="bal" className="font-semibold">
-      {money(r.credit_balance)}
-    </span>,
-  ]);
+      // ✅ NOVO
+      <span key="due">{r.due_date ?? "-"}</span>,
+      <span key="dueSt">{dueBadge(r.due_status)}</span>,
+      <span key="pm">{r.payment_method ?? "-"}</span>,
+
+      <span key="m" className="font-semibold">
+        {money(r.mercadoria)}
+      </span>,
+      <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
+      <span key="t" className="font-semibold">
+        {money(r.total)}
+      </span>,
+      <span key="c">- {money(r.credit_applied)}</span>,
+
+      // ✅ NOVO: A pagar com encargos (quando aplicável), sem mudar colunas/estrutura
+      <div key="ap" className="min-w-0">
+        <div className="font-semibold">{money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}</div>
+        {hasCharges ? (
+          <div className="mt-1 text-[11px] text-slate-500">
+            Base {money(r.a_pagar)} + multa {money(r.late_fee)} + juros {money(r.late_interest)} ({r.late_days} dia(s))
+          </div>
+        ) : null}
+      </div>,
+
+      <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
+      <span key="dt">{fmtBR(r.paid_at)}</span>,
+      <span key="bal" className="font-semibold">
+        {money(r.credit_balance)}
+      </span>,
+    ];
+  });
 
   if (loading) {
     return (
@@ -425,6 +495,28 @@ export default function FinanceiroFranqueadoPage() {
     <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
       <div className="space-y-4">
         <PageHeader title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos" />
+
+        {/* ✅ NOVO: PIX + regra de cobrança (apenas adiciona, não interfere no resto) */}
+        <Card title="Pagamento via PIX">
+          <div className="grid gap-2">
+            <div className="text-sm text-slate-700">
+              <span className="font-semibold text-slate-900">Chave PIX:</span>{" "}
+              <span className="font-mono text-xs">{financeSettings?.pix_key ?? "—"}</span>
+            </div>
+
+            <div className="text-xs text-slate-500">
+              Encargos após vencimento:{" "}
+              <b>{financeSettings?.apply_late_charges ? "Ativos" : "Inativos"}</b>
+              {financeSettings?.apply_late_charges ? (
+                <>
+                  {" "}
+                  • Multa: <b>{Number(financeSettings?.late_fee_percent ?? 0)}%</b> (uma vez) • Juros:{" "}
+                  <b>{Number(financeSettings?.daily_interest_percent ?? 0)}%</b> ao dia
+                </>
+              ) : null}
+            </div>
+          </div>
+        </Card>
 
         <Card title="Filtros" right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}>
           {msg ? (

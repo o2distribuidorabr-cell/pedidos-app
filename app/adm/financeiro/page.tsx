@@ -45,6 +45,15 @@ type CreditBalRow = {
   balance: number | null;
 };
 
+type FinanceSettingsRow = {
+  id: number;
+  pix_key: string | null;
+  apply_late_charges: boolean | null;
+  late_fee_percent: number | null; // multa (% uma vez)
+  daily_interest_percent: number | null; // juros (% ao dia)
+  updated_at?: string | null;
+};
+
 type RowUi = {
   id: string;
 
@@ -70,6 +79,13 @@ type RowUi = {
   total: number; // mercadoria + frete
   credit_applied: number;
   a_pagar: number; // total - crédito (>=0)
+
+  // ✅ NOVO: encargos calculados (multa + juros)
+  days_late: number;
+  multa: number;
+  juros: number;
+  encargos: number;
+  a_pagar_com_encargos: number;
 
   credit_balance: number;
 };
@@ -111,6 +127,19 @@ function addDaysYMD(days: number) {
   const d = String(base.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
+function daysBetweenYMD(a: string, b: string) {
+  // b - a (em dias), a e b no formato YYYY-MM-DD
+  try {
+    const [ya, ma, da] = a.split("-").map(Number);
+    const [yb, mb, db] = b.split("-").map(Number);
+    const daDt = new Date(ya, ma - 1, da, 12, 0, 0);
+    const dbDt = new Date(yb, mb - 1, db, 12, 0, 0);
+    const diff = dbDt.getTime() - daDt.getTime();
+    return Math.floor(diff / (1000 * 60 * 60 * 24));
+  } catch {
+    return 0;
+  }
+}
 
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
@@ -144,6 +173,10 @@ function payMethodLabel(m: OrderRow["payment_method"]) {
   if (m === "BOLETO") return "Boleto";
   return "—";
 }
+function clampPercent(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(n, 1000)); // tolera valores maiores (ex.: 1.5% ao dia => 1.5)
+}
 
 export default function AdmFinanceiroPage() {
   const router = useRouter();
@@ -153,6 +186,14 @@ export default function AdmFinanceiroPage() {
 
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [rows, setRows] = useState<RowUi[]>([]);
+
+  // ✅ NOVO: configurações de cobrança (PIX + multa/juros)
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [pixKey, setPixKey] = useState<string>("");
+  const [applyLateCharges, setApplyLateCharges] = useState<boolean>(true);
+  const [lateFeePercent, setLateFeePercent] = useState<string>("2"); // multa padrão (% uma vez)
+  const [dailyInterestPercent, setDailyInterestPercent] = useState<string>("0,033"); // juros padrão (% ao dia)
 
   // ✅ Multi-seleção (compacta, harmoniosa)
   const [storeSelected, setStoreSelected] = useState<string[]>([]);
@@ -187,6 +228,9 @@ export default function AdmFinanceiroPage() {
         return;
       }
 
+      // ✅ NOVO: carrega configurações (PIX + encargos)
+      await loadFinanceSettings();
+
       const storeList = await loadStores();
       await loadFinance(storeList);
 
@@ -207,6 +251,69 @@ export default function AdmFinanceiroPage() {
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [storePopoverOpen]);
+
+  // ✅ helper simples: aceita "1,5" ou "1.5"
+  function parsePercentInput(v: string) {
+    const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, "");
+    if (!s) return 0;
+    const n = Number(s.replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  async function loadFinanceSettings() {
+    setSettingsLoading(true);
+    try {
+      // tabela singleton: finance_settings (id=1)
+      const { data, error } = await supabase.from("finance_settings").select("id,pix_key,apply_late_charges,late_fee_percent,daily_interest_percent").eq("id", 1).maybeSingle();
+
+      if (error) {
+        // não quebra a página, só avisa
+        console.warn("loadFinanceSettings:", error.message);
+        setSettingsLoading(false);
+        return;
+      }
+
+      const row = (data ?? null) as FinanceSettingsRow | null;
+      if (row) {
+        setPixKey(row.pix_key ?? "");
+        setApplyLateCharges(!!(row.apply_late_charges ?? true));
+        setLateFeePercent(String(row.late_fee_percent ?? 2).replace(".", ",")); // exibe em pt-BR
+        setDailyInterestPercent(String(row.daily_interest_percent ?? 0.033).replace(".", ",")); // % ao dia
+      }
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  async function saveFinanceSettings() {
+    setMsg("");
+    setSettingsSaving(true);
+
+    const multa = clampPercent(parsePercentInput(lateFeePercent));
+    const jurosDia = clampPercent(parsePercentInput(dailyInterestPercent));
+
+    const payload: FinanceSettingsRow = {
+      id: 1,
+      pix_key: pixKey.trim() || null,
+      apply_late_charges: !!applyLateCharges,
+      late_fee_percent: multa,
+      daily_interest_percent: jurosDia,
+    };
+
+    const { error } = await supabase.from("finance_settings").upsert(payload, { onConflict: "id" });
+
+    if (error) {
+      setMsg(`Erro ao salvar configurações: ${error.message}`);
+      setSettingsSaving(false);
+      return;
+    }
+
+    setSettingsSaving(false);
+
+    // Recarrega a tela financeira com os novos cálculos (multa/juros)
+    const storeList = await loadStores();
+    await loadFinance(storeList);
+  }
 
   async function loadStores(): Promise<StoreRow[]> {
     const { data, error } = await supabase.from("stores").select("id,name").order("name", { ascending: true });
@@ -324,6 +431,11 @@ export default function AdmFinanceiroPage() {
     const storeMap = new Map<string, string>();
     for (const s of storeList) storeMap.set(s.id, s.name ?? s.id);
 
+    // ✅ NOVO: parâmetros de cálculo (pré-definidos)
+    const multaPct = clampPercent(parsePercentInput(lateFeePercent)) / 100;
+    const jurosDiaPct = clampPercent(parsePercentInput(dailyInterestPercent)) / 100;
+    const aplicar = !!applyLateCharges;
+
     const ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
 
@@ -351,6 +463,15 @@ export default function AdmFinanceiroPage() {
       const is_overdue = !!o.due_date && !o.is_paid && o.due_date < today;
       const is_due_soon = !!o.due_date && !o.is_paid && o.due_date >= today && o.due_date <= soonLimit;
 
+      // ✅ NOVO: multa/juros automáticos (somente após vencimento, se não pago)
+      const days_late = is_overdue && o.due_date ? Math.max(daysBetweenYMD(o.due_date, today), 1) : 0;
+
+      const multa = aplicar && is_overdue ? a_pagar * multaPct : 0; // uma vez
+      const juros = aplicar && is_overdue ? a_pagar * jurosDiaPct * days_late : 0; // ao dia
+      const encargos = multa + juros;
+
+      const a_pagar_com_encargos = Math.max(a_pagar + encargos, 0);
+
       return {
         id: o.id,
         store_id: o.store_id,
@@ -376,6 +497,12 @@ export default function AdmFinanceiroPage() {
         credit_applied: credit,
         a_pagar,
 
+        days_late,
+        multa,
+        juros,
+        encargos,
+        a_pagar_com_encargos,
+
         credit_balance: balMap.get(o.store_id) ?? 0,
       };
     });
@@ -395,8 +522,10 @@ export default function AdmFinanceiroPage() {
     const totalFrete = rows.reduce((a, r) => a + r.frete, 0);
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
-    const totalApagar = rows.reduce((a, r) => a + r.a_pagar, 0);
-    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar : 0), 0);
+
+    // ✅ NOVO: resumo considera encargos no "a pagar"
+    const totalApagar = rows.reduce((a, r) => a + r.a_pagar_com_encargos, 0);
+    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_com_encargos : 0), 0);
     const totalAberto = totalApagar - totalPago;
 
     const qtdVencidos = rows.filter((r) => r.is_overdue).length;
@@ -465,13 +594,28 @@ export default function AdmFinanceiroPage() {
       );
 
       const dueCell = (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>
-          {dueBadge}
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>
+            {dueBadge}
+          </div>
+
+          {/* ✅ NOVO (discreto): mostra encargos se houver */}
+          {!r.is_paid && r.encargos > 0 ? (
+            <div className="text-xs text-slate-600">
+              Encargos: <b className="text-slate-900">{money(r.encargos)}</b>{" "}
+              <span className="text-slate-500">
+                (multa {money(r.multa)} + juros {money(r.juros)} • {r.days_late} dia(s))
+              </span>
+            </div>
+          ) : null}
         </div>
       );
 
       const paidCell = <Badge tone={r.is_paid ? "green" : "red"}>{r.is_paid ? "Pago" : "Em aberto"}</Badge>;
+
+      // ✅ NOVO: valor exibido em "A pagar" passa a considerar encargos automaticamente
+      const aPagarExib = r.a_pagar_com_encargos;
 
       if (viewMode === "compact") {
         return [
@@ -481,7 +625,7 @@ export default function AdmFinanceiroPage() {
           <div key="due">{dueCell}</div>,
           <span key="pm" className="text-slate-800">{payMethodLabel(r.payment_method)}</span>,
           <span key="tot" className="font-semibold text-slate-900">{money(r.total)}</span>,
-          <span key="apg" className="font-semibold text-slate-900">{money(r.a_pagar)}</span>,
+          <span key="apg" className="font-semibold text-slate-900">{money(aPagarExib)}</span>,
           <div key="paid">{paidCell}</div>,
         ];
       }
@@ -497,7 +641,7 @@ export default function AdmFinanceiroPage() {
         <span key="frete" className="text-slate-800">{r.delivery_mode === "FRETE" ? money(r.frete) : "—"}</span>,
         <span key="tot" className="font-semibold text-slate-900">{money(r.total)}</span>,
         <span key="cred" className="text-slate-800">- {money(r.credit_applied)}</span>,
-        <span key="apg" className="font-semibold text-slate-900">{money(r.a_pagar)}</span>,
+        <span key="apg" className="font-semibold text-slate-900">{money(aPagarExib)}</span>,
         <div key="paid">{paidCell}</div>,
         <span key="dt" className="text-slate-700">{fmtBR(r.paid_at)}</span>,
         <span key="cb" className="font-semibold text-slate-900">{money(r.credit_balance)}</span>,
@@ -527,6 +671,64 @@ export default function AdmFinanceiroPage() {
           <div className="text-sm text-red-600">{msg}</div>
         </Card>
       ) : null}
+
+      {/* ✅ NOVO: Configurações (PIX + multa/juros) */}
+      <Card
+        title="Configurações de cobrança"
+        subtitle="Define a chave PIX exibida para o franqueado e os encargos automáticos após o vencimento."
+        right={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={loadFinanceSettings} disabled={settingsLoading || settingsSaving}>
+              {settingsLoading ? "Carregando..." : "Recarregar"}
+            </Button>
+            <Button onClick={saveFinanceSettings} disabled={settingsLoading || settingsSaving}>
+              {settingsSaving ? "Salvando..." : "Salvar"}
+            </Button>
+          </div>
+        }
+      >
+        <div className="grid gap-3 md:grid-cols-6">
+          <div className="md:col-span-3">
+            <Input
+              label="Chave PIX (para recebimento)"
+              value={pixKey}
+              onChange={setPixKey}
+              placeholder="Ex.: CNPJ, e-mail, telefone ou chave aleatória"
+            />
+            <div className="mt-1 text-xs text-slate-500">
+              Esta chave deve aparecer na página financeira do franqueado.
+            </div>
+          </div>
+
+          <Select
+            label="Aplicar multa/juros após vencimento?"
+            value={applyLateCharges ? "true" : "false"}
+            onChange={(v) => setApplyLateCharges(v === "true")}
+            options={[
+              { value: "true", label: "Sim" },
+              { value: "false", label: "Não" },
+            ]}
+          />
+
+          <Input
+            label="Multa (% uma vez)"
+            value={lateFeePercent}
+            onChange={setLateFeePercent}
+            placeholder="Ex.: 2"
+          />
+
+          <Input
+            label="Juros (% ao dia)"
+            value={dailyInterestPercent}
+            onChange={setDailyInterestPercent}
+            placeholder="Ex.: 0,033"
+          />
+
+          <div className="md:col-span-6 text-xs text-slate-500">
+            Cálculo (somente pedidos <b>em aberto</b> e <b>vencidos</b>): multa = A pagar × (%/100) (uma vez) • juros = A pagar × (%/100) × dias em atraso.
+          </div>
+        </div>
+      </Card>
 
       <Card title="Filtros">
         <div className="grid gap-3 md:grid-cols-6">
