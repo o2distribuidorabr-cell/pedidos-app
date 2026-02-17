@@ -36,12 +36,14 @@ type OrderRow = {
   submitted_at: string | null;
 };
 
+type ProductMini = { sku: string | null; name: string | null; unit: string | null };
+
 type OrderItemRow = {
   order_id: string;
   product_id: string;
   qty: number | null;
-  // ✅ relação pode vir como array
-  products?: { sku: string | null; name: string | null; unit: string | null }[] | null;
+  // ✅ pode vir como objeto OU array (depende do relacionamento no Supabase)
+  products?: ProductMini | ProductMini[] | null;
 };
 
 type RangeAggRow = {
@@ -101,6 +103,12 @@ function isoToBR(iso: string) {
   return `${d}/${m}/${y}`;
 }
 
+function normalizeProduct(p?: ProductMini | ProductMini[] | null): ProductMini | null {
+  if (!p) return null;
+  if (Array.isArray(p)) return p[0] ?? null;
+  return p;
+}
+
 /** ✅ Select compacto com multi seleção (dropdown) */
 function MultiStoreSelect({
   stores,
@@ -134,12 +142,11 @@ function MultiStoreSelect({
   }, [stores, q]);
 
   function toggle(id: string) {
-    onChangeSelectedIds(
-      selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]
-    );
+    onChangeSelectedIds(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
   }
 
   function selectAll() {
+    // seleciona todas explicitamente (fica útil para “contagem”)
     onChangeSelectedIds(stores.map((s) => s.id));
   }
 
@@ -164,7 +171,7 @@ function MultiStoreSelect({
   }, []);
 
   return (
-    <div ref={ref} className="relative w-full md:w-[320px]">
+    <div ref={ref} className="relative w-full md:w-[260px]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -181,7 +188,7 @@ function MultiStoreSelect({
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-50 mt-2 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
+        <div className="absolute right-0 z-50 mt-2 w-[360px] max-w-[85vw] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
           <div className="p-3">
             <input
               value={q}
@@ -207,18 +214,14 @@ function MultiStoreSelect({
               </button>
 
               <div className="ml-auto">
-                {selectedIds.length === 0 ? (
-                  <Badge tone="blue">Todas</Badge>
-                ) : (
-                  <Badge tone="blue">{selectedIds.length}</Badge>
-                )}
+                {selectedIds.length === 0 ? <Badge tone="blue">Todas</Badge> : <Badge tone="blue">{selectedIds.length}</Badge>}
               </div>
             </div>
           </div>
 
           <div className="border-t border-slate-200" />
 
-          <div className="max-h-[280px] overflow-auto p-3">
+          <div className="max-h-[220px] overflow-auto p-3">
             <label className="flex items-center gap-2 py-1 text-sm text-slate-700 select-none">
               <input type="checkbox" checked={selectedIds.length === 0} onChange={clear} className="h-4 w-4" />
               Todas as lojas
@@ -229,15 +232,10 @@ function MultiStoreSelect({
             {filtered.length === 0 ? (
               <div className="text-sm text-slate-600">Nenhuma loja encontrada.</div>
             ) : (
-              <div className="grid gap-1 md:grid-cols-2">
+              <div className="grid gap-1 grid-cols-1">
                 {filtered.map((s) => (
                   <label key={s.id} className="flex items-center gap-2 py-1 text-sm text-slate-700 select-none">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(s.id)}
-                      onChange={() => toggle(s.id)}
-                      className="h-4 w-4"
-                    />
+                    <input type="checkbox" checked={selectedIds.includes(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" />
                     <span className="truncate">{s.name}</span>
                   </label>
                 ))}
@@ -245,9 +243,7 @@ function MultiStoreSelect({
             )}
           </div>
 
-          <div className="border-t border-slate-200 p-3 text-[11px] text-slate-500">
-            Dica: seleção vazia = todas as lojas.
-          </div>
+          <div className="border-t border-slate-200 p-3 text-[11px] text-slate-500">Dica: seleção vazia = todas as lojas.</div>
         </div>
       ) : null}
     </div>
@@ -356,23 +352,20 @@ export default function AdmDashboardPage() {
     }
   }
 
-  async function loadPlanning(
-    startISO: string,
-    endISO: string,
-    storeIds: string[],
-    statusMode: "submitted_approved" | "all"
-  ) {
+  async function loadPlanning(startISO: string, endISO: string, storeIds: string[], statusMode: "submitted_approved" | "all") {
     setRangeLoading(true);
     setRangeMsg("");
 
-    // inclui o dia final: endExclusive = end + 1 dia
-    const endExclusive = toISODate(addDays(new Date(endISO + "T00:00:00"), 1));
+    // ✅ garanta filtro por timestamp completo (evita comparação “estranha” em alguns casos)
+    const startTS = `${startISO}T00:00:00`;
+    const endExclusiveISO = toISODate(addDays(new Date(`${endISO}T00:00:00`), 1));
+    const endTS = `${endExclusiveISO}T00:00:00`;
 
     let q = supabase
       .from("orders")
       .select("id,store_id,status,submitted_at")
-      .gte("submitted_at", startISO)
-      .lt("submitted_at", endExclusive);
+      .gte("submitted_at", startTS)
+      .lt("submitted_at", endTS);
 
     if (storeIds.length > 0) q = q.in("store_id", storeIds);
 
@@ -418,16 +411,26 @@ export default function AdmDashboardPage() {
       return;
     }
 
-    // ✅ cast seguro (o supabase pode devolver shape diferente)
-    const itemsRows = (it ?? []) as unknown as OrderItemRow[];
+    const itemsRows = ((it ?? []) as unknown) as OrderItemRow[];
+
+    // ✅ fallback: se o join vier nulo, buscamos na tabela products
+    const productIds = Array.from(new Set(itemsRows.map((r) => r.product_id).filter(Boolean)));
+    const needFallback = itemsRows.some((r) => !normalizeProduct(r.products));
+    const productMap = new Map<string, ProductMini>();
+
+    if (needFallback && productIds.length > 0) {
+      const { data: pr, error: prErr } = await supabase.from("products").select("id,sku,name,unit").in("id", productIds).limit(5000);
+      if (!prErr && pr) {
+        for (const p of pr as any[]) {
+          productMap.set(String(p.id), { sku: p.sku ?? null, name: p.name ?? null, unit: p.unit ?? null });
+        }
+      }
+    }
 
     const orderToStore = new Map<string, string>();
     for (const o of ord) orderToStore.set(o.id, o.store_id);
 
-    const map = new Map<
-      string,
-      { sku: string; name: string; unit: string; qty: number; orders: Set<string>; stores: Set<string> }
-    >();
+    const map = new Map<string, { sku: string; name: string; unit: string; qty: number; orders: Set<string>; stores: Set<string> }>();
 
     for (const r of itemsRows) {
       const pid = r.product_id;
@@ -435,11 +438,12 @@ export default function AdmDashboardPage() {
 
       const qty = Number(r.qty || 0);
 
-      // ✅ products vem como array: pega o primeiro
-      const p0 = r.products?.[0] ?? null;
-      const psku = p0?.sku ?? "";
-      const pname = p0?.name ?? "-";
-      const punit = p0?.unit ?? "";
+      const pJoin = normalizeProduct(r.products);
+      const pFallback = productMap.get(pid) ?? null;
+
+      const psku = pJoin?.sku ?? pFallback?.sku ?? "";
+      const pname = pJoin?.name ?? pFallback?.name ?? "-";
+      const punit = pJoin?.unit ?? pFallback?.unit ?? "";
 
       const cur =
         map.get(pid) ?? {
@@ -531,20 +535,15 @@ export default function AdmDashboardPage() {
     const pedidos = statusMonthly.reduce((acc, r) => acc + (Number(r.orders_count) || 0), 0);
 
     const emAbertoStatuses = new Set(["submitted", "approved"]);
-    const emAberto = statusMonthly
-      .filter((r) => emAbertoStatuses.has(r.status))
-      .reduce((acc, r) => acc + (Number(r.total_value) || 0), 0);
+    const emAberto = statusMonthly.filter((r) => emAbertoStatuses.has(r.status)).reduce((acc, r) => acc + (Number(r.total_value) || 0), 0);
 
     return { total, pedidos, emAberto };
   }, [statusMonthly]);
 
   const topStores = useMemo(() => {
-    // Só faz sentido quando não há seleção (todas as lojas)
     if (selectedStoreIds.length > 0) return [];
     const map = new Map<string, number>();
-    for (const r of statusMonthly) {
-      map.set(r.store_id, (map.get(r.store_id) ?? 0) + (Number(r.total_value) || 0));
-    }
+    for (const r of statusMonthly) map.set(r.store_id, (map.get(r.store_id) ?? 0) + (Number(r.total_value) || 0));
     return Array.from(map.entries())
       .map(([store_id, total_value]) => ({ store_id, total_value }))
       .sort((a, b) => b.total_value - a.total_value)
@@ -552,10 +551,7 @@ export default function AdmDashboardPage() {
   }, [statusMonthly, selectedStoreIds]);
 
   const topItems = useMemo(() => {
-    const map = new Map<
-      string,
-      { product_name: string; sku: string; unit: string; total_value: number; total_qty: number; orders: number }
-    >();
+    const map = new Map<string, { product_name: string; sku: string; unit: string; total_value: number; total_qty: number; orders: number }>();
 
     for (const r of items) {
       const key = r.product_id;
@@ -597,13 +593,9 @@ export default function AdmDashboardPage() {
       });
     }
 
-    if (rangeSort === "qty") {
-      arr.sort((a, b) => (Number(b.total_qty) || 0) - (Number(a.total_qty) || 0));
-    } else if (rangeSort === "name") {
-      arr.sort((a, b) => (a.product_name || "").localeCompare(b.product_name || "", "pt-BR"));
-    } else {
-      arr.sort((a, b) => (a.sku || "").localeCompare(b.sku || "", "pt-BR"));
-    }
+    if (rangeSort === "qty") arr.sort((a, b) => (Number(b.total_qty) || 0) - (Number(a.total_qty) || 0));
+    else if (rangeSort === "name") arr.sort((a, b) => (a.product_name || "").localeCompare(b.product_name || "", "pt-BR"));
+    else arr.sort((a, b) => (a.sku || "").localeCompare(b.sku || "", "pt-BR"));
 
     return arr;
   }, [rangeAgg, rangeQuery, rangeSort, rangeOnlyNonZero]);
@@ -734,12 +726,7 @@ export default function AdmDashboardPage() {
 
             <div className="md:col-span-1 flex items-end">
               <label className="flex items-center gap-2 text-sm text-slate-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={rangeOnlyNonZero}
-                  onChange={(e) => setRangeOnlyNonZero(e.target.checked)}
-                  className="h-4 w-4"
-                />
+                <input type="checkbox" checked={rangeOnlyNonZero} onChange={(e) => setRangeOnlyNonZero(e.target.checked)} className="h-4 w-4" />
                 Só itens &gt; 0
               </label>
             </div>
@@ -761,11 +748,7 @@ export default function AdmDashboardPage() {
             <StatCard title="Período" value={`${isoToBR(rangeStart)} → ${isoToBR(rangeEnd)}`} subtitle="Planejamento" />
             <StatCard title="Pedidos no período" value={rangeOrdersCount} subtitle={`Lojas: ${rangeStoresCount}`} />
             <StatCard title="Itens diferentes" value={rangeKpis.itemsCount} subtitle="Com qtd > 0" />
-            <StatCard
-              title="Qtd total (somada)"
-              value={Number(rangeKpis.totalQty).toLocaleString("pt-BR")}
-              subtitle="Somatório"
-            />
+            <StatCard title="Qtd total (somada)" value={Number(rangeKpis.totalQty).toLocaleString("pt-BR")} subtitle="Somatório" />
           </div>
 
           {rangeLoading ? (
@@ -811,18 +794,13 @@ export default function AdmDashboardPage() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="Top lojas (valor no mês)">
           {selectedStoreIds.length > 0 ? (
-            <div className="text-sm text-slate-600">
-              Com lojas selecionadas, o ranking perde sentido. Limpe o filtro para ver “Top lojas”.
-            </div>
+            <div className="text-sm text-slate-600">Com lojas selecionadas, o ranking perde sentido. Limpe o filtro para ver “Top lojas”.</div>
           ) : topStores.length === 0 ? (
             <div className="text-sm text-slate-600">Sem dados no período.</div>
           ) : (
             <div className="space-y-2">
               {topStores.map((s) => (
-                <div
-                  key={s.store_id}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2"
-                >
+                <div key={s.store_id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
                   <div className="text-sm text-slate-800">
                     <span className="font-semibold text-slate-900">{storeNameMap.get(s.store_id) ?? s.store_id}</span>
                   </div>
