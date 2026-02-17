@@ -55,6 +55,16 @@ export default function AdmLojasPage() {
     return true;
   }
 
+  function formatSbError(prefix: string, err: any) {
+    const parts: string[] = [];
+    parts.push(prefix);
+    if (err?.message) parts.push(`message: ${err.message}`);
+    if (err?.details) parts.push(`details: ${err.details}`);
+    if (err?.hint) parts.push(`hint: ${err.hint}`);
+    if (err?.code) parts.push(`code: ${err.code}`);
+    return parts.join(" | ");
+  }
+
   async function loadBalances(storeIds: string[]) {
     if (storeIds.length === 0) {
       setBalancesByStore({});
@@ -67,7 +77,7 @@ export default function AdmLojasPage() {
       .in("store_id", storeIds);
 
     if (error) {
-      console.warn("loadBalances error:", error.message);
+      console.warn("loadBalances error:", error);
       return;
     }
 
@@ -89,7 +99,7 @@ export default function AdmLojasPage() {
       .order("name", { ascending: true });
 
     if (error) {
-      setMsg(error.message);
+      setMsg(formatSbError("Falha ao carregar stores.", error));
       setStores([]);
       return;
     }
@@ -149,10 +159,10 @@ export default function AdmLojasPage() {
 
     let ff: number | null = null;
     if (freightFee.trim() !== "") {
-      const parsed = Number(String(freightFee).replace(",", "."));
+      const parsed = parseAmountBR(freightFee);
       if (Number.isNaN(parsed) || parsed < 0) {
         setWorking(false);
-        setMsg("Frete inválido. Use número (ex.: 65 ou 65.00).");
+        setMsg("Frete inválido. Use número (ex.: 65 ou 65,00).");
         return;
       }
       ff = parsed;
@@ -170,14 +180,14 @@ export default function AdmLojasPage() {
       const { error } = await supabase.from("stores").update(payload).eq("id", editingId);
       if (error) {
         setWorking(false);
-        setMsg(error.message);
+        setMsg(formatSbError("Falha ao atualizar loja.", error));
         return;
       }
     } else {
       const { error } = await supabase.from("stores").insert(payload);
       if (error) {
         setWorking(false);
-        setMsg(error.message);
+        setMsg(formatSbError("Falha ao criar loja.", error));
         return;
       }
     }
@@ -198,7 +208,7 @@ export default function AdmLojasPage() {
 
     if (error) {
       setWorking(false);
-      setMsg(error.message);
+      setMsg(formatSbError("Falha ao ativar/desativar loja.", error));
       return;
     }
 
@@ -221,8 +231,37 @@ export default function AdmLojasPage() {
     setCreditMode("ADD");
   }
 
+  // ✅ aceita: "1000", "1000.50", "1000,50", "1.000,50", "1,000.50"
   function parseAmountBR(v: string) {
-    const n = Number(String(v).replace(",", "."));
+    const raw = String(v ?? "").trim();
+    if (!raw) return NaN;
+
+    // remove espaços e símbolos
+    let s = raw.replace(/\s/g, "").replace(/[R$\u00A0]/g, "");
+
+    const hasComma = s.includes(",");
+    const hasDot = s.includes(".");
+
+    if (hasComma && hasDot) {
+      // Heurística: o último separador define decimal
+      const lastComma = s.lastIndexOf(",");
+      const lastDot = s.lastIndexOf(".");
+      if (lastComma > lastDot) {
+        // decimal = ","  milhar = "."
+        s = s.replace(/\./g, "").replace(",", ".");
+      } else {
+        // decimal = "."  milhar = ","
+        s = s.replace(/,/g, "");
+      }
+    } else if (hasComma) {
+      // decimal ","
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // só "." ou nada => mantém
+      s = s.replace(/,/g, "");
+    }
+
+    const n = Number(s);
     return Number.isFinite(n) ? n : NaN;
   }
 
@@ -252,9 +291,10 @@ export default function AdmLojasPage() {
         p_amount: amt,
         p_note: creditNote.trim() || null,
       });
+
       if (error) {
         setWorking(false);
-        setMsg(error.message);
+        setMsg(formatSbError("Falha ao adicionar crédito (RPC add_store_credit).", error));
         return;
       }
     } else {
@@ -263,9 +303,10 @@ export default function AdmLojasPage() {
         p_amount: amt,
         p_note: creditNote.trim() || null,
       });
+
       if (error) {
         setWorking(false);
-        setMsg(error.message);
+        setMsg(formatSbError("Falha ao remover crédito (RPC remove_store_credit).", error));
         return;
       }
     }
@@ -303,7 +344,7 @@ export default function AdmLojasPage() {
 
       {msg ? (
         <Card>
-          <div className="text-sm text-red-600">{msg}</div>
+          <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
         </Card>
       ) : null}
 
@@ -318,7 +359,7 @@ export default function AdmLojasPage() {
               <Input label="UF" value={stateUf} onChange={(v) => setStateUf(v.toUpperCase())} placeholder="MG" maxLength={2} />
             </div>
 
-            <Input label="Frete padrão (opcional)" value={freightFee} onChange={setFreightFee} placeholder="Ex.: 65.00" />
+            <Input label="Frete padrão (opcional)" value={freightFee} onChange={setFreightFee} placeholder="Ex.: 65,00" />
 
             <Select
               label="Ativa?"
@@ -414,10 +455,7 @@ export default function AdmLojasPage() {
 
       {/* Modal crédito */}
       {creditStoreId ? (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-          onClick={closeCredit}
-        >
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCredit}>
           <div
             className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
@@ -454,7 +492,7 @@ export default function AdmLojasPage() {
             </div>
 
             <div className="mt-4 grid gap-3">
-              <Input label="Valor (R$)" value={creditAmount} onChange={setCreditAmount} placeholder="Ex.: 1000.00" />
+              <Input label="Valor (R$)" value={creditAmount} onChange={setCreditAmount} placeholder="Ex.: 1.000,00" />
               <Input
                 label="Observação (opcional)"
                 value={creditNote}
@@ -468,11 +506,9 @@ export default function AdmLojasPage() {
                 </Button>
               </div>
 
-              {creditMode === "REMOVE" ? (
-                <div className="text-xs text-slate-500">
-                  Observação: a remoção só funciona se você rodou o SQL da função <b>remove_store_credit</b>.
-                </div>
-              ) : null}
+              <div className="text-xs text-slate-500">
+                Se <b>ADD</b> falhar e <b>REMOVE</b> funcionar, normalmente é função inexistente / sem permissão / RLS.
+              </div>
             </div>
           </div>
         </div>
