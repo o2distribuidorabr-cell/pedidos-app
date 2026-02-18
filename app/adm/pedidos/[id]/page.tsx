@@ -146,6 +146,93 @@ function fmtCNPJ(v: string | null | undefined) {
   return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
 }
 
+/** ✅ NOVO (apenas helpers): regras de caixa/pct/rolo/etc */
+type PackInfo = {
+  perPack?: number; // ex.: 120 (u por cx)
+  perPackKg?: number; // ex.: 3.5 (kg por balde)
+  packLabel: string; // ex.: "cx" | "pct" | "rolo" | "balde" | "frasco" | "fardo"
+  unitLabel: string; // ex.: "u" | "kg"
+};
+
+function normTxt(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const PACK_RULES: Array<{ match: string; info: PackInfo }> = [
+  { match: "bife picanha 120g", info: { perPack: 120, packLabel: "cx", unitLabel: "u" } },
+  { match: "bife picanha120g", info: { perPack: 120, packLabel: "cx", unitLabel: "u" } },
+  { match: "bife picanha 56g", info: { perPack: 216, packLabel: "cx", unitLabel: "u" } },
+  { match: "bife vegetariano", info: { perPack: 20, packLabel: "pct", unitLabel: "u" } },
+  { match: "copo milkshake", info: { perPack: 50, packLabel: "pct", unitLabel: "u" } },
+  { match: "embalagem batata m", info: { perPack: 800, packLabel: "cx", unitLabel: "u" } },
+  { match: "emba batata m", info: { perPack: 800, packLabel: "cx", unitLabel: "u" } },
+  { match: "embalagem batata p", info: { perPack: 2250, packLabel: "cx", unitLabel: "u" } },
+  { match: "emba batata p", info: { perPack: 2250, packLabel: "cx", unitLabel: "u" } },
+  { match: "emba kraft", info: { perPack: 50, packLabel: "pct", unitLabel: "u" } },
+  { match: "embalagem kraft", info: { perPack: 50, packLabel: "pct", unitLabel: "u" } },
+
+  // ✅ Ajuste: Etiqueta (aceita "Etiqueta de identificação", "Etiqueta identificação", etc.)
+  { match: "etiqueta de identificacao", info: { perPack: 1000, packLabel: "rolo", unitLabel: "u" } },
+  { match: "etiqueta identificacao", info: { perPack: 1000, packLabel: "rolo", unitLabel: "u" } },
+  { match: "etiqueta identific", info: { perPack: 1000, packLabel: "rolo", unitLabel: "u" } },
+
+  // ✅ Ajuste: Molho American Burger (3,5kg por balde)
+  { match: "molho american burger", info: { perPackKg: 3.5, packLabel: "balde", unitLabel: "kg" } },
+  { match: "molho american", info: { perPackKg: 3.5, packLabel: "balde", unitLabel: "kg" } },
+
+  // ✅ Ajuste: Molho Barbecue com Whisky (0,397kg por frasco)
+  { match: "molho barbecue", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "molho barbacue", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbecue whisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbacue whisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbecue wisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbacue wisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+
+  { match: "pao hb", info: { perPack: 48, packLabel: "cx", unitLabel: "u" } },
+  { match: "papel acoplado", info: { perPack: 1000, packLabel: "fardo", unitLabel: "u" } },
+  { match: "sache baconese", info: { perPack: 60, packLabel: "cx", unitLabel: "u" } },
+  { match: "sache maionese temperada", info: { perPack: 60, packLabel: "cx", unitLabel: "u" } },
+];
+
+function getPackInfo(productName: string | null | undefined): PackInfo | null {
+  const n = normTxt(productName || "");
+  if (!n) return null;
+  const rule = PACK_RULES.find((r) => n.includes(r.match));
+  return rule?.info ?? null;
+}
+
+function fmtNumBR(v: number) {
+  // 2 casas quando precisa, senão inteiro
+  const rounded = Math.round((v + Number.EPSILON) * 100) / 100;
+  const isInt = Math.abs(rounded - Math.round(rounded)) < 1e-9;
+  return isInt
+    ? String(Math.round(rounded))
+    : rounded.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function ceilPacks(qty: number, pack: PackInfo) {
+  const q = Number(qty) || 0;
+
+  if (pack.perPackKg && pack.perPackKg > 0) {
+    return Math.ceil(q / pack.perPackKg);
+  }
+  if (pack.perPack && pack.perPack > 0) {
+    return Math.ceil(q / pack.perPack);
+  }
+  return 0;
+}
+
+function packBaseText(pack: PackInfo) {
+  if (pack.perPackKg && pack.perPackKg > 0) return `${fmtNumBR(pack.perPackKg)}${pack.unitLabel}/${pack.packLabel}`;
+  if (pack.perPack && pack.perPack > 0) return `${fmtNumBR(pack.perPack)}${pack.unitLabel}/${pack.packLabel}`;
+  return `-${pack.unitLabel}/${pack.packLabel}`;
+}
+
 export default function AdmPedidoDetalhePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -262,7 +349,11 @@ export default function AdmPedidoDetalhePage() {
   }, []);
 
   async function loadCreditBalance(storeId: string) {
-    const { data, error } = await supabase.from("v_store_credit_balance").select("balance").eq("store_id", storeId).maybeSingle();
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("balance")
+      .eq("store_id", storeId)
+      .maybeSingle();
 
     if (error) {
       console.warn("loadCreditBalance error:", error.message);
@@ -277,9 +368,7 @@ export default function AdmPedidoDetalhePage() {
     // mantém resiliente: se alguma coluna não existir no seu schema, ajuste aqui.
     const { data, error } = await supabase
       .from("stores")
-      .select(
-        "id,name,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state"
-      )
+      .select("id,name,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state")
       .eq("id", storeId)
       .maybeSingle();
 
@@ -555,7 +644,15 @@ export default function AdmPedidoDetalhePage() {
   if (!order) {
     return (
       <div className="space-y-4">
-        <PageHeader title="Pedido" subtitle="Não foi possível carregar" right={<Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Voltar</Button>} />
+        <PageHeader
+          title="Pedido"
+          subtitle="Não foi possível carregar"
+          right={
+            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>
+              Voltar
+            </Button>
+          }
+        />
         <Card>
           <div className="text-sm text-red-600">{msg || "Pedido não encontrado."}</div>
         </Card>
@@ -578,27 +675,64 @@ export default function AdmPedidoDetalhePage() {
 
     const line = removed ? 0 : qtyNum * unitCost;
 
+    // ✅ NOVO: calcula caixa/pct/rolo/balde/frasco
+    const pack = getPackInfo(name);
+    const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+
+    const packCell = !pack ? (
+      <span className="text-slate-500">-</span>
+    ) : (
+      <div className="leading-tight">
+        <div className="text-slate-800 font-semibold">{packBaseText(pack)}</div>
+        <div className="text-xs text-slate-500">
+          {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
+        </div>
+      </div>
+    );
+
     if (!editMode) {
       return [
-        <span key="sku" className="font-mono text-xs">{sku}</span>,
-        <span key="name" className="text-slate-900">{name}</span>,
-        <span key="unit" className="text-slate-700">{unit}</span>,
-        <span key="price" className="font-semibold">{fmtBRL(unitCost)}</span>,
-        <span key="qty" className="font-semibold">{it.qty}</span>,
-        <span key="total" className="font-semibold">{fmtBRL(line)}</span>,
+        <span key="sku" className="font-mono text-xs">
+          {sku}
+        </span>,
+        <span key="name" className="text-slate-900">
+          {name}
+        </span>,
+        <span key="unit" className="text-slate-700">
+          {unit}
+        </span>,
+        <span key="price" className="font-semibold">
+          {fmtBRL(unitCost)}
+        </span>,
+        <span key="qty" className="font-semibold">
+          {it.qty}
+        </span>,
+
+        // ✅ NOVO (1 coluna)
+        <div key="pack">{packCell}</div>,
+
+        <span key="total" className="font-semibold">
+          {fmtBRL(line)}
+        </span>,
       ];
     }
 
     return [
-      <span key="sku" className="font-mono text-xs">{sku}</span>,
+      <span key="sku" className="font-mono text-xs">
+        {sku}
+      </span>,
       <span key="name" className="text-slate-900">
         <div className="flex items-center gap-2">
           <span>{name}</span>
           {removed ? <Badge tone="red">Removido</Badge> : null}
         </div>
       </span>,
-      <span key="unit" className="text-slate-700">{unit}</span>,
-      <span key="price" className="font-semibold">{fmtBRL(unitCost)}</span>,
+      <span key="unit" className="text-slate-700">
+        {unit}
+      </span>,
+      <span key="price" className="font-semibold">
+        {fmtBRL(unitCost)}
+      </span>,
       <div key="qty" className="flex items-center gap-2">
         <input
           className="w-24 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm outline-none focus:border-slate-300 disabled:bg-slate-50"
@@ -609,11 +743,21 @@ export default function AdmPedidoDetalhePage() {
           min={0}
           step={1}
         />
-        <Button variant={removed ? "secondary" : "danger"} disabled={saving || lockedByLogistics} onClick={() => toggleRemoveItem(it.id)}>
+        <Button
+          variant={removed ? "secondary" : "danger"}
+          disabled={saving || lockedByLogistics}
+          onClick={() => toggleRemoveItem(it.id)}
+        >
           {removed ? "Desfazer" : "Remover"}
         </Button>
       </div>,
-      <span key="total" className="font-semibold">{fmtBRL(line)}</span>,
+
+      // ✅ NOVO (1 coluna)
+      <div key="pack">{packCell}</div>,
+
+      <span key="total" className="font-semibold">
+        {fmtBRL(line)}
+      </span>,
     ];
   });
 
@@ -621,13 +765,47 @@ export default function AdmPedidoDetalhePage() {
     originalItems?.map((it) => {
       const unitCost = Number(it.unit_cost ?? 0);
       const line = Number(it.qty ?? 0) * unitCost;
+
+      // ✅ NOVO: calcula caixa/pct/rolo no snapshot original
+      const name = it.name ?? "-";
+      const pack = getPackInfo(name);
+      const qtyNum = Number(it.qty ?? 0);
+      const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+
+      const packCell = !pack ? (
+        <span className="text-slate-500">-</span>
+      ) : (
+        <div className="leading-tight">
+          <div className="text-slate-800 font-semibold">{packBaseText(pack)}</div>
+          <div className="text-xs text-slate-500">
+            {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
+          </div>
+        </div>
+      );
+
       return [
-        <span key="sku" className="font-mono text-xs">{it.sku ?? "-"}</span>,
-        <span key="name" className="text-slate-900">{it.name ?? "-"}</span>,
-        <span key="unit" className="text-slate-700">{it.product_unit ?? it.unit ?? "-"}</span>,
-        <span key="price" className="font-semibold">{fmtBRL(unitCost)}</span>,
-        <span key="qty" className="font-semibold">{it.qty}</span>,
-        <span key="total" className="font-semibold">{fmtBRL(line)}</span>,
+        <span key="sku" className="font-mono text-xs">
+          {it.sku ?? "-"}
+        </span>,
+        <span key="name" className="text-slate-900">
+          {it.name ?? "-"}
+        </span>,
+        <span key="unit" className="text-slate-700">
+          {it.product_unit ?? it.unit ?? "-"}
+        </span>,
+        <span key="price" className="font-semibold">
+          {fmtBRL(unitCost)}
+        </span>,
+        <span key="qty" className="font-semibold">
+          {it.qty}
+        </span>,
+
+        // ✅ NOVO (1 coluna)
+        <div key="pack">{packCell}</div>,
+
+        <span key="total" className="font-semibold">
+          {fmtBRL(line)}
+        </span>,
       ];
     }) ?? [];
 
@@ -648,8 +826,14 @@ export default function AdmPedidoDetalhePage() {
   const destCity = s?.city ?? null;
   const destState = s?.state ?? null;
 
-  const destAddrLine1 = [destStreet, destNumber ? `nº ${destNumber}` : null, destComp ? `(${destComp})` : null].filter(Boolean).join(", ");
-  const destAddrLine2 = [destNeigh, destCity ? `${destCity}${destState ? `/${destState}` : ""}` : null, destZip ? `CEP ${destZip}` : null]
+  const destAddrLine1 = [destStreet, destNumber ? `nº ${destNumber}` : null, destComp ? `(${destComp})` : null]
+    .filter(Boolean)
+    .join(", ");
+  const destAddrLine2 = [
+    destNeigh,
+    destCity ? `${destCity}${destState ? `/${destState}` : ""}` : null,
+    destZip ? `CEP ${destZip}` : null,
+  ]
     .filter(Boolean)
     .join(" • ");
 
@@ -782,7 +966,9 @@ export default function AdmPedidoDetalhePage() {
             <div className="danfe-cell">
               <div className="danfe-kv">
                 <div className="danfe-k">Número do pedido</div>
-                <div className="danfe-v" style={{ wordBreak: "break-all" }}>{order.id}</div>
+                <div className="danfe-v" style={{ wordBreak: "break-all" }}>
+                  {order.id}
+                </div>
               </div>
               <div className="danfe-kv" style={{ marginTop: 8 }}>
                 <div className="danfe-k">Emissão</div>
@@ -857,13 +1043,29 @@ export default function AdmPedidoDetalhePage() {
               <table className="danfe-table">
                 <thead>
                   <tr>
-                    <th className="danfe-center" style={{ width: 40 }}>#</th>
+                    <th className="danfe-center" style={{ width: 40 }}>
+                      #
+                    </th>
                     <th style={{ width: 110 }}>SKU</th>
                     <th>Descrição</th>
-                    <th className="danfe-center" style={{ width: 70 }}>Unid.</th>
-                    <th className="danfe-right" style={{ width: 70 }}>Qtd</th>
-                    <th className="danfe-right" style={{ width: 110 }}>Vlr Unit.</th>
-                    <th className="danfe-right" style={{ width: 110 }}>Total</th>
+                    <th className="danfe-center" style={{ width: 70 }}>
+                      Unid.
+                    </th>
+                    <th className="danfe-right" style={{ width: 70 }}>
+                      Qtd
+                    </th>
+
+                    {/* ✅ NOVO: coluna na impressão */}
+                    <th className="danfe-center" style={{ width: 110 }}>
+                      Qtd/Caixa
+                    </th>
+
+                    <th className="danfe-right" style={{ width: 110 }}>
+                      Vlr Unit.
+                    </th>
+                    <th className="danfe-right" style={{ width: 110 }}>
+                      Total
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -875,6 +1077,9 @@ export default function AdmPedidoDetalhePage() {
                     const qty = Number(it.qty ?? 0);
                     const line = qty * unitCost;
 
+                    const pack = getPackInfo(name);
+                    const packsQty = pack ? ceilPacks(qty, pack) : null;
+
                     return (
                       <tr key={it.id}>
                         <td className="danfe-center">{idx + 1}</td>
@@ -882,6 +1087,21 @@ export default function AdmPedidoDetalhePage() {
                         <td>{name}</td>
                         <td className="danfe-center">{unit}</td>
                         <td className="danfe-right">{qty}</td>
+
+                        {/* ✅ NOVO */}
+                        <td className="danfe-center">
+                          {!pack ? (
+                            "-"
+                          ) : (
+                            <div style={{ lineHeight: 1.15 }}>
+                              <div>{packBaseText(pack)}</div>
+                              <div style={{ fontSize: 10, color: "#444" }}>
+                                {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
+                              </div>
+                            </div>
+                          )}
+                        </td>
+
                         <td className="danfe-right">{fmtBRL(unitCost)}</td>
                         <td className="danfe-right">{fmtBRL(line)}</td>
                       </tr>
@@ -945,9 +1165,15 @@ export default function AdmPedidoDetalhePage() {
           <div className="flex flex-wrap items-center gap-2">
             {edited ? <Badge tone="blue">EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}</Badge> : <Badge tone="neutral">ORIGINAL</Badge>}
 
-            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Voltar</Button>
-            <Button variant="secondary" onClick={() => loadAll(order.id)} disabled={saving}>Recarregar</Button>
-            <Button variant="secondary" onClick={handlePrint}>Imprimir</Button>
+            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>
+              Voltar
+            </Button>
+            <Button variant="secondary" onClick={() => loadAll(order.id)} disabled={saving}>
+              Recarregar
+            </Button>
+            <Button variant="secondary" onClick={handlePrint}>
+              Imprimir
+            </Button>
 
             {!editMode ? (
               <Button variant="primary" onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)} disabled={saving || lockedByLogistics}>
@@ -964,7 +1190,9 @@ export default function AdmPedidoDetalhePage() {
               </>
             )}
 
-            <Button variant="danger" onClick={deleteThisOrder} disabled={saving}>Excluir</Button>
+            <Button variant="danger" onClick={deleteThisOrder} disabled={saving}>
+              Excluir
+            </Button>
           </div>
         }
       />
@@ -1002,13 +1230,7 @@ export default function AdmPedidoDetalhePage() {
         title="Previsão de entrega"
         right={
           <div className="flex items-center gap-2">
-            {!order.delivery_forecast ? (
-              <Badge tone="neutral">Sem previsão</Badge>
-            ) : forecastOverdue ? (
-              <Badge tone="red">Atrasado</Badge>
-            ) : (
-              <Badge tone="green">OK</Badge>
-            )}
+            {!order.delivery_forecast ? <Badge tone="neutral">Sem previsão</Badge> : forecastOverdue ? <Badge tone="red">Atrasado</Badge> : <Badge tone="green">OK</Badge>}
           </div>
         }
       >
@@ -1060,12 +1282,7 @@ export default function AdmPedidoDetalhePage() {
 
       <Card title="Status, logística, entrega e pagamento" right={<Badge tone={statusBadgeTone(order.status) as any}>{order.status}</Badge>}>
         <div className="grid gap-4 md:grid-cols-3">
-          <Select
-            label="Status"
-            value={order.status}
-            onChange={(v) => updateOrder({ status: v })}
-            options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
-          />
+          <Select label="Status" value={order.status} onChange={(v) => updateOrder({ status: v })} options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))} />
 
           <Select
             label="Logística"
@@ -1081,12 +1298,7 @@ export default function AdmPedidoDetalhePage() {
             options={DELIVERY_OPTIONS.map((s) => ({ value: s, label: s }))}
           />
 
-          <Input
-            label="Frete (R$)"
-            value={String(Number(order.freight_fee ?? 0))}
-            onChange={(v) => updateOrder({ freight_fee: Number(v) })}
-            type="number"
-          />
+          <Input label="Frete (R$)" value={String(Number(order.freight_fee ?? 0))} onChange={(v) => updateOrder({ freight_fee: Number(v) })} type="number" />
 
           <div className="space-y-2">
             <div className="text-xs font-semibold text-slate-600">Pagamento</div>
@@ -1137,16 +1349,14 @@ export default function AdmPedidoDetalhePage() {
         subtitle={editMode ? "Modo edição: ajuste quantidades e remova itens. Depois clique em Salvar alterações." : `${items.length} item(ns)`}
         right={lockedByLogistics ? <Badge tone="red">ENTREGUE (itens bloqueados)</Badge> : editMode ? <Badge tone="blue">EDITANDO</Badge> : null}
       >
-        <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Total"]} rows={itemsRows} />
+        {/* ✅ NOVO: adiciona 1 coluna mantendo layout */}
+        <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={itemsRows} />
       </Card>
 
       {originalItems && originalItems.length > 0 ? (
-        <Card
-          title="Pedido original do franqueado"
-          subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"}
-          right={<Badge tone="neutral">ORIGINAL</Badge>}
-        >
-          <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Total"]} rows={originalRows} />
+        <Card title="Pedido original do franqueado" subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"} right={<Badge tone="neutral">ORIGINAL</Badge>}>
+          {/* ✅ NOVO: adiciona 1 coluna mantendo layout */}
+          <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={originalRows} />
         </Card>
       ) : null}
 
