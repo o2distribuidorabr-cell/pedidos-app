@@ -29,6 +29,12 @@ type OrderRow = {
   // ✅ novos campos refletidos
   due_date: string | null; // DATE => "YYYY-MM-DD"
 
+  // ✅ NOVO: previsão de entrega (DATE => "YYYY-MM-DD")
+  delivery_forecast: string | null;
+
+  // ✅ NOVO: crédito abatido no pedido (numérico)
+  credit_applied: number | null;
+
   edited_by_admin: boolean | null;
   edited_at: string | null;
   original_items: OriginalItem[] | null;
@@ -102,6 +108,19 @@ function todayYMD() {
   return `${y}-${m}-${day}`;
 }
 
+// ✅ NOVO: formata "YYYY-MM-DD" para pt-BR sem mexer no restante
+function fmtYMD(ymd: string | null | undefined) {
+  if (!ymd) return "-";
+  try {
+    const [y, m, d] = String(ymd).split("-").map(Number);
+    if (!y || !m || !d) return String(ymd);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
+    return dt.toLocaleDateString("pt-BR");
+  } catch {
+    return String(ymd);
+  }
+}
+
 // Normaliza products para SEMPRE virar 1 objeto (ou null)
 function getProduct(p: ItemRow["products"]): ProductRow | null {
   if (!p) return null;
@@ -145,6 +164,19 @@ export default function PedidoDetalhePage() {
     return order.due_date < todayYMD();
   }, [order?.due_date]);
 
+  // ✅ NOVO: atraso da previsão (somente se não entregue)
+  const forecastOverdue = useMemo(() => {
+    if (!order?.delivery_forecast) return false;
+    if ((order.logistic_status ?? null) === "ENTREGUE") return false;
+    return order.delivery_forecast < todayYMD();
+  }, [order?.delivery_forecast, order?.logistic_status]);
+
+  // ✅ NOVO: crédito abatido (somente leitura) + total líquido
+  const creditApplied = useMemo(() => Number(order?.credit_applied ?? 0) || 0, [order?.credit_applied]);
+  const totalLiquido = useMemo(() => {
+    return Math.max(totalComFrete - creditApplied, 0);
+  }, [totalComFrete, creditApplied]);
+
   useEffect(() => {
     (async () => {
       setMsg("");
@@ -178,7 +210,7 @@ export default function PedidoDetalhePage() {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,edited_by_admin,edited_at,original_items"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,delivery_forecast,credit_applied,edited_by_admin,edited_at,original_items"
       )
       .eq("id", id)
       .maybeSingle();
@@ -280,6 +312,17 @@ export default function PedidoDetalhePage() {
                 ) : (
                   <Badge tone="neutral">Sem vencimento</Badge>
                 )}
+
+                {/* ✅ NOVO: badge da previsão de entrega */}
+                {order.delivery_forecast ? (
+                  forecastOverdue ? (
+                    <Badge tone="red">Entrega atrasada • {order.delivery_forecast}</Badge>
+                  ) : (
+                    <Badge tone="green">Previsão • {order.delivery_forecast}</Badge>
+                  )
+                ) : (
+                  <Badge tone="neutral">Sem previsão de entrega</Badge>
+                )}
               </div>
 
               <div className="mt-3 text-sm text-slate-700">
@@ -287,6 +330,14 @@ export default function PedidoDetalhePage() {
                   <span className="font-semibold text-slate-900">Vencimento:</span>{" "}
                   {order.due_date ? order.due_date : "—"}
                 </div>
+
+                {/* ✅ NOVO: previsão de entrega em texto */}
+                <div className="mt-1">
+                  <span className="font-semibold text-slate-900">Previsão de entrega:</span>{" "}
+                  {order.delivery_forecast ? order.delivery_forecast : "—"}{" "}
+                  <span className="text-slate-500">{order.delivery_forecast ? `(${fmtYMD(order.delivery_forecast)})` : ""}</span>
+                </div>
+
                 {edited ? (
                   <div className="mt-1">
                     <span className="font-semibold text-slate-900">Editado em:</span>{" "}
@@ -300,6 +351,32 @@ export default function PedidoDetalhePage() {
                   Abaixo você verá o <b>pedido original</b> e o <b>pedido atual</b> após ajustes de estoque.
                 </div>
               ) : null}
+            </Card>
+
+            {/* ✅ NOVO: Card extra (somente leitura) para previsão/entrega sem mexer nos cards existentes */}
+            <Card title="Entrega (previsão)">
+              <div className="flex flex-wrap items-center gap-2">
+                {order.delivery_forecast ? (
+                  forecastOverdue ? (
+                    <Badge tone="red">Atrasado</Badge>
+                  ) : (
+                    <Badge tone="green">OK</Badge>
+                  )
+                ) : (
+                  <Badge tone="neutral">Sem previsão</Badge>
+                )}
+                <Badge tone={logisticTone(order.logistic_status)}>{logisticLabel(order.logistic_status)}</Badge>
+              </div>
+
+              <div className="mt-3 text-sm text-slate-700 leading-6">
+                <div>
+                  <span className="font-semibold text-slate-900">Modalidade:</span> {deliveryLabel(order.delivery_mode)}
+                </div>
+                <div>
+                  <span className="font-semibold text-slate-900">Previsão:</span> {order.delivery_forecast ?? "—"}{" "}
+                  <span className="text-slate-500">{order.delivery_forecast ? `(${fmtYMD(order.delivery_forecast)})` : ""}</span>
+                </div>
+              </div>
             </Card>
 
             {/* Cards de informações */}
@@ -358,6 +435,16 @@ export default function PedidoDetalhePage() {
               </Card>
               <Card title="Total (c/ frete)">
                 <div className="text-lg font-semibold text-slate-900">{money(totalComFrete)}</div>
+              </Card>
+            </div>
+
+            {/* ✅ NOVO: resumo do crédito (somente leitura) sem mexer no resumo existente */}
+            <div className="grid gap-3 md:grid-cols-3">
+              <Card title="Crédito abatido">
+                <div className="text-lg font-semibold text-slate-900">- {money(creditApplied)}</div>
+              </Card>
+              <Card title="Total líquido (após crédito)">
+                <div className="text-lg font-semibold text-slate-900">{money(totalLiquido)}</div>
               </Card>
             </div>
 

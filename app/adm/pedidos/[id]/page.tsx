@@ -210,9 +210,7 @@ function fmtNumBR(v: number) {
   // 2 casas quando precisa, senão inteiro
   const rounded = Math.round((v + Number.EPSILON) * 100) / 100;
   const isInt = Math.abs(rounded - Math.round(rounded)) < 1e-9;
-  return isInt
-    ? String(Math.round(rounded))
-    : rounded.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  return isInt ? String(Math.round(rounded)) : rounded.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 function ceilPacks(qty: number, pack: PackInfo) {
@@ -232,6 +230,12 @@ function packBaseText(pack: PackInfo) {
   if (pack.perPack && pack.perPack > 0) return `${fmtNumBR(pack.perPack)}${pack.unitLabel}/${pack.packLabel}`;
   return `-${pack.unitLabel}/${pack.packLabel}`;
 }
+
+/** ✅ NOVO (Opção A): estado do desmembramento */
+type SplitItemState = {
+  include: boolean;
+  qty: string; // quantidade a enviar nesta remessa
+};
 
 export default function AdmPedidoDetalhePage() {
   const router = useRouter();
@@ -262,6 +266,12 @@ export default function AdmPedidoDetalhePage() {
   const [creditModalOpen, setCreditModalOpen] = useState(false);
   const [creditAmount, setCreditAmount] = useState<string>("");
   const [creditNote, setCreditNote] = useState<string>("");
+
+  // ✅ NOVO (Opção A): modal + rascunho da remessa parcial
+  const [splitModalOpen, setSplitModalOpen] = useState(false);
+  const [splitItems, setSplitItems] = useState<Record<string, SplitItemState>>({});
+  const [splitNotes, setSplitNotes] = useState<string>("");
+  const [splitCreating, setSplitCreating] = useState(false);
 
   const lockedByLogistics = useMemo(() => {
     return (order?.logistic_status ?? null) === "ENTREGUE";
@@ -349,11 +359,7 @@ export default function AdmPedidoDetalhePage() {
   }, []);
 
   async function loadCreditBalance(storeId: string) {
-    const { data, error } = await supabase
-      .from("v_store_credit_balance")
-      .select("balance")
-      .eq("store_id", storeId)
-      .maybeSingle();
+    const { data, error } = await supabase.from("v_store_credit_balance").select("balance").eq("store_id", storeId).maybeSingle();
 
     if (error) {
       console.warn("loadCreditBalance error:", error.message);
@@ -415,10 +421,7 @@ export default function AdmPedidoDetalhePage() {
       setStoreInfo(null);
     }
 
-    const { data: it, error: itErr } = await supabase
-      .from("order_items")
-      .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
-      .eq("order_id", id);
+    const { data: it, error: itErr } = await supabase.from("order_items").select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)").eq("order_id", id);
 
     if (itErr) {
       setMsg(itErr.message);
@@ -639,6 +642,119 @@ export default function AdmPedidoDetalhePage() {
     setTimeout(() => window.print(), 50);
   }
 
+  // ✅ NOVO (Opção A): abrir modal e montar rascunho com as quantidades do pedido
+  function openSplitModal() {
+    if (!order) return;
+    if (lockedByLogistics) {
+      setMsg("Pedido já ENTREGUE. Não é possível gerar remessa parcial.");
+      return;
+    }
+
+    const draft: Record<string, SplitItemState> = {};
+    for (const it of items) {
+      draft[it.id] = { include: true, qty: String(Number(it.qty ?? 0)) };
+    }
+    setSplitItems(draft);
+    setSplitNotes("");
+    setSplitModalOpen(true);
+    setMsg("");
+  }
+
+  function closeSplitModal() {
+    if (splitCreating) return;
+    setSplitModalOpen(false);
+  }
+
+  function setSplitInclude(itemId: string, include: boolean) {
+    setSplitItems((prev) => ({
+      ...prev,
+      [itemId]: { include, qty: prev[itemId]?.qty ?? "0" },
+    }));
+  }
+
+  function setSplitQty(itemId: string, qty: string) {
+    setSplitItems((prev) => ({
+      ...prev,
+      [itemId]: { include: prev[itemId]?.include ?? true, qty },
+    }));
+  }
+
+  // ✅ NOVO (Opção A): cria um novo pedido (remessa) com cobrança separada
+  async function createPartialShipment() {
+    if (!order?.id) return;
+
+    if (lockedByLogistics) {
+      setMsg("Pedido já ENTREGUE. Não é possível gerar remessa parcial.");
+      return;
+    }
+
+    setSplitCreating(true);
+    setMsg("");
+
+    try {
+      const payload = items
+        .map((it) => {
+          const st = splitItems[it.id];
+          const include = st?.include ?? false;
+          const qtyNum = Number((st?.qty ?? "0").replace(",", "."));
+
+          if (!include) return null;
+          if (Number.isNaN(qtyNum) || qtyNum <= 0) return null;
+
+          // trava para não passar do pedido original
+          const max = Number(it.qty ?? 0);
+          const finalQty = Math.min(qtyNum, max);
+
+          return {
+            order_item_id: it.id,
+            product_id: it.product_id,
+            qty: finalQty,
+          };
+        })
+        .filter(Boolean);
+
+      if (payload.length === 0) {
+        setSplitCreating(false);
+        setMsg("Selecione ao menos 1 item com quantidade maior que zero.");
+        return;
+      }
+
+      // ✅ RPC esperada no banco (Opção A):
+      // - cria um NOVO pedido "filho" (remessa) e copia preços/unit_cost
+      // - vincula ao pedido original (parent)
+      // - retorna o id do novo pedido
+      //
+      // Nome sugerido: create_partial_shipment_order
+      const { data, error } = await supabase.rpc("create_partial_shipment_order", {
+        p_parent_order_id: order.id,
+        p_items: payload,
+        p_notes: (splitNotes || "").trim() || null,
+      });
+
+      if (error) {
+        setSplitCreating(false);
+        setMsg(`Erro ao gerar remessa parcial: ${error.message}`);
+        return;
+      }
+
+      const newOrderId = String(data ?? "");
+      setSplitCreating(false);
+      setSplitModalOpen(false);
+
+      if (newOrderId) {
+        router.push(`/adm/pedidos/${newOrderId}`);
+        return;
+      }
+
+      // se a RPC não retornar id, apenas recarrega
+      await loadAll(order.id);
+      setMsg("Remessa parcial gerada.");
+    } catch (e: any) {
+      setSplitCreating(false);
+      setMsg(e?.message || "Erro ao gerar remessa parcial.");
+    }
+  }
+
   if (loading) return <Card>Carregando...</Card>;
 
   if (!order) {
@@ -743,11 +859,7 @@ export default function AdmPedidoDetalhePage() {
           min={0}
           step={1}
         />
-        <Button
-          variant={removed ? "secondary" : "danger"}
-          disabled={saving || lockedByLogistics}
-          onClick={() => toggleRemoveItem(it.id)}
-        >
+        <Button variant={removed ? "secondary" : "danger"} disabled={saving || lockedByLogistics} onClick={() => toggleRemoveItem(it.id)}>
           {removed ? "Desfazer" : "Remover"}
         </Button>
       </div>,
@@ -826,14 +938,8 @@ export default function AdmPedidoDetalhePage() {
   const destCity = s?.city ?? null;
   const destState = s?.state ?? null;
 
-  const destAddrLine1 = [destStreet, destNumber ? `nº ${destNumber}` : null, destComp ? `(${destComp})` : null]
-    .filter(Boolean)
-    .join(", ");
-  const destAddrLine2 = [
-    destNeigh,
-    destCity ? `${destCity}${destState ? `/${destState}` : ""}` : null,
-    destZip ? `CEP ${destZip}` : null,
-  ]
+  const destAddrLine1 = [destStreet, destNumber ? `nº ${destNumber}` : null, destComp ? `(${destComp})` : null].filter(Boolean).join(", ");
+  const destAddrLine2 = [destNeigh, destCity ? `${destCity}${destState ? `/${destState}` : ""}` : null, destZip ? `CEP ${destZip}` : null]
     .filter(Boolean)
     .join(" • ");
 
@@ -1175,6 +1281,11 @@ export default function AdmPedidoDetalhePage() {
               Imprimir
             </Button>
 
+            {/* ✅ NOVO (Opção A): gerar remessa parcial */}
+            <Button variant="secondary" onClick={openSplitModal} disabled={saving || editMode || lockedByLogistics}>
+              Gerar pedido parcial
+            </Button>
+
             {!editMode ? (
               <Button variant="primary" onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)} disabled={saving || lockedByLogistics}>
                 Editar itens
@@ -1321,12 +1432,7 @@ export default function AdmPedidoDetalhePage() {
               }
             />
 
-            <Select
-              label="Forma"
-              value={order.payment_method ?? "PIX"}
-              onChange={(v) => updateOrder({ payment_method: v as any })}
-              options={PAY_METHODS.map((m) => ({ value: m, label: m }))}
-            />
+            <Select label="Forma" value={order.payment_method ?? "PIX"} onChange={(v) => updateOrder({ payment_method: v as any })} options={PAY_METHODS.map((m) => ({ value: m, label: m }))} />
           </div>
         </div>
       </Card>
@@ -1387,6 +1493,90 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-3 text-xs text-slate-500">Regra: abate até o limite do saldo e até o limite do total do pedido.</div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ✅ NOVO (Opção A): Modal de remessa parcial */}
+      {splitModalOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeSplitModal}>
+          <div className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-slate-900">Gerar pedido parcial</div>
+                <div className="mt-1 text-xs text-slate-500">Selecione os itens e informe a quantidade que será enviada nesta remessa. Isso cria um novo pedido com cobrança separada.</div>
+              </div>
+              <Button variant="secondary" onClick={closeSplitModal} disabled={splitCreating}>
+                Fechar
+              </Button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-slate-200">
+                <div className="grid grid-cols-12 gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                  <div className="col-span-1">OK</div>
+                  <div className="col-span-6">Produto</div>
+                  <div className="col-span-2 text-right">Qtd pedido</div>
+                  <div className="col-span-3 text-right">Qtd remessa</div>
+                </div>
+
+                <div className="max-h-[360px] overflow-auto">
+                  {items.map((it) => {
+                    const st = splitItems[it.id] ?? { include: true, qty: String(Number(it.qty ?? 0)) };
+                    const name = it.products?.name ?? "-";
+                    return (
+                      <div key={it.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-sm">
+                        <div className="col-span-1">
+                          <input type="checkbox" checked={!!st.include} onChange={(e) => setSplitInclude(it.id, e.target.checked)} />
+                        </div>
+                        <div className="col-span-6">
+                          <div className="text-slate-900">{name}</div>
+                          <div className="text-xs text-slate-500">{it.products?.sku ?? "-"}</div>
+                        </div>
+                        <div className="col-span-2 text-right font-semibold">{Number(it.qty ?? 0)}</div>
+                        <div className="col-span-3 text-right">
+                          <input
+                            className="w-28 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm outline-none focus:border-slate-300 disabled:bg-slate-50 text-right"
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={st.qty}
+                            disabled={!st.include || splitCreating}
+                            onChange={(e) => setSplitQty(it.id, e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-500">Observação da remessa (opcional)</label>
+                  <textarea
+                    className="w-full min-h-[90px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+                    value={splitNotes}
+                    disabled={splitCreating}
+                    onChange={(e) => setSplitNotes(e.target.value)}
+                    placeholder="Ex.: enviado parcial por falta de estoque no CD..."
+                  />
+                </div>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                  <div className="font-semibold text-slate-700">Importante</div>
+                  <div className="mt-1">• O botão cria um novo pedido (remessa) com itens selecionados.</div>
+                  <div>• O pedido original permanece igual (sem retrabalho para o franqueado).</div>
+                  <div>• Cada remessa pode ter cobrança separada (regra do seu fluxo no banco/RPC).</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <Button onClick={createPartialShipment} disabled={splitCreating}>
+                {splitCreating ? "Gerando..." : "Gerar remessa"}
+              </Button>
+            </div>
           </div>
         </div>
       ) : null}

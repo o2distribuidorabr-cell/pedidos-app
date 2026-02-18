@@ -26,6 +26,11 @@ type OrderRow = {
 
   // ✅ vencimento (precisa existir em orders e na view v_orders_admin_list)
   due_date: string | null; // DATE => "YYYY-MM-DD"
+
+  // ✅ NOVO (Opção A): vínculo de desmembramento (precisa existir na view v_orders_admin_list)
+  parent_order_id?: string | null;
+  split_group_id?: string | null;
+  is_split_child?: boolean | null;
 };
 
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
@@ -244,6 +249,9 @@ export default function AdmPedidosPage() {
           const due = o.due_date ?? "";
           const isOverdue = !!due && isPastDateYMD(due);
 
+          // ✅ NOVO (Opção A): identifica pedido parcial (filho)
+          const isSplitChild = !!(o.is_split_child ?? false) || !!o.parent_order_id;
+
           return (
             <Card
               key={o.id}
@@ -256,6 +264,10 @@ export default function AdmPedidosPage() {
                   />
                   <div className="flex items-center gap-2">
                     <span>{o.store_name ?? "Loja não vinculada"}</span>
+
+                    {/* ✅ NOVO: badge de pedido parcial */}
+                    {isSplitChild ? <Badge tone="blue">Parcial</Badge> : null}
+
                     {isOverdue ? <Badge tone="red">Vencido</Badge> : null}
                     {!!due && !isOverdue ? <Badge tone="neutral">Com vencimento</Badge> : null}
                     {(o.logistic_status ?? "") === "ENTREGUE" ? (
@@ -322,6 +334,13 @@ export default function AdmPedidosPage() {
                   <Link href={`/adm/pedidos/${o.id}`}>
                     <Button variant="secondary">Abrir pedido</Button>
                   </Link>
+
+                  {/* ✅ NOVO: se for parcial, dá acesso rápido ao pedido original */}
+                  {o.parent_order_id ? (
+                    <Link href={`/adm/pedidos/${o.parent_order_id}`}>
+                      <Button variant="secondary">Abrir original</Button>
+                    </Link>
+                  ) : null}
                 </div>
               </div>
             </Card>
