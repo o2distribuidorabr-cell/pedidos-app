@@ -14,6 +14,16 @@ type CartItem = {
   unit: string;
   unit_cost: number;
   qty: number;
+
+  // ✅ NOVO (para NF-e — vem do localStorage)
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: string | null;
+  ean?: string | null;
+  origin?: string | null;
+  icms_cst?: string | null;
+  pis_cst?: string | null;
+  cofins_cst?: string | null;
 };
 
 type StoreRow = {
@@ -30,6 +40,31 @@ type DeliveryInfo = {
 
 function money(v: number) {
   return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// ✅ NOVO: normaliza o payload do carrinho (não altera nada do fluxo — só evita undefined)
+function normalizeCartItems(raw: any): CartItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((it: any) => ({
+      product_id: String(it?.product_id ?? ""),
+      sku: String(it?.sku ?? ""),
+      name: String(it?.name ?? ""),
+      unit: String(it?.unit ?? "un"),
+      unit_cost: Number(it?.unit_cost ?? 0) || 0,
+      qty: Number(it?.qty ?? 0) || 0,
+
+      // fiscais (podem ser null)
+      ncm: it?.ncm ?? null,
+      cest: it?.cest ?? null,
+      cfop: it?.cfop ?? null,
+      ean: it?.ean ?? null,
+      origin: it?.origin ?? null,
+      icms_cst: it?.icms_cst ?? null,
+      pis_cst: it?.pis_cst ?? null,
+      cofins_cst: it?.cofins_cst ?? null,
+    }))
+    .filter((x) => !!x.product_id && x.qty > 0);
 }
 
 export default function ConfirmarPedidoPage() {
@@ -51,7 +86,10 @@ export default function ConfirmarPedidoPage() {
   const [freightFee, setFreightFee] = useState<number>(0); // sempre "frete padrão da loja"
   const [storeFreightFee, setStoreFreightFee] = useState<number>(0); // cache do frete da loja (stores.freight_fee)
 
-  const itemsTotal = useMemo(() => items.reduce((acc, it) => acc + (Number(it.qty) || 0) * (Number(it.unit_cost) || 0), 0), [items]);
+  const itemsTotal = useMemo(
+    () => items.reduce((acc, it) => acc + (Number(it.qty) || 0) * (Number(it.unit_cost) || 0), 0),
+    [items]
+  );
 
   const freightApplied = useMemo(() => (deliveryMode === "FRETE" ? Number(freightFee || 0) : 0), [deliveryMode, freightFee]);
 
@@ -93,7 +131,8 @@ export default function ConfirmarPedidoPage() {
       // carrinho
       const raw = localStorage.getItem("cart_items");
       const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-      setItems(Array.isArray(parsed) ? (parsed as CartItem[]) : []);
+      // ✅ NOVO: normaliza para suportar campos fiscais sem quebrar nada
+      setItems(normalizeCartItems(parsed));
 
       // store_id do profile
       const { data: profile, error: pErr } = await supabase
@@ -213,7 +252,7 @@ export default function ConfirmarPedidoPage() {
 
     const order_id = String(orderInserted.id);
 
-    // 2) cria itens
+    // 2) cria itens (mantém exatamente como está hoje)
     const rows = items.map((it) => ({
       order_id,
       product_id: it.product_id,
@@ -230,6 +269,26 @@ export default function ConfirmarPedidoPage() {
       setMsg(itemsError.message);
       return;
     }
+
+    // ✅ NOVO (pronto para NF-e):
+    // Aqui está o gancho para salvar dados fiscais por item em uma tabela própria (opcional).
+    // Não executa nada agora para NÃO quebrar seu schema atual.
+    //
+    // Exemplo futuro (quando você criar uma tabela `order_item_taxes`):
+    // const taxRows = items.map((it) => ({
+    //   order_id,
+    //   product_id: it.product_id,
+    //   ncm: it.ncm ?? null,
+    //   cest: it.cest ?? null,
+    //   cfop: it.cfop ?? null,
+    //   ean: it.ean ?? null,
+    //   origin: it.origin ?? null,
+    //   icms_cst: it.icms_cst ?? null,
+    //   pis_cst: it.pis_cst ?? null,
+    //   cofins_cst: it.cofins_cst ?? null,
+    //   created_at: now,
+    // }));
+    // await supabase.from("order_item_taxes").insert(taxRows);
 
     localStorage.removeItem("cart_items");
     localStorage.removeItem("delivery_info");

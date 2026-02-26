@@ -23,7 +23,6 @@ type OrderRow = {
 
   credit_applied: number | null;
 
-  // ✅ NOVO
   due_date: string | null; // DATE no Postgres (YYYY-MM-DD)
 };
 
@@ -44,7 +43,7 @@ type CreditBalRow = {
   balance: number | null;
 };
 
-// ✅ NOVO: configurações globais do financeiro (admin)
+// configurações globais do financeiro (admin)
 type FinanceSettingsRow = {
   id: number;
   pix_key: string | null;
@@ -67,7 +66,6 @@ type RowUi = {
   credit_applied: number;
   a_pagar: number;
 
-  // ✅ NOVO: encargos (calculados)
   late_days: number;
   late_fee: number;
   late_interest: number;
@@ -77,7 +75,6 @@ type RowUi = {
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
-  // ✅ NOVO
   due_date: string | null;
   due_status: "PAGO" | "VENCIDO" | "A_VENCER" | "SEM_VENCIMENTO";
 
@@ -122,7 +119,7 @@ function statusTone(s: string) {
   return "neutral";
 }
 
-// ✅ NOVO: hoje em YYYY-MM-DD (compatível com Postgres DATE)
+// hoje em YYYY-MM-DD (compatível com Postgres DATE)
 function todayYMD() {
   const d = new Date();
   const y = d.getFullYear();
@@ -131,14 +128,14 @@ function todayYMD() {
   return `${y}-${m}-${day}`;
 }
 
-// ✅ NOVO: calcula status de vencimento
+// calcula status de vencimento
 function calcDueStatus(due: string | null, isPaid: boolean) {
   if (isPaid) return "PAGO" as const;
   if (!due) return "SEM_VENCIMENTO" as const;
   return due < todayYMD() ? ("VENCIDO" as const) : ("A_VENCER" as const);
 }
 
-// ✅ NOVO: badge do vencimento
+// badge do vencimento
 function dueBadge(s: RowUi["due_status"]) {
   if (s === "PAGO") return <Badge tone="green">Pago</Badge>;
   if (s === "VENCIDO") return <Badge tone="red">Vencido</Badge>;
@@ -146,7 +143,7 @@ function dueBadge(s: RowUi["due_status"]) {
   return <Badge tone="neutral">—</Badge>;
 }
 
-// ✅ NOVO: dias em atraso (baseado em DATE YMD)
+// dias em atraso (baseado em DATE YMD)
 function daysLateYMD(dueYmd: string) {
   const [y, m, d] = dueYmd.split("-").map(Number);
   const due = new Date(y, m - 1, d, 12, 0, 0);
@@ -155,6 +152,19 @@ function daysLateYMD(dueYmd: string) {
   const diff = today.getTime() - due.getTime();
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
   return Math.max(days, 0);
+}
+
+// ---------- tipos do PIX ----------
+type PixCreateResponse = {
+  paymentId: string;
+  status?: string;
+  detail?: string;
+  qrCode: string;
+  qrCodeBase64: string;
+};
+
+function clamp2(n: number) {
+  return Math.round((Number(n) || 0) * 100) / 100;
 }
 
 export default function FinanceiroFranqueadoPage() {
@@ -167,7 +177,7 @@ export default function FinanceiroFranqueadoPage() {
   const [rows, setRows] = useState<RowUi[]>([]);
   const [creditBalance, setCreditBalance] = useState<number>(0);
 
-  // ✅ NOVO: settings globais (pix/multa/juros)
+  // settings globais (pix/multa/juros)
   const [financeSettings, setFinanceSettings] = useState<FinanceSettingsRow | null>(null);
 
   // filtros
@@ -177,8 +187,16 @@ export default function FinanceiroFranqueadoPage() {
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
-  // ✅ NOVO: filtro de vencimento
+  // filtro de vencimento
   const [dueFilter, setDueFilter] = useState<string>("all"); // all | A_VENCER | VENCIDO | PAGO | SEM_VENCIMENTO
+
+  // estado do modal PIX
+  const [userEmail, setUserEmail] = useState<string>("");
+  const [pixOpen, setPixOpen] = useState(false);
+  const [pixLoading, setPixLoading] = useState(false);
+  const [pixErr, setPixErr] = useState<string>("");
+  const [pixData, setPixData] = useState<PixCreateResponse | null>(null);
+  const [pixOrderId, setPixOrderId] = useState<string>("");
 
   useEffect(() => {
     (async () => {
@@ -192,7 +210,13 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
+      setUserEmail(user.email ?? "");
+
+      const { data: profile, error: pErr } = await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", user.id)
+        .maybeSingle();
 
       if (pErr) {
         setMsg(pErr.message);
@@ -209,14 +233,13 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      await loadFinanceSettings(); // ✅ NOVO
+      await loadFinanceSettings();
       await loadFinanceForStore(sId);
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ NOVO: carrega settings do financeiro (PIX/multa/juros)
   async function loadFinanceSettings() {
     const { data, error } = await supabase
       .from("finance_settings")
@@ -225,7 +248,6 @@ export default function FinanceiroFranqueadoPage() {
       .maybeSingle();
 
     if (error) {
-      // não trava a tela do franqueado se faltar policy; só registra
       console.warn("finance_settings:", error.message);
       setFinanceSettings(null);
       return null;
@@ -237,7 +259,11 @@ export default function FinanceiroFranqueadoPage() {
   }
 
   async function loadCreditBalance(sId: string): Promise<number> {
-    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id,balance").eq("store_id", sId).maybeSingle();
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id,balance")
+      .eq("store_id", sId)
+      .maybeSingle();
 
     if (error) {
       console.warn("credit balance:", error.message);
@@ -286,14 +312,20 @@ export default function FinanceiroFranqueadoPage() {
 
     const orderIds = orders.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
+    const { data: tots, error: tErr } = await supabase
+      .from("v_order_totals")
+      .select("order_id,store_id,total_cost")
+      .in("order_id", orderIds);
 
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
+    const { data: itemsRaw, error: iErr } = await supabase
+      .from("order_items")
+      .select("order_id,qty,unit_cost")
+      .in("order_id", orderIds);
 
     if (iErr) console.warn("order_items calc:", iErr.message);
 
@@ -306,7 +338,6 @@ export default function FinanceiroFranqueadoPage() {
 
     const bal = await loadCreditBalance(sId);
 
-    // ✅ NOVO: parâmetros de cobrança (defaults seguros)
     const applyCharges = !!financeSettings?.apply_late_charges;
     const feePct = Number(financeSettings?.late_fee_percent ?? 0) || 0;
     const dailyPct = Number(financeSettings?.daily_interest_percent ?? 0) || 0;
@@ -334,7 +365,6 @@ export default function FinanceiroFranqueadoPage() {
       const isPaid = !!o.is_paid;
       const due_status = calcDueStatus(o.due_date ?? null, isPaid);
 
-      // ✅ NOVO: encargos (apenas se vencido + em aberto + habilitado)
       let late_days = 0;
       let late_fee = 0;
       let late_interest = 0;
@@ -342,8 +372,8 @@ export default function FinanceiroFranqueadoPage() {
 
       if (applyCharges && !isPaid && due_status === "VENCIDO" && o.due_date) {
         late_days = daysLateYMD(o.due_date);
-        late_fee = a_pagar * (feePct / 100); // uma vez
-        late_interest = a_pagar * (dailyPct / 100) * late_days; // por dia
+        late_fee = a_pagar * (feePct / 100);
+        late_interest = a_pagar * (dailyPct / 100) * late_days;
         a_pagar_com_encargos = Math.max(a_pagar + late_fee + late_interest, 0);
       }
 
@@ -376,16 +406,14 @@ export default function FinanceiroFranqueadoPage() {
       };
     });
 
-    // ✅ aplica filtro de vencimento no front (não complica a query)
     const filtered = dueFilter === "all" ? ui : ui.filter((r) => r.due_status === dueFilter);
-
     setRows(filtered);
   }
 
   async function onReload() {
     if (!storeId) return;
     setLoading(true);
-    await loadFinanceSettings(); // ✅ NOVO (garante refletir alteração do admin)
+    await loadFinanceSettings();
     await loadFinanceForStore(storeId);
     setLoading(false);
   }
@@ -396,13 +424,11 @@ export default function FinanceiroFranqueadoPage() {
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
 
-    // ✅ mantém exatamente o que você já tinha
     const totalApagar = rows.reduce((a, r) => a + r.a_pagar, 0);
     const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar : 0), 0);
     const totalAberto = totalApagar - totalPago;
 
     const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + r.a_pagar, 0);
-
     const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + r.a_pagar, 0);
 
     return {
@@ -434,10 +460,78 @@ export default function FinanceiroFranqueadoPage() {
     "Pago?",
     "Data pgto",
     "Saldo crédito",
+    "Ações",
   ];
+
+  // ---------- AQUI ESTÁ O “CÓDIGO COMPLETO” PARA MOSTRAR O ERRO ----------
+  async function openPixForOrder(r: RowUi) {
+    setPixErr("");
+    setPixData(null);
+    setPixOrderId(r.id);
+    setPixOpen(true);
+
+    const hasCharges = r.late_days > 0 && (r.late_fee > 0 || r.late_interest > 0) && !r.is_paid && r.due_status === "VENCIDO";
+    const amount = clamp2(hasCharges ? r.a_pagar_com_encargos : r.a_pagar);
+
+    try {
+      setPixLoading(true);
+
+      const resp = await fetch("/api/mp/pix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: r.id,
+          amount,
+          description: `Pedido ${r.id}`,
+          payer: { email: userEmail || "cliente@cliente.com" },
+        }),
+      });
+
+      // lê como texto (pode vir HTML no erro)
+      const text = await resp.text();
+
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+
+      if (!resp.ok) {
+        const details =
+          data?.details ? JSON.stringify(data.details) :
+          data?.error ? String(data.error) :
+          text.slice(0, 400);
+
+        throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
+      }
+
+      // OK: deve ser JSON com os campos
+      setPixData({
+        paymentId: String(data.paymentId),
+        status: data.status,
+        detail: data.detail,
+        qrCode: data.qrCode,
+        qrCodeBase64: data.qrCodeBase64,
+      });
+    } catch (e: any) {
+      setPixErr(String(e?.message ?? e));
+    } finally {
+      setPixLoading(false);
+    }
+  }
+
+  function closePixModal() {
+    setPixOpen(false);
+    setPixErr("");
+    setPixData(null);
+    setPixOrderId("");
+    setPixLoading(false);
+  }
 
   const tableRows = rows.map((r) => {
     const hasCharges = r.late_days > 0 && (r.late_fee > 0 || r.late_interest > 0) && !r.is_paid && r.due_status === "VENCIDO";
+    const canPayPix = !r.is_paid && r.a_pagar > 0;
 
     return [
       <span key="id" className="font-mono text-xs">
@@ -449,7 +543,6 @@ export default function FinanceiroFranqueadoPage() {
       <span key="op">{logisticLabel(r.logistic_status)}</span>,
       <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
 
-      // ✅ NOVO
       <span key="due">{r.due_date ?? "-"}</span>,
       <span key="dueSt">{dueBadge(r.due_status)}</span>,
       <span key="pm">{r.payment_method ?? "-"}</span>,
@@ -463,7 +556,6 @@ export default function FinanceiroFranqueadoPage() {
       </span>,
       <span key="c">- {money(r.credit_applied)}</span>,
 
-      // ✅ NOVO: A pagar com encargos (quando aplicável), sem mudar colunas/estrutura
       <div key="ap" className="min-w-0">
         <div className="font-semibold">{money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}</div>
         {hasCharges ? (
@@ -478,6 +570,20 @@ export default function FinanceiroFranqueadoPage() {
       <span key="bal" className="font-semibold">
         {money(r.credit_balance)}
       </span>,
+
+      <div key="act" className="flex gap-2">
+        <Button
+          variant="secondary"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            if (canPayPix) openPixForOrder(r);
+          }}
+          disabled={!canPayPix}
+        >
+          Pagar com PIX
+        </Button>
+      </div>,
     ];
   });
 
@@ -496,7 +602,6 @@ export default function FinanceiroFranqueadoPage() {
       <div className="space-y-4">
         <PageHeader title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos" />
 
-        {/* ✅ NOVO: PIX + regra de cobrança (apenas adiciona, não interfere no resto) */}
         <Card title="Pagamento via PIX">
           <div className="grid gap-2">
             <div className="text-sm text-slate-700">
@@ -505,8 +610,7 @@ export default function FinanceiroFranqueadoPage() {
             </div>
 
             <div className="text-xs text-slate-500">
-              Encargos após vencimento:{" "}
-              <b>{financeSettings?.apply_late_charges ? "Ativos" : "Inativos"}</b>
+              Encargos após vencimento: <b>{financeSettings?.apply_late_charges ? "Ativos" : "Inativos"}</b>
               {financeSettings?.apply_late_charges ? (
                 <>
                   {" "}
@@ -514,6 +618,10 @@ export default function FinanceiroFranqueadoPage() {
                   <b>{Number(financeSettings?.daily_interest_percent ?? 0)}%</b> ao dia
                 </>
               ) : null}
+            </div>
+
+            <div className="text-xs text-slate-500">
+              Para pagar: clique em <b>Pagar com PIX</b> na linha do pedido em aberto.
             </div>
           </div>
         </Card>
@@ -559,7 +667,6 @@ export default function FinanceiroFranqueadoPage() {
               ]}
             />
 
-            {/* ✅ NOVO: filtro de vencimento */}
             <Select
               label="Vencimento"
               value={dueFilter}
@@ -604,7 +711,6 @@ export default function FinanceiroFranqueadoPage() {
           <StatCard label="Pago" value={money(resumo.totalPago)} />
           <StatCard label="Em aberto" value={money(resumo.totalAberto)} />
           <StatCard label="Saldo de crédito" value={money(creditBalance)} />
-          {/* ✅ NOVO: destaque */}
           <StatCard label="Vencidos (no filtro)" value={money(resumo.totalVencido)} />
           <StatCard label="A vencer (no filtro)" value={money(resumo.totalAVencer)} />
         </div>
@@ -613,6 +719,9 @@ export default function FinanceiroFranqueadoPage() {
           <div
             className="cursor-pointer"
             onClickCapture={(e) => {
+              const btn = (e.target as HTMLElement).closest("button");
+              if (btn) return;
+
               const tr = (e.target as HTMLElement).closest("[data-order-id]") as HTMLElement | null;
               if (!tr) return;
               const id = tr.getAttribute("data-order-id");
@@ -638,6 +747,67 @@ export default function FinanceiroFranqueadoPage() {
 
           {rows.length === 0 ? <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div> : null}
         </Card>
+
+        {/* Modal PIX */}
+        {pixOpen ? (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <div>
+                  <div className="text-base font-semibold">Pagamento PIX</div>
+                  <div className="text-xs text-slate-500">
+                    Pedido: <span className="font-mono">{pixOrderId}</span>
+                  </div>
+                </div>
+                <Button variant="secondary" onClick={closePixModal}>
+                  Fechar
+                </Button>
+              </div>
+
+              <div className="p-4">
+                {pixLoading ? <div className="text-sm">Gerando QR Code…</div> : null}
+
+                {!pixLoading && pixErr ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    <div className="font-semibold">Erro</div>
+                    <div className="mt-1 break-words">{pixErr}</div>
+                    <div className="mt-2 text-xs text-slate-600">
+                      Esse texto acima agora mostra o erro real (HTTP + retorno do backend).
+                    </div>
+                  </div>
+                ) : null}
+
+                {!pixLoading && pixData ? (
+                  <div className="grid gap-3">
+                    <div className="text-xs text-slate-600">
+                      ID do pagamento: <span className="font-mono">{pixData.paymentId}</span>
+                    </div>
+
+                    <div className="flex justify-center">
+                      <img
+                        alt="QR Code PIX"
+                        src={`data:image/png;base64,${pixData.qrCodeBase64}`}
+                        className="h-auto w-full max-w-[320px] rounded-xl border"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="mb-1 text-sm font-semibold">PIX Copia e Cola</div>
+                      <textarea readOnly value={pixData.qrCode} className="w-full rounded-xl border px-3 py-2 text-xs" rows={5} />
+                      <div className="mt-2 flex gap-2">
+                        <Button onClick={async () => await navigator.clipboard.writeText(pixData.qrCode)}>Copiar código</Button>
+                        <Button variant="secondary" onClick={closePixModal}>Ok</Button>
+                      </div>
+                      <div className="mt-2 text-xs text-slate-500">
+                        Após pagar, o sistema será atualizado automaticamente quando o Mercado Pago confirmar (vamos configurar webhook depois).
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </PortalShell>
   );

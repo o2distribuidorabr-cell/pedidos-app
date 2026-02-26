@@ -237,6 +237,26 @@ type SplitItemState = {
   qty: string; // quantidade a enviar nesta remessa
 };
 
+/** ✅ NOVO (NF-e): rascunho por item para plugar API */
+type NfeItemDraft = {
+  product_id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  qty: number;
+  unit_cost: number;
+
+  // fiscais (opcionais no rascunho)
+  ncm: string;
+  cest: string;
+  cfop: string;
+  ean: string;
+  origin: string; // 0..8 normalmente (mas vamos deixar livre)
+  icms_cst: string;
+  pis_cst: string;
+  cofins_cst: string;
+};
+
 export default function AdmPedidoDetalhePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -272,6 +292,14 @@ export default function AdmPedidoDetalhePage() {
   const [splitItems, setSplitItems] = useState<Record<string, SplitItemState>>({});
   const [splitNotes, setSplitNotes] = useState<string>("");
   const [splitCreating, setSplitCreating] = useState(false);
+
+  // ✅ NOVO (NF-e): modal + rascunho para plugar API
+  const [nfeModalOpen, setNfeModalOpen] = useState(false);
+  const [nfeItems, setNfeItems] = useState<Record<string, NfeItemDraft>>({});
+  const [nfeNatureza, setNfeNatureza] = useState<string>("VENDA");
+  const [nfeSerie, setNfeSerie] = useState<string>("1");
+  const [nfeNumero, setNfeNumero] = useState<string>(""); // opcional (muitas APIs geram)
+  const [nfeCopyMsg, setNfeCopyMsg] = useState<string>("");
 
   const lockedByLogistics = useMemo(() => {
     return (order?.logistic_status ?? null) === "ENTREGUE";
@@ -421,7 +449,10 @@ export default function AdmPedidoDetalhePage() {
       setStoreInfo(null);
     }
 
-    const { data: it, error: itErr } = await supabase.from("order_items").select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)").eq("order_id", id);
+    const { data: it, error: itErr } = await supabase
+      .from("order_items")
+      .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
+      .eq("order_id", id);
 
     if (itErr) {
       setMsg(itErr.message);
@@ -719,12 +750,6 @@ export default function AdmPedidoDetalhePage() {
         return;
       }
 
-      // ✅ RPC esperada no banco (Opção A):
-      // - cria um NOVO pedido "filho" (remessa) e copia preços/unit_cost
-      // - vincula ao pedido original (parent)
-      // - retorna o id do novo pedido
-      //
-      // Nome sugerido: create_partial_shipment_order
       const { data, error } = await supabase.rpc("create_partial_shipment_order", {
         p_parent_order_id: order.id,
         p_items: payload,
@@ -746,12 +771,161 @@ export default function AdmPedidoDetalhePage() {
         return;
       }
 
-      // se a RPC não retornar id, apenas recarrega
       await loadAll(order.id);
       setMsg("Remessa parcial gerada.");
     } catch (e: any) {
       setSplitCreating(false);
       setMsg(e?.message || "Erro ao gerar remessa parcial.");
+    }
+  }
+
+  // ✅ NOVO (NF-e): abre modal e monta rascunho dos itens para plugar API
+  function openNfeModal() {
+    if (!order) return;
+
+    setNfeCopyMsg("");
+
+    const draft: Record<string, NfeItemDraft> = {};
+    for (const it of items) {
+      const sku = it.products?.sku ?? "";
+      const name = it.products?.name ?? "";
+      const unit = (it.products?.unit ?? it.unit ?? "un") as string;
+      const qty = Number(it.qty ?? 0) || 0;
+      const unit_cost = Number(it.unit_cost ?? 0) || 0;
+
+      draft[it.id] = {
+        product_id: it.product_id,
+        sku,
+        name,
+        unit,
+        qty,
+        unit_cost,
+
+        ncm: "",
+        cest: "",
+        cfop: "",
+        ean: "",
+        origin: "",
+        icms_cst: "",
+        pis_cst: "",
+        cofins_cst: "",
+      };
+    }
+
+    setNfeItems(draft);
+    setNfeNatureza("VENDA");
+    setNfeSerie("1");
+    setNfeNumero("");
+    setNfeModalOpen(true);
+  }
+
+  function closeNfeModal() {
+    setNfeModalOpen(false);
+  }
+
+  function setNfeItemField(itemId: string, field: keyof NfeItemDraft, value: string) {
+    setNfeItems((prev) => ({
+      ...prev,
+      [itemId]: {
+        ...(prev[itemId] ?? ({} as any)),
+        [field]: value,
+      },
+    }));
+  }
+
+  const nfeDraftPayload = useMemo(() => {
+    if (!order) return null;
+
+    const s = storeInfo;
+
+    const dest = {
+      name: s?.name ?? "",
+      legal_name: s?.legal_name ?? "",
+      cnpj: onlyDigits(s?.cnpj ?? ""),
+      address: {
+        zip: onlyDigits(s?.address_zip ?? ""),
+        street: s?.address_street ?? "",
+        number: s?.address_number ?? "",
+        complement: s?.address_complement ?? "",
+        neighborhood: s?.address_neighborhood ?? "",
+        city: s?.city ?? "",
+        state: s?.state ?? "",
+      },
+    };
+
+    const emit = {
+      name: "O2 Distribuidora",
+      cnpj: "", // deixe vazio aqui e preencha depois quando plugar (ou puxe do seu cadastro)
+    };
+
+    const itemsList = Object.values(nfeItems).map((it) => {
+      const qty = Number(it.qty || 0);
+      const unit_cost = Number(it.unit_cost || 0);
+      const total = qty * unit_cost;
+
+      return {
+        product_id: it.product_id,
+        sku: it.sku,
+        description: it.name,
+        unit: it.unit,
+        qty,
+        unit_cost,
+        total,
+
+        fiscal: {
+          ncm: (it.ncm || "").trim() || null,
+          cest: (it.cest || "").trim() || null,
+          cfop: (it.cfop || "").trim() || null,
+          ean: (it.ean || "").trim() || null,
+          origin: (it.origin || "").trim() || null,
+          icms_cst: (it.icms_cst || "").trim() || null,
+          pis_cst: (it.pis_cst || "").trim() || null,
+          cofins_cst: (it.cofins_cst || "").trim() || null,
+        },
+      };
+    });
+
+    const totals = {
+      items_total: Number(totalItens || 0),
+      freight: Number(frete || 0),
+      gross_total: Number(totalComFrete || 0),
+      credit_applied: Number(creditApplied || 0),
+      net_total: Number(totalLiquido || 0),
+    };
+
+    return {
+      meta: {
+        source: "portal",
+        order_id: order.id,
+        created_at: order.created_at,
+      },
+      nfe: {
+        nature: (nfeNatureza || "").trim() || "VENDA",
+        serie: (nfeSerie || "").trim() || "1",
+        number: (nfeNumero || "").trim() || null,
+        issue_date: new Date().toISOString(),
+        operation: {
+          delivery_mode: order.delivery_mode ?? null,
+          freight_fee: Number(order.freight_fee ?? 0) || 0,
+        },
+        emit,
+        dest,
+        items: itemsList,
+        totals,
+        notes: order.notes ?? null,
+      },
+    };
+  }, [order, storeInfo, nfeItems, nfeNatureza, nfeSerie, nfeNumero, totalItens, frete, totalComFrete, creditApplied, totalLiquido]);
+
+  async function copyNfeJson() {
+    if (!nfeDraftPayload) return;
+    try {
+      const txt = JSON.stringify(nfeDraftPayload, null, 2);
+      await navigator.clipboard.writeText(txt);
+      setNfeCopyMsg("JSON copiado.");
+      setTimeout(() => setNfeCopyMsg(""), 1500);
+    } catch {
+      setNfeCopyMsg("Não consegui copiar automaticamente. Selecione e copie manualmente.");
     }
   }
 
@@ -823,10 +997,7 @@ export default function AdmPedidoDetalhePage() {
         <span key="qty" className="font-semibold">
           {it.qty}
         </span>,
-
-        // ✅ NOVO (1 coluna)
         <div key="pack">{packCell}</div>,
-
         <span key="total" className="font-semibold">
           {fmtBRL(line)}
         </span>,
@@ -863,10 +1034,7 @@ export default function AdmPedidoDetalhePage() {
           {removed ? "Desfazer" : "Remover"}
         </Button>
       </div>,
-
-      // ✅ NOVO (1 coluna)
       <div key="pack">{packCell}</div>,
-
       <span key="total" className="font-semibold">
         {fmtBRL(line)}
       </span>,
@@ -878,7 +1046,6 @@ export default function AdmPedidoDetalhePage() {
       const unitCost = Number(it.unit_cost ?? 0);
       const line = Number(it.qty ?? 0) * unitCost;
 
-      // ✅ NOVO: calcula caixa/pct/rolo no snapshot original
       const name = it.name ?? "-";
       const pack = getPackInfo(name);
       const qtyNum = Number(it.qty ?? 0);
@@ -911,10 +1078,7 @@ export default function AdmPedidoDetalhePage() {
         <span key="qty" className="font-semibold">
           {it.qty}
         </span>,
-
-        // ✅ NOVO (1 coluna)
         <div key="pack">{packCell}</div>,
-
         <span key="total" className="font-semibold">
           {fmtBRL(line)}
         </span>,
@@ -1281,6 +1445,11 @@ export default function AdmPedidoDetalhePage() {
               Imprimir
             </Button>
 
+            {/* ✅ NOVO (NF-e): preparar JSON para plugar API */}
+            <Button variant="secondary" onClick={openNfeModal} disabled={saving || loading}>
+              Preparar NF-e
+            </Button>
+
             {/* ✅ NOVO (Opção A): gerar remessa parcial */}
             <Button variant="secondary" onClick={openSplitModal} disabled={saving || editMode || lockedByLogistics}>
               Gerar pedido parcial
@@ -1455,13 +1624,11 @@ export default function AdmPedidoDetalhePage() {
         subtitle={editMode ? "Modo edição: ajuste quantidades e remova itens. Depois clique em Salvar alterações." : `${items.length} item(ns)`}
         right={lockedByLogistics ? <Badge tone="red">ENTREGUE (itens bloqueados)</Badge> : editMode ? <Badge tone="blue">EDITANDO</Badge> : null}
       >
-        {/* ✅ NOVO: adiciona 1 coluna mantendo layout */}
         <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={itemsRows} />
       </Card>
 
       {originalItems && originalItems.length > 0 ? (
         <Card title="Pedido original do franqueado" subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"} right={<Badge tone="neutral">ORIGINAL</Badge>}>
-          {/* ✅ NOVO: adiciona 1 coluna mantendo layout */}
           <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={originalRows} />
         </Card>
       ) : null}
@@ -1493,6 +1660,118 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-3 text-xs text-slate-500">Regra: abate até o limite do saldo e até o limite do total do pedido.</div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ✅ NOVO (NF-e): Modal rascunho para plugar API */}
+      {nfeModalOpen ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeNfeModal}>
+          <div className="w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-slate-900">Preparar NF-e (rascunho)</div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Preencha dados fiscais (se necessário) e copie o JSON para plugar na API de emissão.
+                </div>
+              </div>
+              <Button variant="secondary" onClick={closeNfeModal}>
+                Fechar
+              </Button>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <Input label="Natureza da operação" value={nfeNatureza} onChange={setNfeNatureza} />
+              <Input label="Série" value={nfeSerie} onChange={setNfeSerie} />
+              <Input label="Número (opcional)" value={nfeNumero} onChange={setNfeNumero} placeholder="deixe vazio se a API gerar" />
+            </div>
+
+            <div className="mt-4 rounded-xl border border-slate-200">
+              <div className="grid grid-cols-12 gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                <div className="col-span-4">Produto</div>
+                <div className="col-span-1 text-right">Qtd</div>
+                <div className="col-span-1 text-right">Vlr</div>
+                <div className="col-span-1">NCM</div>
+                <div className="col-span-1">CFOP</div>
+                <div className="col-span-1">CEST</div>
+                <div className="col-span-1">EAN</div>
+                <div className="col-span-1">Orig</div>
+                <div className="col-span-1">CST</div>
+              </div>
+
+              <div className="max-h-[320px] overflow-auto">
+                {items.map((it) => {
+                  const d = nfeItems[it.id];
+                  if (!d) return null;
+                  return (
+                    <div key={it.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-sm">
+                      <div className="col-span-4">
+                        <div className="text-slate-900">{d.name || "-"}</div>
+                        <div className="text-xs text-slate-500 font-mono">{d.sku || "-"}</div>
+                      </div>
+                      <div className="col-span-1 text-right font-semibold">{d.qty}</div>
+                      <div className="col-span-1 text-right">{fmtBRL(d.unit_cost)}</div>
+
+                      <div className="col-span-1">
+                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.ncm} onChange={(e) => setNfeItemField(it.id, "ncm", e.target.value)} />
+                      </div>
+                      <div className="col-span-1">
+                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.cfop} onChange={(e) => setNfeItemField(it.id, "cfop", e.target.value)} />
+                      </div>
+                      <div className="col-span-1">
+                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.cest} onChange={(e) => setNfeItemField(it.id, "cest", e.target.value)} />
+                      </div>
+                      <div className="col-span-1">
+                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.ean} onChange={(e) => setNfeItemField(it.id, "ean", e.target.value)} />
+                      </div>
+                      <div className="col-span-1">
+                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.origin} onChange={(e) => setNfeItemField(it.id, "origin", e.target.value)} placeholder="0" />
+                      </div>
+                      <div className="col-span-1">
+                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.icms_cst} onChange={(e) => setNfeItemField(it.id, "icms_cst", e.target.value)} placeholder="ICMS" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="px-3 py-2 text-xs text-slate-500 border-t border-slate-200">
+                * PIS/COFINS CST ficam dentro do JSON; se quiser eu adiciono mais 2 colunas aqui também.
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                <div className="font-semibold text-slate-700">Totais</div>
+                <div className="mt-1">Itens: <b>{fmtBRL(totalItens)}</b></div>
+                <div>Frete: <b>{fmtBRL(frete)}</b></div>
+                <div>Total bruto: <b>{fmtBRL(totalComFrete)}</b></div>
+                <div>Crédito: <b>- {fmtBRL(creditApplied)}</b></div>
+                <div className="mt-1">Total líquido: <b>{fmtBRL(totalLiquido)}</b></div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-slate-600">JSON (rascunho)</div>
+                  <div className="flex items-center gap-2">
+                    {nfeCopyMsg ? <span className="text-xs text-slate-600">{nfeCopyMsg}</span> : null}
+                    <Button variant="secondary" onClick={copyNfeJson}>
+                      Copiar JSON
+                    </Button>
+                  </div>
+                </div>
+
+                <textarea
+                  className="mt-2 w-full min-h-[220px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-900 outline-none"
+                  readOnly
+                  value={nfeDraftPayload ? JSON.stringify(nfeDraftPayload, null, 2) : ""}
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 text-xs text-slate-500">
+              Isso não emite NF-e ainda. É só o payload pronto para plugar na API.
+            </div>
           </div>
         </div>
       ) : null}

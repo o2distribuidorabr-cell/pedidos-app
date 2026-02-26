@@ -25,6 +25,11 @@ type StoreRow = {
   address_number: string | null; // Número
   address_complement: string | null; // Complemento
   address_neighborhood: string | null; // Bairro
+
+  // ✅ NOVOS CAMPOS (NFe - destinatário)
+  ie?: string | null; // Inscrição Estadual
+  email_nf?: string | null; // Email para NFe
+  phone_nf?: string | null; // Telefone para NFe
 };
 
 function money(n: number) {
@@ -70,6 +75,11 @@ export default function AdmLojasPage() {
   const [numberAddr, setNumberAddr] = useState("");
   const [complement, setComplement] = useState("");
   const [neighborhood, setNeighborhood] = useState("");
+
+  // ✅ NOVO: campos NFe
+  const [ie, setIe] = useState("");
+  const [emailNf, setEmailNf] = useState("");
+  const [phoneNf, setPhoneNf] = useState("");
 
   // crédito
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
@@ -124,17 +134,48 @@ export default function AdmLojasPage() {
     const ok = await requireAuth();
     if (!ok) return;
 
-    const { data, error } = await supabase
+    const baseSelect =
+      "id,name,city,state,active,freight_fee,code";
+    const fullSelect =
+      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf";
+
+    // ✅ tenta com colunas novas; se falhar por coluna inexistente, faz fallback
+    let data: any[] | null = null;
+
+    const first = await supabase
       .from("stores")
-      .select(
-        "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood"
-      )
+      .select(fullSelect)
       .order("name", { ascending: true });
 
-    if (error) {
-      setMsg(formatSbError("Falha ao carregar stores.", error));
-      setStores([]);
-      return;
+    if (first.error) {
+      console.warn("loadStores fullSelect error:", first.error);
+
+      const fallback = await supabase
+        .from("stores")
+        .select(baseSelect)
+        .order("name", { ascending: true });
+
+      if (fallback.error) {
+        setMsg(formatSbError("Falha ao carregar stores.", fallback.error));
+        setStores([]);
+        return;
+      }
+
+      data = (fallback.data ?? []).map((s: any) => ({
+        ...s,
+        legal_name: null,
+        cnpj: null,
+        address_zip: null,
+        address_street: null,
+        address_number: null,
+        address_complement: null,
+        address_neighborhood: null,
+        ie: null,
+        email_nf: null,
+        phone_nf: null,
+      }));
+    } else {
+      data = first.data ?? [];
     }
 
     const rows = (data ?? []) as StoreRow[];
@@ -157,7 +198,7 @@ export default function AdmLojasPage() {
     return stores.filter((s) => {
       const blob = `${s.name} ${s.legal_name ?? ""} ${s.cnpj ?? ""} ${s.address_street ?? ""} ${s.address_neighborhood ?? ""} ${
         s.address_zip ?? ""
-      } ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.id}`.toLowerCase();
+      } ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.ie ?? ""} ${s.email_nf ?? ""} ${s.phone_nf ?? ""} ${s.id}`.toLowerCase();
       return blob.includes(qq);
     });
   }, [stores, q]);
@@ -178,6 +219,11 @@ export default function AdmLojasPage() {
     setNumberAddr("");
     setComplement("");
     setNeighborhood("");
+
+    // ✅ NOVO (NFe)
+    setIe("");
+    setEmailNf("");
+    setPhoneNf("");
   }
 
   function startEdit(s: StoreRow) {
@@ -197,6 +243,11 @@ export default function AdmLojasPage() {
     setNumberAddr(s.address_number ?? "");
     setComplement(s.address_complement ?? "");
     setNeighborhood(s.address_neighborhood ?? "");
+
+    // ✅ NOVO (NFe)
+    setIe(s.ie ?? "");
+    setEmailNf(s.email_nf ?? "");
+    setPhoneNf(s.phone_nf ?? "");
   }
 
   async function saveStore() {
@@ -295,6 +346,11 @@ export default function AdmLojasPage() {
 
       active: !!active,
       freight_fee: ff,
+
+      // ✅ NFe (destinatário) - opcionais
+      ie: (ie || "").trim() || null,
+      email_nf: (emailNf || "").trim() || null,
+      phone_nf: (phoneNf || "").trim() || null,
     };
 
     if (editingId) {
@@ -475,12 +531,7 @@ export default function AdmLojasPage() {
             {/* ✅ NOVO: Razão social / CNPJ */}
             <div className="grid gap-3 sm:grid-cols-2">
               <Input label="Razão social" value={legalName} onChange={setLegalName} placeholder="Ex.: Minha Empresa LTDA" />
-              <Input
-                label="CNPJ"
-                value={cnpj}
-                onChange={(v) => setCnpj(v)}
-                placeholder="Somente números (14 dígitos)"
-              />
+              <Input label="CNPJ" value={cnpj} onChange={(v) => setCnpj(v)} placeholder="Somente números (14 dígitos)" />
             </div>
 
             {/* ✅ NOVO: Endereço completo */}
@@ -502,6 +553,14 @@ export default function AdmLojasPage() {
               <Input label="Cidade" value={city} onChange={setCity} placeholder="Belo Horizonte" />
               <Input label="UF" value={stateUf} onChange={(v) => setStateUf(v.toUpperCase())} placeholder="MG" maxLength={2} />
             </div>
+
+            {/* ✅ NOVO: dados NFe (opcionais) */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="IE (opcional)" value={ie} onChange={setIe} placeholder="Inscrição Estadual" />
+              <Input label="Email NFe (opcional)" value={emailNf} onChange={setEmailNf} placeholder="financeiro@loja.com" inputMode="email" />
+            </div>
+
+            <Input label="Telefone NFe (opcional)" value={phoneNf} onChange={setPhoneNf} placeholder="(xx) xxxxx-xxxx" />
 
             <Input label="Frete padrão (opcional)" value={freightFee} onChange={setFreightFee} placeholder="Ex.: 65,00" />
 

@@ -15,6 +15,16 @@ type Product = {
   unit_cost: number | null; // preço efetivo (override ou base)
   base_price?: number | null;
   override_price?: number | null;
+
+  // ✅ NOVO (para NF-e)
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: string | null;
+  ean?: string | null;
+  origin?: string | null;
+  icms_cst?: string | null;
+  pis_cst?: string | null;
+  cofins_cst?: string | null;
 };
 
 type CartItem = {
@@ -24,6 +34,16 @@ type CartItem = {
   unit: string;
   unit_cost: number;
   qty: number;
+
+  // ✅ NOVO (para NF-e)
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: string | null;
+  ean?: string | null;
+  origin?: string | null;
+  icms_cst?: string | null;
+  pis_cst?: string | null;
+  cofins_cst?: string | null;
 };
 
 type StoreRow = { id: string; name: string; freight_fee: number };
@@ -129,16 +149,44 @@ export default function PedidoPage() {
       setFreightFee(Number(st.freight_fee ?? 0) || 0);
 
       // 3) produtos (preço padrão)
-      const { data: prodData, error: prodErr } = await supabase
+      // ✅ NOVO: tenta buscar com campos fiscais; se falhar por coluna inexistente, faz fallback para o select antigo
+      const selectOld = "id, sku, name, unit, unit_price, active";
+      const selectNew =
+        "id, sku, name, unit, unit_price, active, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
+
+      const prodTry = await supabase
         .from("products")
-        .select("id, sku, name, unit, unit_price, active")
+        .select(selectNew)
         .eq("active", true)
         .order("name", { ascending: true });
 
-      if (prodErr) {
-        setLoading(false);
-        setMsg(prodErr.message);
-        return;
+      let prodData: any[] | null = null;
+
+      if (prodTry.error) {
+        const prodFallback = await supabase
+          .from("products")
+          .select(selectOld)
+          .eq("active", true)
+          .order("name", { ascending: true });
+
+        if (prodFallback.error) {
+          setLoading(false);
+          setMsg(prodFallback.error.message);
+          return;
+        }
+        prodData = (prodFallback.data ?? []).map((p: any) => ({
+          ...p,
+          ncm: null,
+          cest: null,
+          cfop: null,
+          ean: null,
+          origin: null,
+          icms_cst: null,
+          pis_cst: null,
+          cofins_cst: null,
+        }));
+      } else {
+        prodData = prodTry.data ?? [];
       }
 
       // 4) overrides da loja (preço por loja)
@@ -171,6 +219,16 @@ export default function PedidoPage() {
           unit_cost: Number(effective) || 0,
           base_price: base,
           override_price: ov ?? null,
+
+          // ✅ NOVO (para NF-e)
+          ncm: (p.ncm ?? null) as any,
+          cest: (p.cest ?? null) as any,
+          cfop: (p.cfop ?? null) as any,
+          ean: (p.ean ?? null) as any,
+          origin: (p.origin ?? null) as any,
+          icms_cst: (p.icms_cst ?? null) as any,
+          pis_cst: (p.pis_cst ?? null) as any,
+          cofins_cst: (p.cofins_cst ?? null) as any,
         };
       });
 
@@ -200,6 +258,16 @@ export default function PedidoPage() {
         unit,
         unit_cost,
         qty,
+
+        // ✅ NOVO (para NF-e)
+        ncm: prod.ncm ?? null,
+        cest: prod.cest ?? null,
+        cfop: prod.cfop ?? null,
+        ean: prod.ean ?? null,
+        origin: prod.origin ?? null,
+        icms_cst: prod.icms_cst ?? null,
+        pis_cst: prod.pis_cst ?? null,
+        cofins_cst: prod.cofins_cst ?? null,
       };
       return next;
     });

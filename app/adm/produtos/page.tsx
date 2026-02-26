@@ -15,6 +15,17 @@ type ProductRow = {
   step_qty: number | null;
   pack_qty: number | null;
   active: boolean | null;
+
+  // ✅ NOVOS CAMPOS (pronto para NF-e)
+  ncm?: string | null; // 8 dígitos
+  cest?: string | null; // 7 dígitos (opcional)
+  cfop?: string | null; // 4 dígitos (opcional)
+  ean?: string | null; // GTIN/EAN (8/12/13/14) opcional
+  origin?: string | null; // "0".."8" (opcional)
+
+  icms_cst?: string | null; // CST/CSOSN (texto)
+  pis_cst?: string | null;
+  cofins_cst?: string | null;
 };
 
 type StoreRow = {
@@ -29,6 +40,28 @@ function toNumber(v: string) {
 
 function moneyBR(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function onlyDigits(v: string) {
+  return String(v ?? "").replace(/\D/g, "");
+}
+
+function normNCM(v: string) {
+  return onlyDigits(v).slice(0, 8);
+}
+function normCEST(v: string) {
+  return onlyDigits(v).slice(0, 7);
+}
+function normCFOP(v: string) {
+  return onlyDigits(v).slice(0, 4);
+}
+function normEAN(v: string) {
+  // EAN/GTIN pode ser 8, 12, 13, 14 (mantém só dígitos)
+  return onlyDigits(v).slice(0, 14);
+}
+function isValidEAN(digits: string) {
+  if (!digits) return true; // vazio = ok
+  return [8, 12, 13, 14].includes(digits.length);
 }
 
 export default function AdmProdutosPage() {
@@ -50,6 +83,16 @@ export default function AdmProdutosPage() {
   const [stepQty, setStepQty] = useState("1");
   const [packQty, setPackQty] = useState("1");
   const [active, setActive] = useState(true);
+
+  // ✅ NOVO: campos NF-e (produto)
+  const [ncm, setNcm] = useState("");
+  const [cest, setCest] = useState("");
+  const [cfop, setCfop] = useState("");
+  const [ean, setEan] = useState("");
+  const [origin, setOrigin] = useState<string>(""); // "" | "0".."8"
+  const [icmsCst, setIcmsCst] = useState("");
+  const [pisCst, setPisCst] = useState("");
+  const [cofinsCst, setCofinsCst] = useState("");
 
   // ======= PREÇO POR LOJA (override) =======
   const [stores, setStores] = useState<StoreRow[]>([]);
@@ -73,18 +116,46 @@ export default function AdmProdutosPage() {
     const ok = await requireAuth();
     if (!ok) return;
 
-    const { data, error } = await supabase
+    // ✅ tenta com colunas novas; se falhar por coluna inexistente, faz fallback
+    const baseSelect = "id,sku,name,unit,unit_price,step_qty,pack_qty,active";
+    const fullSelect = "id,sku,name,unit,unit_price,step_qty,pack_qty,active,ncm,cest,cfop,ean,origin,icms_cst,pis_cst,cofins_cst";
+
+    const first = await supabase
       .from("products")
-      .select("id,sku,name,unit,unit_price,step_qty,pack_qty,active")
+      .select(fullSelect)
       .order("name", { ascending: true });
 
-    if (error) {
-      setMsg(error.message);
-      setProducts([]);
+    if (first.error) {
+      console.warn("loadProducts fullSelect error:", first.error);
+
+      const fallback = await supabase
+        .from("products")
+        .select(baseSelect)
+        .order("name", { ascending: true });
+
+      if (fallback.error) {
+        setMsg(fallback.error.message);
+        setProducts([]);
+        return;
+      }
+
+      const normalized = (fallback.data ?? []).map((p: any) => ({
+        ...p,
+        ncm: null,
+        cest: null,
+        cfop: null,
+        ean: null,
+        origin: null,
+        icms_cst: null,
+        pis_cst: null,
+        cofins_cst: null,
+      }));
+
+      setProducts(normalized as ProductRow[]);
       return;
     }
 
-    setProducts((data ?? []) as ProductRow[]);
+    setProducts((first.data ?? []) as ProductRow[]);
   }
 
   async function loadStores() {
@@ -169,7 +240,7 @@ export default function AdmProdutosPage() {
     const qq = q.trim().toLowerCase();
     if (!qq) return products;
     return products.filter((p) => {
-      const blob = `${p.sku ?? ""} ${p.name ?? ""} ${p.unit ?? ""} ${p.id}`.toLowerCase();
+      const blob = `${p.sku ?? ""} ${p.name ?? ""} ${p.unit ?? ""} ${p.ncm ?? ""} ${p.cest ?? ""} ${p.cfop ?? ""} ${p.ean ?? ""} ${p.id}`.toLowerCase();
       return blob.includes(qq);
     });
   }, [products, q]);
@@ -192,6 +263,16 @@ export default function AdmProdutosPage() {
     setStepQty("1");
     setPackQty("1");
     setActive(true);
+
+    // ✅ NOVO (NF-e)
+    setNcm("");
+    setCest("");
+    setCfop("");
+    setEan("");
+    setOrigin("");
+    setIcmsCst("");
+    setPisCst("");
+    setCofinsCst("");
   }
 
   function startEdit(p: ProductRow) {
@@ -204,6 +285,16 @@ export default function AdmProdutosPage() {
     setPackQty(String(p.pack_qty ?? 1));
     setActive(p.active ?? true);
     setMsg("");
+
+    // ✅ NOVO (NF-e)
+    setNcm(p.ncm ?? "");
+    setCest(p.cest ?? "");
+    setCfop(p.cfop ?? "");
+    setEan(p.ean ?? "");
+    setOrigin((p.origin ?? "") as any);
+    setIcmsCst(p.icms_cst ?? "");
+    setPisCst(p.pis_cst ?? "");
+    setCofinsCst(p.cofins_cst ?? "");
   }
 
   async function saveProduct() {
@@ -224,6 +315,35 @@ export default function AdmProdutosPage() {
       return;
     }
 
+    // ✅ NOVO: validações leves (só quando preenchido)
+    const ncmNorm = normNCM(ncm);
+    if (ncm.trim() && ncmNorm.length !== 8) {
+      setWorking(false);
+      setMsg("NCM inválido. Informe 8 dígitos (apenas números).");
+      return;
+    }
+
+    const cestNorm = normCEST(cest);
+    if (cest.trim() && cestNorm.length !== 7) {
+      setWorking(false);
+      setMsg("CEST inválido. Informe 7 dígitos (apenas números).");
+      return;
+    }
+
+    const cfopNorm = normCFOP(cfop);
+    if (cfop.trim() && cfopNorm.length !== 4) {
+      setWorking(false);
+      setMsg("CFOP inválido. Informe 4 dígitos (apenas números).");
+      return;
+    }
+
+    const eanNorm = normEAN(ean);
+    if (ean.trim() && !isValidEAN(eanNorm)) {
+      setWorking(false);
+      setMsg("EAN/GTIN inválido. Use 8, 12, 13 ou 14 dígitos.");
+      return;
+    }
+
     const payload = {
       sku: skuVal,
       name: nameVal,
@@ -232,6 +352,16 @@ export default function AdmProdutosPage() {
       step_qty: Math.max(1, Math.floor(toNumber(stepQty))),
       pack_qty: Math.max(1, Math.floor(toNumber(packQty))),
       active: !!active,
+
+      // ✅ NOVO (NF-e)
+      ncm: ncmNorm || null,
+      cest: cestNorm || null,
+      cfop: cfopNorm || null,
+      ean: eanNorm || null,
+      origin: (origin || "").trim() || null,
+      icms_cst: (icmsCst || "").trim() || null,
+      pis_cst: (pisCst || "").trim() || null,
+      cofins_cst: (cofinsCst || "").trim() || null,
     };
 
     if (editingId) {
@@ -464,6 +594,43 @@ export default function AdmProdutosPage() {
               <Input label="Lote/caixa (pack_qty)" value={packQty} onChange={setPackQty} placeholder="1" />
             </div>
 
+            {/* ✅ NOVO: campos NF-e (mantendo o layout) */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="NCM (opcional)" value={ncm} onChange={(v) => setNcm(v)} placeholder="8 dígitos" />
+              <Input label="CEST (opcional)" value={cest} onChange={(v) => setCest(v)} placeholder="7 dígitos" />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="CFOP (opcional)" value={cfop} onChange={(v) => setCfop(v)} placeholder="4 dígitos" />
+              <Input label="EAN/GTIN (opcional)" value={ean} onChange={(v) => setEan(v)} placeholder="8/12/13/14 dígitos" />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Select
+                label="Origem (opcional)"
+                value={origin}
+                onChange={(v) => setOrigin(v)}
+                options={[
+                  { value: "", label: "—" },
+                  { value: "0", label: "0 - Nacional" },
+                  { value: "1", label: "1 - Estrangeira (importação direta)" },
+                  { value: "2", label: "2 - Estrangeira (adquirida no mercado interno)" },
+                  { value: "3", label: "3 - Nacional (conteúdo importação > 40%)" },
+                  { value: "4", label: "4 - Nacional (produção conforme processos)" },
+                  { value: "5", label: "5 - Nacional (conteúdo importação <= 40%)" },
+                  { value: "6", label: "6 - Estrangeira (sem similar nacional)" },
+                  { value: "7", label: "7 - Estrangeira (adquirida no mercado interno, sem similar)" },
+                  { value: "8", label: "8 - Nacional (conteúdo importação > 70%)" },
+                ]}
+              />
+              <Input label="ICMS CST/CSOSN (opcional)" value={icmsCst} onChange={setIcmsCst} placeholder="Ex.: 00 / 102 / 60" />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input label="PIS CST (opcional)" value={pisCst} onChange={setPisCst} placeholder="Ex.: 01 / 99" />
+              <Input label="COFINS CST (opcional)" value={cofinsCst} onChange={setCofinsCst} placeholder="Ex.: 01 / 99" />
+            </div>
+
             <Select
               label="Ativo?"
               value={active ? "true" : "false"}
@@ -498,9 +665,7 @@ export default function AdmProdutosPage() {
 
             {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
 
-            {!loading && filtered.length === 0 ? (
-              <div className="text-sm text-slate-600">Nenhum produto encontrado.</div>
-            ) : null}
+            {!loading && filtered.length === 0 ? <div className="text-sm text-slate-600">Nenhum produto encontrado.</div> : null}
 
             {!loading && filtered.length > 0 ? (
               <div className="grid gap-2">
@@ -518,8 +683,7 @@ export default function AdmProdutosPage() {
                       </div>
 
                       <div className="mt-1 text-sm text-slate-600">
-                        {p.unit ?? "un"} · {moneyBR(Number(p.unit_price ?? 0))} · passo {p.step_qty ?? 1} · lote{" "}
-                        {p.pack_qty ?? 1}
+                        {p.unit ?? "un"} · {moneyBR(Number(p.unit_price ?? 0))} · passo {p.step_qty ?? 1} · lote {p.pack_qty ?? 1}
                       </div>
 
                       <div className="mt-2 truncate font-mono text-xs text-slate-500">{p.id}</div>
@@ -633,26 +797,16 @@ export default function AdmProdutosPage() {
 
                         <td className="px-4 py-3">
                           <div className="w-[160px]">
-                            <Input
-                              value={shownValue}
-                              onChange={(v) => setDirty(pid, v)}
-                              placeholder="Ex.: 12.50"
-                            />
+                            <Input value={shownValue} onChange={(v) => setDirty(pid, v)} placeholder="Ex.: 12.50" />
                           </div>
-                          <div className="mt-1 text-xs text-slate-500">
-                            {hasOverride ? "override cadastrado" : "sem override"}
-                          </div>
+                          <div className="mt-1 text-xs text-slate-500">{hasOverride ? "override cadastrado" : "sem override"}</div>
                         </td>
 
                         <td className="px-4 py-3 text-sm font-semibold text-slate-900">{moneyBR(effective)}</td>
 
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-2">
-                            <Button
-                              variant="secondary"
-                              onClick={() => saveStorePrice(pid)}
-                              disabled={!storeFilterId || priceWorking}
-                            >
+                            <Button variant="secondary" onClick={() => saveStorePrice(pid)} disabled={!storeFilterId || priceWorking}>
                               Salvar
                             </Button>
 
