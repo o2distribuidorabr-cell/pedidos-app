@@ -18,6 +18,9 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
+  // ✅ NOVO: valor real pago no MP (com juros/multa)
+  paid_amount: number | null;
+
   logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
@@ -25,32 +28,19 @@ type OrderRow = {
 
   credit_applied: number | null;
 
-  due_date: string | null; // DATE => "YYYY-MM-DD"
+  due_date: string | null;
 };
 
-type TotalsRow = {
-  order_id: string;
-  store_id: string;
-  total_cost: number | null;
-};
-
-type OrderItemRow = {
-  order_id: string;
-  qty: number | null;
-  unit_cost: number | null;
-};
-
-type CreditBalRow = {
-  store_id: string;
-  balance: number | null;
-};
+type TotalsRow = { order_id: string; store_id: string; total_cost: number | null };
+type OrderItemRow = { order_id: string; qty: number | null; unit_cost: number | null };
+type CreditBalRow = { store_id: string; balance: number | null };
 
 type FinanceSettingsRow = {
   id: number;
   pix_key: string | null;
   apply_late_charges: boolean | null;
-  late_fee_percent: number | null; // multa (% uma vez)
-  daily_interest_percent: number | null; // juros (% ao dia)
+  late_fee_percent: number | null;
+  daily_interest_percent: number | null;
   updated_at?: string | null;
 };
 
@@ -72,20 +62,24 @@ type RowUi = {
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
+  // ✅ NOVO
+  paid_amount: number | null;
+
   created_at: string | null;
 
-  mercadoria: number; // somente itens (sem frete)
+  mercadoria: number;
   frete: number;
-  total: number; // mercadoria + frete
+  total: number;
   credit_applied: number;
-  a_pagar: number; // total - crédito (>=0)
+  a_pagar_base: number;
 
-  // encargos calculados
   days_late: number;
   multa: number;
   juros: number;
   encargos: number;
-  a_pagar_com_encargos: number;
+
+  // ✅ valor exibido em “A pagar”
+  a_pagar_exib: number;
 
   credit_balance: number;
 };
@@ -128,7 +122,6 @@ function addDaysYMD(days: number) {
   return `${y}-${m}-${d}`;
 }
 function daysBetweenYMD(a: string, b: string) {
-  // b - a (em dias), a e b no formato YYYY-MM-DD
   try {
     const [ya, ma, da] = a.split("-").map(Number);
     const [yb, mb, db] = b.split("-").map(Number);
@@ -187,44 +180,30 @@ export default function AdmFinanceiroPage() {
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [rows, setRows] = useState<RowUi[]>([]);
 
-  // ✅ Configurações de cobrança (sem exibir chave PIX)
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [pixKey, setPixKey] = useState<string>("");
   const [applyLateCharges, setApplyLateCharges] = useState<boolean>(true);
-  const [lateFeePercent, setLateFeePercent] = useState<string>("2"); // multa padrão
-  const [dailyInterestPercent, setDailyInterestPercent] = useState<string>("0,033"); // juros padrão (% ao dia)
+  const [lateFeePercent, setLateFeePercent] = useState<string>("2");
+  const [dailyInterestPercent, setDailyInterestPercent] = useState<string>("0,033");
 
-  // mantém uma cópia “fonte da verdade” do settings carregado para cálculo
-  const settingsRef = useRef<FinanceSettingsRow | null>(null);
-
-  // Multi-seleção
   const [storeSelected, setStoreSelected] = useState<string[]>([]);
   const [storePopoverOpen, setStorePopoverOpen] = useState(false);
   const [storeSearch, setStoreSearch] = useState("");
   const popRef = useRef<HTMLDivElement | null>(null);
 
-  // filtros
   const [paidFilter, setPaidFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
 
-  // filtros extras
   const [payMethodFilter, setPayMethodFilter] = useState<string>("all");
   const [dueFilter, setDueFilter] = useState<string>("all");
   const [dueFrom, setDueFrom] = useState<string>("");
   const [dueTo, setDueTo] = useState<string>("");
 
   const [viewMode, setViewMode] = useState<"compact" | "full">("compact");
-
-  // helper: aceita "1,5" ou "1.5"
-  function parsePercentInput(v: string) {
-    const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, "");
-    if (!s) return 0;
-    const n = Number(s.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
-  }
 
   useEffect(() => {
     (async () => {
@@ -237,17 +216,15 @@ export default function AdmFinanceiroPage() {
         return;
       }
 
-      // ✅ Carrega settings e stores, e só então carrega finance com o settings correto
-      const settings = await loadFinanceSettings(true);
+      await loadFinanceSettings();
       const storeList = await loadStores();
-      await loadFinance(storeList, settings);
+      await loadFinance(storeList);
 
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // fecha popover clicando fora
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!storePopoverOpen) return;
@@ -260,9 +237,15 @@ export default function AdmFinanceiroPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [storePopoverOpen]);
 
-  // ✅ agora esta função retorna o settings lido (para cálculo imediato)
-  async function loadFinanceSettings(silent = false): Promise<FinanceSettingsRow> {
-    if (!silent) setSettingsLoading(true);
+  function parsePercentInput(v: string) {
+    const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, "");
+    if (!s) return 0;
+    const n = Number(s.replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  async function loadFinanceSettings() {
+    setSettingsLoading(true);
     try {
       const { data, error } = await supabase
         .from("finance_settings")
@@ -272,41 +255,18 @@ export default function AdmFinanceiroPage() {
 
       if (error) {
         console.warn("loadFinanceSettings:", error.message);
-        // fallback
-        const fallback: FinanceSettingsRow = {
-          id: 1,
-          pix_key: null,
-          apply_late_charges: true,
-          late_fee_percent: 2,
-          daily_interest_percent: 0.033,
-        };
-        settingsRef.current = fallback;
-        setApplyLateCharges(true);
-        setLateFeePercent("2");
-        setDailyInterestPercent("0,033");
-        return fallback;
+        return;
       }
 
       const row = (data ?? null) as FinanceSettingsRow | null;
-
-      const normalized: FinanceSettingsRow = {
-        id: 1,
-        pix_key: row?.pix_key ?? null,
-        apply_late_charges: row?.apply_late_charges ?? true,
-        late_fee_percent: row?.late_fee_percent ?? 2,
-        daily_interest_percent: row?.daily_interest_percent ?? 0.033,
-      };
-
-      settingsRef.current = normalized;
-
-      // atualiza os states da UI
-      setApplyLateCharges(!!normalized.apply_late_charges);
-      setLateFeePercent(String(normalized.late_fee_percent ?? 2).replace(".", ","));
-      setDailyInterestPercent(String(normalized.daily_interest_percent ?? 0.033).replace(".", ","));
-
-      return normalized;
+      if (row) {
+        setPixKey(row.pix_key ?? "");
+        setApplyLateCharges(!!(row.apply_late_charges ?? true));
+        setLateFeePercent(String(row.late_fee_percent ?? 2).replace(".", ","));
+        setDailyInterestPercent(String(row.daily_interest_percent ?? 0.033).replace(".", ","));
+      }
     } finally {
-      if (!silent) setSettingsLoading(false);
+      setSettingsLoading(false);
     }
   }
 
@@ -319,7 +279,7 @@ export default function AdmFinanceiroPage() {
 
     const payload: FinanceSettingsRow = {
       id: 1,
-      pix_key: null, // ✅ não usamos mais
+      pix_key: pixKey.trim() || null,
       apply_late_charges: !!applyLateCharges,
       late_fee_percent: multa,
       daily_interest_percent: jurosDia,
@@ -334,11 +294,8 @@ export default function AdmFinanceiroPage() {
     }
 
     setSettingsSaving(false);
-
-    // Recarrega settings e recalcula finance usando o settings retornado
-    const settings = await loadFinanceSettings(true);
     const storeList = await loadStores();
-    await loadFinance(storeList, settings);
+    await loadFinance(storeList);
   }
 
   async function loadStores(): Promise<StoreRow[]> {
@@ -377,20 +334,13 @@ export default function AdmFinanceiroPage() {
     setStoreSelected(list.map((s) => s.id));
   }
 
-  // ✅ agora recebe settings explícito (não depende de state que pode estar “atrasado”)
-  async function loadFinance(storeList: StoreRow[], settings?: FinanceSettingsRow) {
+  async function loadFinance(storeList: StoreRow[]) {
     setMsg("");
-
-    const s = settings ?? settingsRef.current;
-
-    const multaPct = clampPercent(Number(s?.late_fee_percent ?? parsePercentInput(lateFeePercent))) / 100;
-    const jurosDiaPct = clampPercent(Number(s?.daily_interest_percent ?? parsePercentInput(dailyInterestPercent))) / 100;
-    const aplicar = !!(s?.apply_late_charges ?? applyLateCharges);
 
     let q = supabase
       .from("orders")
       .select(
-        "id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied,due_date"
+        "id,store_id,status,created_at,is_paid,paid_at,payment_method,paid_amount,logistic_status,delivery_mode,freight_fee,credit_applied,due_date"
       )
       .order("created_at", { ascending: false });
 
@@ -439,19 +389,13 @@ export default function AdmFinanceiroPage() {
     const orderIds = orders.map((o) => o.id);
     const storeIdsUnique = Array.from(new Set(orders.map((o) => o.store_id)));
 
-    const { data: tots, error: tErr } = await supabase
-      .from("v_order_totals")
-      .select("order_id,store_id,total_cost")
-      .in("order_id", orderIds);
+    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    const { data: itemsRaw, error: iErr } = await supabase
-      .from("order_items")
-      .select("order_id,qty,unit_cost")
-      .in("order_id", orderIds);
+    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
     if (iErr) console.warn("order_items calc:", iErr.message);
 
     const itemsCalcMap = new Map<string, number>();
@@ -461,17 +405,18 @@ export default function AdmFinanceiroPage() {
       itemsCalcMap.set(r.order_id, cur + line);
     }
 
-    const { data: bals, error: bErr } = await supabase
-      .from("v_store_credit_balance")
-      .select("store_id,balance")
-      .in("store_id", storeIdsUnique);
+    const { data: bals, error: bErr } = await supabase.from("v_store_credit_balance").select("store_id,balance").in("store_id", storeIdsUnique);
     if (bErr) console.warn("credit balance:", bErr.message);
 
     const balMap = new Map<string, number>();
     for (const r of (bals ?? []) as CreditBalRow[]) balMap.set(r.store_id, Number(r.balance) || 0);
 
     const storeMap = new Map<string, string>();
-    for (const st of storeList) storeMap.set(st.id, st.name ?? st.id);
+    for (const s of storeList) storeMap.set(s.id, s.name ?? s.id);
+
+    const multaPct = clampPercent(parsePercentInput(lateFeePercent)) / 100;
+    const jurosDiaPct = clampPercent(parsePercentInput(dailyInterestPercent)) / 100;
+    const aplicar = !!applyLateCharges;
 
     const ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
@@ -482,32 +427,30 @@ export default function AdmFinanceiroPage() {
       let mercadoria = viewTotal;
 
       if (frete > 0 && itemsRaw) {
-        if (near(viewTotal, itemsCalc + frete)) {
-          mercadoria = Math.max(viewTotal - frete, 0);
-        } else if (near(viewTotal, itemsCalc)) {
-          mercadoria = viewTotal;
-        } else {
-          if (!near(itemsCalc, 0)) mercadoria = itemsCalc;
-        }
+        if (near(viewTotal, itemsCalc + frete)) mercadoria = Math.max(viewTotal - frete, 0);
+        else if (near(viewTotal, itemsCalc)) mercadoria = viewTotal;
+        else if (!near(itemsCalc, 0)) mercadoria = itemsCalc;
       } else {
         if (itemsRaw && !near(viewTotal, itemsCalc)) mercadoria = itemsCalc;
       }
 
       const total = mercadoria + frete;
       const credit = Number(o.credit_applied ?? 0);
-      const a_pagar = Math.max(total - credit, 0);
+      const a_pagar_base = Math.max(total - credit, 0);
 
       const is_overdue = !!o.due_date && !o.is_paid && o.due_date < today;
       const is_due_soon = !!o.due_date && !o.is_paid && o.due_date >= today && o.due_date <= soonLimit;
 
-      // dias em atraso: se venceu ontem, 1 dia
       const days_late = is_overdue && o.due_date ? Math.max(daysBetweenYMD(o.due_date, today), 1) : 0;
 
-      const multa = aplicar && is_overdue ? a_pagar * multaPct : 0;
-      const juros = aplicar && is_overdue ? a_pagar * jurosDiaPct * days_late : 0;
+      const multa = aplicar && is_overdue ? a_pagar_base * multaPct : 0;
+      const juros = aplicar && is_overdue ? a_pagar_base * jurosDiaPct * days_late : 0;
       const encargos = multa + juros;
 
-      const a_pagar_com_encargos = Math.max(a_pagar + encargos, 0);
+      // ✅ REGRA NOVA:
+      // Se está pago e temos paid_amount, mostramos exatamente o que foi pago.
+      const paid_amount = Number(o.paid_amount ?? 0) || 0;
+      const a_pagar_exib = o.is_paid && paid_amount > 0 ? paid_amount : Math.max(a_pagar_base + encargos, 0);
 
       return {
         id: o.id,
@@ -526,19 +469,22 @@ export default function AdmFinanceiroPage() {
         paid_at: o.paid_at,
         payment_method: o.payment_method,
 
+        paid_amount: o.paid_amount ?? null,
+
         created_at: o.created_at,
 
         mercadoria,
         frete,
         total,
         credit_applied: credit,
-        a_pagar,
+        a_pagar_base,
 
         days_late,
         multa,
         juros,
         encargos,
-        a_pagar_com_encargos,
+
+        a_pagar_exib,
 
         credit_balance: balMap.get(o.store_id) ?? 0,
       };
@@ -549,9 +495,8 @@ export default function AdmFinanceiroPage() {
 
   async function onApply() {
     setLoading(true);
-    const settings = await loadFinanceSettings(true);
     const storeList = await loadStores();
-    await loadFinance(storeList, settings);
+    await loadFinance(storeList);
     setLoading(false);
   }
 
@@ -561,8 +506,9 @@ export default function AdmFinanceiroPage() {
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
 
-    const totalApagar = rows.reduce((a, r) => a + r.a_pagar_com_encargos, 0);
-    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_com_encargos : 0), 0);
+    // ✅ Agora tudo usa a_pagar_exib (pago = valor pago real; aberto = com encargos)
+    const totalApagar = rows.reduce((a, r) => a + r.a_pagar_exib, 0);
+    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_exib : 0), 0);
     const totalAberto = totalApagar - totalPago;
 
     const qtdVencidos = rows.filter((r) => r.is_overdue).length;
@@ -580,28 +526,13 @@ export default function AdmFinanceiroPage() {
 
   const columns = useMemo(() => {
     const baseCompact = ["Pedido", "Loja", "Operação", "Vencimento", "Forma", "Total", "A pagar", "Pago?"];
-    const baseFull = [
-      "Pedido",
-      "Loja",
-      "Operação",
-      "Entrega",
-      "Vencimento",
-      "Forma",
-      "Mercadoria",
-      "Frete",
-      "Total",
-      "Crédito",
-      "A pagar",
-      "Pago?",
-      "Data pagamento",
-      "Saldo crédito",
-    ];
+    const baseFull = ["Pedido", "Loja", "Operação", "Entrega", "Vencimento", "Forma", "Mercadoria", "Frete", "Total", "Crédito", "A pagar", "Pago?", "Data pagamento", "Saldo crédito"];
     return viewMode === "compact" ? baseCompact : baseFull;
   }, [viewMode]);
 
   const tableRows = useMemo(() => {
     return rows.map((r) => {
-      const dueB = !r.due_date ? (
+      const dueBadge = !r.due_date ? (
         <Badge tone="slate">Sem venc.</Badge>
       ) : r.is_overdue ? (
         <Badge tone="red">Vencido</Badge>
@@ -618,13 +549,16 @@ export default function AdmFinanceiroPage() {
         </div>
       );
 
+      const paidCell = <Badge tone={r.is_paid ? "green" : "red"}>{r.is_paid ? "Pago" : "Em aberto"}</Badge>;
+
       const dueCell = (
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>
-            {dueB}
+            {dueBadge}
           </div>
 
+          {/* Em aberto e vencido: mostra encargos */}
           {!r.is_paid && r.encargos > 0 ? (
             <div className="text-xs text-slate-600">
               Encargos: <b className="text-slate-900">{money(r.encargos)}</b>{" "}
@@ -633,11 +567,16 @@ export default function AdmFinanceiroPage() {
               </span>
             </div>
           ) : null}
+
+          {/* Pago: se tiver paid_amount e for maior que base, mostra que pagou com encargos */}
+          {r.is_paid && r.paid_amount != null && r.paid_amount > r.a_pagar_base ? (
+            <div className="text-xs text-slate-600">
+              Pago com encargos: <b className="text-slate-900">{money(r.paid_amount - r.a_pagar_base)}</b>{" "}
+              <span className="text-slate-500">(valor pago {money(r.paid_amount)})</span>
+            </div>
+          ) : null}
         </div>
       );
-
-      const paidCell = <Badge tone={r.is_paid ? "green" : "red"}>{r.is_paid ? "Pago" : "Em aberto"}</Badge>;
-      const aPagarExib = r.a_pagar_com_encargos;
 
       if (viewMode === "compact") {
         return [
@@ -647,7 +586,7 @@ export default function AdmFinanceiroPage() {
           <div key="due">{dueCell}</div>,
           <span key="pm" className="text-slate-800">{payMethodLabel(r.payment_method)}</span>,
           <span key="tot" className="font-semibold text-slate-900">{money(r.total)}</span>,
-          <span key="apg" className="font-semibold text-slate-900">{money(aPagarExib)}</span>,
+          <span key="apg" className="font-semibold text-slate-900">{money(r.a_pagar_exib)}</span>,
           <div key="paid">{paidCell}</div>,
         ];
       }
@@ -663,7 +602,7 @@ export default function AdmFinanceiroPage() {
         <span key="frete" className="text-slate-800">{r.delivery_mode === "FRETE" ? money(r.frete) : "—"}</span>,
         <span key="tot" className="font-semibold text-slate-900">{money(r.total)}</span>,
         <span key="cred" className="text-slate-800">- {money(r.credit_applied)}</span>,
-        <span key="apg" className="font-semibold text-slate-900">{money(aPagarExib)}</span>,
+        <span key="apg" className="font-semibold text-slate-900">{money(r.a_pagar_exib)}</span>,
         <div key="paid">{paidCell}</div>,
         <span key="dt" className="text-slate-700">{fmtBR(r.paid_at)}</span>,
         <span key="cb" className="font-semibold text-slate-900">{money(r.credit_balance)}</span>,
@@ -678,29 +617,20 @@ export default function AdmFinanceiroPage() {
         subtitle="Resumo de pedidos, crédito e pagamentos."
         right={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>
-              Pedidos
-            </Button>
-            <Button variant="secondary" onClick={onApply} disabled={loading}>
-              Recarregar
-            </Button>
+            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Pedidos</Button>
+            <Button variant="secondary" onClick={onApply} disabled={loading}>Recarregar</Button>
           </div>
         }
       />
 
-      {msg ? (
-        <Card>
-          <div className="text-sm text-red-600">{msg}</div>
-        </Card>
-      ) : null}
+      {msg ? <Card><div className="text-sm text-red-600">{msg}</div></Card> : null}
 
-      {/* Configurações (somente encargos) */}
       <Card
         title="Configurações de cobrança"
-        subtitle="Define multa e juros automáticos após vencimento."
+        subtitle="Define os encargos automáticos após o vencimento."
         right={
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={() => loadFinanceSettings(false)} disabled={settingsLoading || settingsSaving}>
+            <Button variant="secondary" onClick={loadFinanceSettings} disabled={settingsLoading || settingsSaving}>
               {settingsLoading ? "Carregando..." : "Recarregar"}
             </Button>
             <Button onClick={saveFinanceSettings} disabled={settingsLoading || settingsSaving}>
@@ -719,43 +649,31 @@ export default function AdmFinanceiroPage() {
               { value: "false", label: "Não" },
             ]}
           />
-
           <Input label="Multa (% uma vez)" value={lateFeePercent} onChange={setLateFeePercent} placeholder="Ex.: 2" />
           <Input label="Juros (% ao dia)" value={dailyInterestPercent} onChange={setDailyInterestPercent} placeholder="Ex.: 0,033" />
 
           <div className="md:col-span-6 text-xs text-slate-500">
             Cálculo (somente pedidos <b>em aberto</b> e <b>vencidos</b>): multa = A pagar × (%/100) (uma vez) • juros = A pagar × (%/100) × dias em atraso.
+            <br />
+            <b>Pago:</b> o sistema mostra o valor real pago (campo <code>orders.paid_amount</code> vindo do Mercado Pago).
           </div>
         </div>
       </Card>
 
-      {/* Filtros */}
       <Card title="Filtros">
         <div className="grid gap-3 md:grid-cols-6">
           <div className="relative" ref={popRef}>
             <div className="text-xs font-semibold text-slate-600 mb-1">Loja</div>
-
-            <Button
-              variant="secondary"
-              onClick={() => setStorePopoverOpen((v) => !v)}
-              disabled={loading}
-              className="w-full justify-between"
-            >
+            <Button variant="secondary" onClick={() => setStorePopoverOpen((v) => !v)} disabled={loading} className="w-full justify-between">
               <span className="truncate">{storeButtonLabel()}</span>
               <span className="ml-2 text-slate-500">{storePopoverOpen ? "▲" : "▼"}</span>
             </Button>
-
-            <div className="mt-2 flex flex-wrap gap-2">
-              {storeSelected.length === 0 ? <Badge tone="slate">Todas</Badge> : <Badge tone="blue">{storeSelected.length} selecionada(s)</Badge>}
-            </div>
 
             {storePopoverOpen ? (
               <div className="absolute z-50 mt-2 w-[360px] max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-semibold text-slate-900">Selecionar lojas</div>
-                  <Button variant="secondary" onClick={() => setStorePopoverOpen(false)}>
-                    Fechar
-                  </Button>
+                  <Button variant="secondary" onClick={() => setStorePopoverOpen(false)}>Fechar</Button>
                 </div>
 
                 <div className="mt-3">
@@ -763,15 +681,8 @@ export default function AdmFinanceiroPage() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={clearStores} disabled={loading}>
-                    Todas
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => selectOnlyVisible(storeFilteredList)}
-                    disabled={loading || storeFilteredList.length === 0}
-                    title="Seleciona todas as lojas que aparecem na busca"
-                  >
+                  <Button variant="secondary" onClick={clearStores} disabled={loading}>Todas</Button>
+                  <Button variant="secondary" onClick={() => selectOnlyVisible(storeFilteredList)} disabled={loading || storeFilteredList.length === 0}>
                     Selecionar filtradas
                   </Button>
                 </div>
@@ -781,14 +692,14 @@ export default function AdmFinanceiroPage() {
                     <div className="p-3 text-sm text-slate-500">Nenhuma loja encontrada.</div>
                   ) : (
                     <div className="divide-y divide-slate-100">
-                      {storeFilteredList.map((st) => {
-                        const checked = storeSelected.includes(st.id);
+                      {storeFilteredList.map((s) => {
+                        const checked = storeSelected.includes(s.id);
                         return (
-                          <label key={st.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-slate-50">
-                            <input type="checkbox" checked={checked} onChange={() => toggleStore(st.id)} />
+                          <label key={s.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-slate-50">
+                            <input type="checkbox" checked={checked} onChange={() => toggleStore(s.id)} />
                             <div className="min-w-0">
-                              <div className="text-sm font-semibold text-slate-900 truncate">{st.name ?? st.id}</div>
-                              <div className="text-xs font-mono text-slate-500 truncate">{st.id}</div>
+                              <div className="text-sm font-semibold text-slate-900 truncate">{s.name ?? s.id}</div>
+                              <div className="text-xs font-mono text-slate-500 truncate">{s.id}</div>
                             </div>
                           </label>
                         );
@@ -796,109 +707,68 @@ export default function AdmFinanceiroPage() {
                     </div>
                   )}
                 </div>
-
-                <div className="mt-3 text-xs text-slate-500">
-                  Se nenhuma estiver marcada, considera <b>todas</b>.
-                </div>
               </div>
             ) : null}
           </div>
 
-          <Select
-            label="Status"
-            value={statusFilter}
-            onChange={setStatusFilter}
-            options={[
-              { value: "all", label: "Todos" },
-              { value: "draft", label: "draft" },
-              { value: "submitted", label: "submitted" },
-              { value: "approved", label: "approved" },
-              { value: "rejected", label: "rejected" },
-            ]}
-          />
+          <Select label="Status" value={statusFilter} onChange={setStatusFilter} options={[
+            { value: "all", label: "Todos" },
+            { value: "draft", label: "draft" },
+            { value: "submitted", label: "submitted" },
+            { value: "approved", label: "approved" },
+            { value: "rejected", label: "rejected" },
+          ]} />
 
-          <Select
-            label="Pagamento"
-            value={paidFilter}
-            onChange={setPaidFilter}
-            options={[
-              { value: "all", label: "Todos" },
-              { value: "paid", label: "Somente pagos" },
-              { value: "unpaid", label: "Somente não pagos" },
-            ]}
-          />
+          <Select label="Pagamento" value={paidFilter} onChange={setPaidFilter} options={[
+            { value: "all", label: "Todos" },
+            { value: "paid", label: "Somente pagos" },
+            { value: "unpaid", label: "Somente não pagos" },
+          ]} />
 
-          <Select
-            label="Entrega"
-            value={deliveryFilter}
-            onChange={setDeliveryFilter}
-            options={[
-              { value: "all", label: "Todas" },
-              { value: "RETIRADA", label: "Retirada" },
-              { value: "FRETE", label: "Frete" },
-            ]}
-          />
+          <Select label="Entrega" value={deliveryFilter} onChange={setDeliveryFilter} options={[
+            { value: "all", label: "Todas" },
+            { value: "RETIRADA", label: "Retirada" },
+            { value: "FRETE", label: "Frete" },
+          ]} />
 
-          <Select
-            label="Forma"
-            value={payMethodFilter}
-            onChange={setPayMethodFilter}
-            options={[
-              { value: "all", label: "Todas" },
-              { value: "PIX", label: "PIX" },
-              { value: "CARTAO", label: "Cartão" },
-              { value: "BOLETO", label: "Boleto" },
-            ]}
-          />
+          <Select label="Forma" value={payMethodFilter} onChange={setPayMethodFilter} options={[
+            { value: "all", label: "Todas" },
+            { value: "PIX", label: "PIX" },
+            { value: "CARTAO", label: "Cartão" },
+            { value: "BOLETO", label: "Boleto" },
+          ]} />
 
-          <Select
-            label="Vencimento"
-            value={dueFilter}
-            onChange={setDueFilter}
-            options={[
-              { value: "all", label: "Todos" },
-              { value: "due_soon", label: "A vencer (próx. 3 dias)" },
-              { value: "overdue", label: "Vencidos" },
-              { value: "no_due", label: "Sem vencimento" },
-            ]}
-          />
+          <Select label="Vencimento" value={dueFilter} onChange={setDueFilter} options={[
+            { value: "all", label: "Todos" },
+            { value: "due_soon", label: "A vencer (próx. 3 dias)" },
+            { value: "overdue", label: "Vencidos" },
+            { value: "no_due", label: "Sem vencimento" },
+          ]} />
 
           <div>
             <div className="text-xs font-semibold text-slate-600 mb-1">De (criação)</div>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => setDateFrom(e.target.value)}
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
             />
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-600 mb-1">Até (criação)</div>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => setDateTo(e.target.value)}
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
             />
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-600 mb-1">De (venc.)</div>
-            <input
-              type="date"
-              value={dueFrom}
-              onChange={(e) => setDueFrom(e.target.value)}
+            <input type="date" value={dueFrom} onChange={(e) => setDueFrom(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
             />
           </div>
 
           <div>
             <div className="text-xs font-semibold text-slate-600 mb-1">Até (venc.)</div>
-            <input
-              type="date"
-              value={dueTo}
-              onChange={(e) => setDueTo(e.target.value)}
+            <input type="date" value={dueTo} onChange={(e) => setDueTo(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
             />
           </div>
@@ -940,9 +810,7 @@ export default function AdmFinanceiroPage() {
                 Limpar
               </Button>
 
-              <Button onClick={onApply} disabled={loading}>
-                Aplicar filtros
-              </Button>
+              <Button onClick={onApply} disabled={loading}>Aplicar filtros</Button>
             </div>
           </div>
         </div>
@@ -971,7 +839,7 @@ export default function AdmFinanceiroPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold text-slate-500">A pagar</div>
+            <div className="text-xs font-semibold text-slate-500">A pagar (exibido)</div>
             <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.totalApagar)}</div>
           </div>
 
