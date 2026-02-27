@@ -16,9 +16,6 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
-  // ✅ NOVO: valor real pago no MP (com juros/multa, se houve)
-  paid_amount: number | null;
-
   logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
@@ -64,14 +61,8 @@ type RowUi = {
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
-  // ✅ NOVO
-  paid_amount: number | null;
-
   due_date: string | null;
   due_status: "PAGO" | "VENCIDO" | "A_VENCER" | "SEM_VENCIMENTO";
-
-  // ✅ NOVO: valor exibido em "A pagar" (pago = valor real pago)
-  a_pagar_exib: number;
 
   credit_balance: number;
 };
@@ -258,6 +249,16 @@ export default function FinanceiroFranqueadoPage() {
     };
   }, []);
 
+  // ✅ trava scroll do BODY quando modal abre (mantém o scroll dentro do modal)
+  useEffect(() => {
+    if (!pixOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [pixOpen]);
+
   function stopAllTimers() {
     if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
     if (countdownTimerRef.current) window.clearInterval(countdownTimerRef.current);
@@ -302,10 +303,7 @@ export default function FinanceiroFranqueadoPage() {
 
     let q = supabase
       .from("orders")
-      // ✅ NOVO: inclui paid_amount
-      .select(
-        "id,store_id,status,created_at,is_paid,paid_at,payment_method,paid_amount,logistic_status,delivery_mode,freight_fee,credit_applied,due_date"
-      )
+      .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied,due_date")
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
 
@@ -392,10 +390,6 @@ export default function FinanceiroFranqueadoPage() {
         a_pagar_com_encargos = Math.max(a_pagar + late_fee + late_interest, 0);
       }
 
-      // ✅ NOVO: se está pago e temos paid_amount, exibimos o valor real pago
-      const paid_amount_num = Number(o.paid_amount ?? 0) || 0;
-      const a_pagar_exib = isPaid && paid_amount_num > 0 ? paid_amount_num : (due_status === "VENCIDO" ? a_pagar_com_encargos : a_pagar);
-
       return {
         id: o.id,
         status: o.status,
@@ -418,12 +412,8 @@ export default function FinanceiroFranqueadoPage() {
         paid_at: o.paid_at,
         payment_method: o.payment_method,
 
-        paid_amount: o.paid_amount ?? null,
-
         due_date: o.due_date ?? null,
         due_status,
-
-        a_pagar_exib,
 
         credit_balance: bal,
       };
@@ -447,13 +437,12 @@ export default function FinanceiroFranqueadoPage() {
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
 
-    // ✅ ajusta: usa o exibido (pago = paid_amount; aberto = com encargos se vencido)
-    const totalApagar = rows.reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
-    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_exib : 0), 0);
-    const totalAberto = totalApagar;
+    const totalApagar = rows.reduce((a, r) => a + r.a_pagar_com_encargos, 0);
+    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_com_encargos : 0), 0);
+    const totalAberto = totalApagar - totalPago;
 
-    const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
-    const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
+    const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + r.a_pagar_com_encargos, 0);
+    const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + r.a_pagar_com_encargos, 0);
 
     return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto, totalVencido, totalAVencer };
   }, [rows]);
@@ -646,40 +635,38 @@ export default function FinanceiroFranqueadoPage() {
     const canPayPix = !r.is_paid && (hasCharges ? r.a_pagar_com_encargos : r.a_pagar) > 0;
 
     return [
-      <span key="id" className="font-mono text-xs">{r.id}</span>,
-      <Badge key="st" tone={statusTone(r.status) as any}>{r.status}</Badge>,
+      <span key="id" className="font-mono text-xs">
+        {r.id}
+      </span>,
+      <Badge key="st" tone={statusTone(r.status) as any}>
+        {r.status}
+      </Badge>,
       <span key="op">{logisticLabel(r.logistic_status)}</span>,
       <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
       <span key="due">{r.due_date ?? "-"}</span>,
       <span key="dueSt">{dueBadge(r.due_status)}</span>,
       <span key="pm">{r.payment_method ?? "-"}</span>,
-      <span key="m" className="font-semibold">{money(r.mercadoria)}</span>,
+      <span key="m" className="font-semibold">
+        {money(r.mercadoria)}
+      </span>,
       <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
-      <span key="t" className="font-semibold">{money(r.total)}</span>,
+      <span key="t" className="font-semibold">
+        {money(r.total)}
+      </span>,
       <span key="c">- {money(r.credit_applied)}</span>,
-
       <div key="ap" className="min-w-0">
-        {/* ✅ agora mostra “valor pago” se estiver pago */}
-        <div className="font-semibold">{money(r.a_pagar_exib)}</div>
-
-        {/* Em aberto e vencido: detalha encargos */}
-        {!r.is_paid && hasCharges ? (
+        <div className="font-semibold">{money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}</div>
+        {hasCharges ? (
           <div className="mt-1 text-[11px] text-slate-500">
             Base {money(r.a_pagar)} + multa {money(r.late_fee)} + juros {money(r.late_interest)} ({r.late_days} dia(s))
           </div>
         ) : null}
-
-        {/* Pago: se tiver paid_amount e for maior que base, mostra que pagou com encargos */}
-        {r.is_paid && r.paid_amount != null && (Number(r.paid_amount ?? 0) || 0) > r.a_pagar ? (
-          <div className="mt-1 text-[11px] text-slate-500">
-            Pago com encargos: {money((Number(r.paid_amount ?? 0) || 0) - r.a_pagar)}
-          </div>
-        ) : null}
       </div>,
-
       <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
       <span key="dt">{fmtBR(r.paid_at)}</span>,
-      <span key="bal" className="font-semibold">{money(r.credit_balance)}</span>,
+      <span key="bal" className="font-semibold">
+        {money(r.credit_balance)}
+      </span>,
       <div key="act" className="flex gap-2">
         <Button
           variant="secondary"
@@ -699,7 +686,9 @@ export default function FinanceiroFranqueadoPage() {
   if (loading) {
     return (
       <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
-        <Card><div>Carregando...</div></Card>
+        <Card>
+          <div>Carregando...</div>
+        </Card>
       </PortalShell>
     );
   }
@@ -828,104 +817,138 @@ export default function FinanceiroFranqueadoPage() {
           {rows.length === 0 ? <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div> : null}
         </Card>
 
-        {/* Modal PIX */}
+        {/* ✅ Modal PIX (corrigido: rolável e botões sempre visíveis) */}
         {pixOpen ? (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-xl rounded-2xl bg-white shadow-xl">
-              <div className="flex items-center justify-between border-b px-4 py-3">
-                <div>
-                  <div className="text-base font-semibold">Pagamento PIX</div>
-                  <div className="text-xs text-slate-500">
-                    Pedido: <span className="font-mono">{pixOrderId}</span>
+          <div
+            className="fixed inset-0 z-[60] bg-black/40"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* overlay rolável */}
+            <div className="h-full w-full overflow-y-auto p-4">
+              <div className="mx-auto flex min-h-[calc(100vh-2rem)] items-center justify-center">
+                {/* container do modal com altura máxima */}
+                <div className="w-full max-w-xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-xl flex flex-col">
+                  {/* header fixo */}
+                  <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-base font-semibold">Pagamento PIX</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        Pedido: <span className="font-mono">{pixOrderId}</span>
+                      </div>
+                    </div>
+                    <Button variant="secondary" onClick={closePixModal}>
+                      Fechar
+                    </Button>
+                  </div>
+
+                  {/* body rolável */}
+                  <div className="flex-1 overflow-y-auto p-4">
+                    {pixLoading ? <div className="text-sm">Gerando QR Code…</div> : null}
+
+                    {!pixLoading && pixErr ? (
+                      <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        <div className="font-semibold">Erro</div>
+                        <div className="mt-1 break-words">{pixErr}</div>
+                      </div>
+                    ) : null}
+
+                    {!pixLoading && pixData ? (
+                      <div className="grid gap-3">
+                        {pixAmountUsed != null ? (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                            Valor cobrado no PIX: <b>{money(pixAmountUsed)}</b>
+                          </div>
+                        ) : null}
+
+                        {pixData.expiresAt ? (
+                          <div className="text-sm text-slate-700">
+                            Validade do QR:{" "}
+                            <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>{" "}
+                            <span className="text-xs text-slate-500">(expira em 5 min)</span>
+                          </div>
+                        ) : null}
+
+                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                          <div className="font-semibold text-slate-800">Status</div>
+                          <div className="mt-1 text-slate-700">
+                            {poll.state === "checking" ? "Aguardando confirmação do pagamento…" : null}
+                            {poll.state === "approved" ? "Pagamento efetuado ✅" : null}
+                            {poll.state === "expired" ? "QR expirado. Gere um novo PIX." : null}
+                            {poll.state === "failed" ? "Falha ao checar status." : null}
+                            {poll.state === "idle" ? "—" : null}
+                          </div>
+
+                          <div className="mt-1 text-xs text-slate-500">
+                            Última checagem: {poll.lastCheckAt ? fmtBR(poll.lastCheckAt) : "—"}
+                            {poll.mpStatus ? ` • MP: ${poll.mpStatus}` : ""}
+                            {poll.mpDetail ? ` (${poll.mpDetail})` : ""}
+                          </div>
+
+                          {poll.state === "failed" && poll.message ? (
+                            <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 break-words">
+                              {poll.message}
+                            </div>
+                          ) : null}
+
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              variant="secondary"
+                              onClick={async () => {
+                                if (!pixData?.paymentId) return;
+                                try {
+                                  await checkPaymentOnce(pixData.paymentId);
+                                } catch (e: any) {
+                                  setPoll({ state: "failed", lastCheckAt: new Date().toISOString(), message: String(e?.message ?? e) });
+                                }
+                              }}
+                            >
+                              Rechecar agora
+                            </Button>
+                            <Button variant="secondary" onClick={onReload}>
+                              Atualizar financeiro
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="text-xs text-slate-600">
+                          ID do pagamento: <span className="font-mono">{pixData.paymentId}</span>
+                        </div>
+
+                        <div className="flex justify-center">
+                          <img
+                            alt="QR Code PIX"
+                            src={`data:image/png;base64,${pixData.qrCodeBase64}`}
+                            className="h-auto w-full max-w-[320px] rounded-xl border"
+                          />
+                        </div>
+
+                        <div>
+                          <div className="mb-1 text-sm font-semibold">PIX Copia e Cola</div>
+                          <textarea readOnly value={pixData.qrCode} className="w-full rounded-xl border px-3 py-2 text-xs" rows={5} />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {/* footer fixo (botões nunca somem) */}
+                  <div className="sticky bottom-0 z-10 border-t bg-white px-4 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        onClick={async () => {
+                          if (!pixData?.qrCode) return;
+                          await navigator.clipboard.writeText(pixData.qrCode);
+                        }}
+                        disabled={!pixData?.qrCode}
+                      >
+                        Copiar código
+                      </Button>
+                      <Button variant="secondary" onClick={closePixModal}>
+                        Ok
+                      </Button>
+                    </div>
                   </div>
                 </div>
-                <Button variant="secondary" onClick={closePixModal}>Fechar</Button>
-              </div>
-
-              <div className="p-4">
-                {pixLoading ? <div className="text-sm">Gerando QR Code…</div> : null}
-
-                {!pixLoading && pixErr ? (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    <div className="font-semibold">Erro</div>
-                    <div className="mt-1 break-words">{pixErr}</div>
-                  </div>
-                ) : null}
-
-                {!pixLoading && pixData ? (
-                  <div className="grid gap-3">
-                    {pixAmountUsed != null ? (
-                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                        Valor cobrado no PIX: <b>{money(pixAmountUsed)}</b>
-                      </div>
-                    ) : null}
-
-                    {pixData.expiresAt ? (
-                      <div className="text-sm text-slate-700">
-                        Validade do QR:{" "}
-                        <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>{" "}
-                        <span className="text-xs text-slate-500">(expira em 5 min)</span>
-                      </div>
-                    ) : null}
-
-                    <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
-                      <div className="font-semibold text-slate-800">Status</div>
-                      <div className="mt-1 text-slate-700">
-                        {poll.state === "checking" ? "Aguardando confirmação do pagamento…" : null}
-                        {poll.state === "approved" ? "Pagamento efetuado ✅" : null}
-                        {poll.state === "expired" ? "QR expirado. Gere um novo PIX." : null}
-                        {poll.state === "failed" ? "Falha ao checar status." : null}
-                        {poll.state === "idle" ? "—" : null}
-                      </div>
-
-                      <div className="mt-1 text-xs text-slate-500">
-                        Última checagem: {poll.lastCheckAt ? fmtBR(poll.lastCheckAt) : "—"}
-                        {poll.mpStatus ? ` • MP: ${poll.mpStatus}` : ""}
-                        {poll.mpDetail ? ` (${poll.mpDetail})` : ""}
-                      </div>
-
-                      {poll.state === "failed" && poll.message ? (
-                        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 break-words">
-                          {poll.message}
-                        </div>
-                      ) : null}
-
-                      <div className="mt-2 flex gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={async () => {
-                            if (!pixData?.paymentId) return;
-                            try {
-                              await checkPaymentOnce(pixData.paymentId);
-                            } catch (e: any) {
-                              setPoll({ state: "failed", lastCheckAt: new Date().toISOString(), message: String(e?.message ?? e) });
-                            }
-                          }}
-                        >
-                          Rechecar agora
-                        </Button>
-                        <Button variant="secondary" onClick={onReload}>Atualizar financeiro</Button>
-                      </div>
-                    </div>
-
-                    <div className="text-xs text-slate-600">
-                      ID do pagamento: <span className="font-mono">{pixData.paymentId}</span>
-                    </div>
-
-                    <div className="flex justify-center">
-                      <img alt="QR Code PIX" src={`data:image/png;base64,${pixData.qrCodeBase64}`} className="h-auto w-full max-w-[320px] rounded-xl border" />
-                    </div>
-
-                    <div>
-                      <div className="mb-1 text-sm font-semibold">PIX Copia e Cola</div>
-                      <textarea readOnly value={pixData.qrCode} className="w-full rounded-xl border px-3 py-2 text-xs" rows={5} />
-                      <div className="mt-2 flex gap-2">
-                        <Button onClick={async () => await navigator.clipboard.writeText(pixData.qrCode)}>Copiar código</Button>
-                        <Button variant="secondary" onClick={closePixModal}>Ok</Button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
               </div>
             </div>
           </div>

@@ -18,6 +18,13 @@ function todayYMD() {
   return `${y}-${m}-${day}`;
 }
 
+function nowHHMM() {
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}${mm}`;
+}
+
 function daysLateYMD(dueYmd: string) {
   const [y, m, d] = dueYmd.split("-").map(Number);
   const due = new Date(y, m - 1, d, 12, 0, 0);
@@ -32,7 +39,7 @@ function clamp2(n: number) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-// ✅ Idempotency agora varia com o VALOR FINAL (e outros fatores), para não reaproveitar QR antigo
+// ✅ Idempotency "por minuto": evita duplicar no mesmo minuto, mas permite novo PIX no minuto seguinte
 function makeIdempotencyKey(input: {
   orderId: string;
   amountFinal: number;
@@ -41,12 +48,13 @@ function makeIdempotencyKey(input: {
   dailyPct: number;
 }) {
   const seed = [
+    "v4_pix_expira_1min",
     input.orderId,
     clamp2(input.amountFinal).toFixed(2),
     input.dueDate ?? "no_due",
     String(input.feePct),
     String(input.dailyPct),
-    todayYMD(), // opcional: mantém por dia (sem impedir atualizar valor no mesmo dia)
+    `${todayYMD()}-${nowHHMM()}`, // muda a cada minuto
   ].join("|");
 
   return crypto.createHash("sha256").update(seed).digest("hex");
@@ -97,10 +105,10 @@ export async function POST(req: Request) {
     const feePct = Number(fs?.late_fee_percent ?? 0) || 0;
     const dailyPct = Number(fs?.daily_interest_percent ?? 0) || 0;
 
-    // 2) order
+    // 2) order (inclui freight_fee)
     const { data: ord, error: ordErr } = await supabase
       .from("orders")
-      .select("id,is_paid,due_date,credit_applied")
+      .select("id,is_paid,due_date,credit_applied,freight_fee")
       .eq("id", orderId)
       .maybeSingle();
 
@@ -114,7 +122,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Pedido já está pago" }, { status: 400 });
     }
 
-    // 3) total base
+    // 3) total itens (view)
     const { data: tot, error: totErr } = await supabase
       .from("v_order_totals")
       .select("order_id,total_cost")
@@ -125,11 +133,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Erro lendo v_order_totals", details: totErr.message }, { status: 500 });
     }
 
-    const totalBase = Number(tot?.total_cost ?? 0) || 0;
-    const credit = Number(ord.credit_applied ?? 0) || 0;
-    const aPagar = Math.max(totalBase - credit, 0);
+    const totalItems = Number(tot?.total_cost ?? 0) || 0;
+    const freightFee = Number((ord as any)?.freight_fee ?? 0) || 0;
 
-    // 4) encargos
+    const credit = Number(ord.credit_applied ?? 0) || 0;
+
+    const totalBeforeCredit = totalItems + freightFee;
+    const aPagar = Math.max(totalBeforeCredit - credit, 0);
+
+    // 4) encargos por atraso
     const due = (ord.due_date as string | null) ?? null;
     const overdue = !!due && due < todayYMD();
 
@@ -151,7 +163,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Valor inválido para cobrança", amountFinal }, { status: 400 });
     }
 
-    // ✅ idempotency que muda quando muda o valor
+    // ✅ expiração local: 1 minuto
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+
     const idempotencyKey = makeIdempotencyKey({
       orderId,
       amountFinal,
@@ -194,6 +208,23 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Resposta do Mercado Pago sem dados de QR Code", raw: data }, { status: 500 });
     }
 
+    // ✅ grava no pedido: mp_payment_id, mp_status e pix_expires_at (1 min)
+    const { error: upErr } = await supabase
+      .from("orders")
+      .update({
+        mp_payment_id: String(paymentId),
+        mp_status: String(status ?? "pending"),
+        pix_expires_at: expiresAt,
+      })
+      .eq("id", orderId);
+
+    if (upErr) {
+      return NextResponse.json(
+        { error: "Pagamento criado, mas falhou ao salvar no pedido (orders)", details: upErr.message },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({
       paymentId: String(paymentId),
       status,
@@ -201,6 +232,7 @@ export async function POST(req: Request) {
       qrCode,
       qrCodeBase64,
       amountUsed: amountFinal,
+      expiresAt, // ✅ sua UI já usa isso no countdown
     });
   } catch (e: any) {
     return NextResponse.json({ error: "Erro interno", details: String(e?.message ?? e) }, { status: 500 });
