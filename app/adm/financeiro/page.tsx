@@ -18,7 +18,7 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
-  // ✅ NOVO: valor real pago no MP (com juros/multa)
+  // ✅ valor real pago no MP (com juros/multa)
   paid_amount: number | null;
 
   logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
@@ -44,6 +44,12 @@ type FinanceSettingsRow = {
   updated_at?: string | null;
 };
 
+type CalcParams = {
+  aplicar: boolean;
+  multaPct: number; // ex.: 0.02
+  jurosDiaPct: number; // ex.: 0.00033
+};
+
 type RowUi = {
   id: string;
 
@@ -62,7 +68,6 @@ type RowUi = {
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
-  // ✅ NOVO
   paid_amount: number | null;
 
   created_at: string | null;
@@ -78,7 +83,6 @@ type RowUi = {
   juros: number;
   encargos: number;
 
-  // ✅ valor exibido em “A pagar”
   a_pagar_exib: number;
 
   credit_balance: number;
@@ -171,6 +175,14 @@ function clampPercent(n: number) {
   return Math.max(0, Math.min(n, 1000));
 }
 
+// ✅ helper simples: aceita "1,5" ou "1.5"
+function parsePercentInput(v: string) {
+  const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, "");
+  if (!s) return 0;
+  const n = Number(s.replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
 export default function AdmFinanceiroPage() {
   const router = useRouter();
 
@@ -182,6 +194,8 @@ export default function AdmFinanceiroPage() {
 
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+
+  // (mantive como estava)
   const [pixKey, setPixKey] = useState<string>("");
   const [applyLateCharges, setApplyLateCharges] = useState<boolean>(true);
   const [lateFeePercent, setLateFeePercent] = useState<string>("2");
@@ -205,26 +219,7 @@ export default function AdmFinanceiroPage() {
 
   const [viewMode, setViewMode] = useState<"compact" | "full">("compact");
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setMsg("");
-
-      const { data: auth } = await supabase.auth.getUser();
-      if (!auth?.user) {
-        router.push("/login");
-        return;
-      }
-
-      await loadFinanceSettings();
-      const storeList = await loadStores();
-      await loadFinance(storeList);
-
-      setLoading(false);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // fecha popover clicando fora
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
       if (!storePopoverOpen) return;
@@ -237,14 +232,23 @@ export default function AdmFinanceiroPage() {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [storePopoverOpen]);
 
-  function parsePercentInput(v: string) {
-    const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, "");
-    if (!s) return 0;
-    const n = Number(s.replace(",", "."));
-    return Number.isFinite(n) ? n : 0;
+  function calcParamsFromCurrentState(): CalcParams {
+    const multaPct = clampPercent(parsePercentInput(lateFeePercent)) / 100;
+    const jurosDiaPct = clampPercent(parsePercentInput(dailyInterestPercent)) / 100;
+    const aplicar = !!applyLateCharges;
+    return { aplicar, multaPct, jurosDiaPct };
   }
 
-  async function loadFinanceSettings() {
+  function calcParamsFromSettingsRow(row: FinanceSettingsRow | null): CalcParams {
+    const aplicar = !!(row?.apply_late_charges ?? true);
+    const multaPct = clampPercent(Number(row?.late_fee_percent ?? 0)) / 100;
+    const jurosDiaPct = clampPercent(Number(row?.daily_interest_percent ?? 0)) / 100;
+    return { aplicar, multaPct, jurosDiaPct };
+  }
+
+  // ✅ CORREÇÃO 1:
+  // loadFinanceSettings agora retorna a "row" para uso imediato no 1º load (antes do setState surtir efeito)
+  async function loadFinanceSettings(): Promise<FinanceSettingsRow | null> {
     setSettingsLoading(true);
     try {
       const { data, error } = await supabase
@@ -255,16 +259,19 @@ export default function AdmFinanceiroPage() {
 
       if (error) {
         console.warn("loadFinanceSettings:", error.message);
-        return;
+        return null;
       }
 
       const row = (data ?? null) as FinanceSettingsRow | null;
+
       if (row) {
         setPixKey(row.pix_key ?? "");
         setApplyLateCharges(!!(row.apply_late_charges ?? true));
         setLateFeePercent(String(row.late_fee_percent ?? 2).replace(".", ","));
         setDailyInterestPercent(String(row.daily_interest_percent ?? 0.033).replace(".", ","));
       }
+
+      return row;
     } finally {
       setSettingsLoading(false);
     }
@@ -294,8 +301,10 @@ export default function AdmFinanceiroPage() {
     }
 
     setSettingsSaving(false);
+
     const storeList = await loadStores();
-    await loadFinance(storeList);
+    // usa os valores atuais do state (já são os que você acabou de salvar)
+    await loadFinance(storeList, calcParamsFromCurrentState());
   }
 
   async function loadStores(): Promise<StoreRow[]> {
@@ -334,7 +343,9 @@ export default function AdmFinanceiroPage() {
     setStoreSelected(list.map((s) => s.id));
   }
 
-  async function loadFinance(storeList: StoreRow[]) {
+  // ✅ CORREÇÃO 1:
+  // loadFinance recebe os parâmetros de cálculo; no primeiro load usamos os que vieram do DB
+  async function loadFinance(storeList: StoreRow[], calc?: CalcParams) {
     setMsg("");
 
     let q = supabase
@@ -389,13 +400,21 @@ export default function AdmFinanceiroPage() {
     const orderIds = orders.map((o) => o.id);
     const storeIdsUnique = Array.from(new Set(orders.map((o) => o.store_id)));
 
-    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
+    const { data: tots, error: tErr } = await supabase
+      .from("v_order_totals")
+      .select("order_id,store_id,total_cost")
+      .in("order_id", orderIds);
+
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
+    const { data: itemsRaw, error: iErr } = await supabase
+      .from("order_items")
+      .select("order_id,qty,unit_cost")
+      .in("order_id", orderIds);
+
     if (iErr) console.warn("order_items calc:", iErr.message);
 
     const itemsCalcMap = new Map<string, number>();
@@ -405,7 +424,11 @@ export default function AdmFinanceiroPage() {
       itemsCalcMap.set(r.order_id, cur + line);
     }
 
-    const { data: bals, error: bErr } = await supabase.from("v_store_credit_balance").select("store_id,balance").in("store_id", storeIdsUnique);
+    const { data: bals, error: bErr } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id,balance")
+      .in("store_id", storeIdsUnique);
+
     if (bErr) console.warn("credit balance:", bErr.message);
 
     const balMap = new Map<string, number>();
@@ -414,9 +437,10 @@ export default function AdmFinanceiroPage() {
     const storeMap = new Map<string, string>();
     for (const s of storeList) storeMap.set(s.id, s.name ?? s.id);
 
-    const multaPct = clampPercent(parsePercentInput(lateFeePercent)) / 100;
-    const jurosDiaPct = clampPercent(parsePercentInput(dailyInterestPercent)) / 100;
-    const aplicar = !!applyLateCharges;
+    const calcUse = calc ?? calcParamsFromCurrentState();
+    const aplicar = calcUse.aplicar;
+    const multaPct = calcUse.multaPct;
+    const jurosDiaPct = calcUse.jurosDiaPct;
 
     const ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
@@ -447,10 +471,8 @@ export default function AdmFinanceiroPage() {
       const juros = aplicar && is_overdue ? a_pagar_base * jurosDiaPct * days_late : 0;
       const encargos = multa + juros;
 
-      // ✅ REGRA NOVA:
-      // Se está pago e temos paid_amount, mostramos exatamente o que foi pago.
-      const paid_amount = Number(o.paid_amount ?? 0) || 0;
-      const a_pagar_exib = o.is_paid && paid_amount > 0 ? paid_amount : Math.max(a_pagar_base + encargos, 0);
+      const paid_amount_num = Number(o.paid_amount ?? 0) || 0;
+      const a_pagar_exib = o.is_paid && paid_amount_num > 0 ? paid_amount_num : Math.max(a_pagar_base + encargos, 0);
 
       return {
         id: o.id,
@@ -493,23 +515,48 @@ export default function AdmFinanceiroPage() {
     setRows(ui);
   }
 
+  // ✅ CORREÇÃO 1:
+  // no 1º carregamento, calcula com os settings vindos do banco (sem depender do state ainda)
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      setMsg("");
+
+      const { data: auth } = await supabase.auth.getUser();
+      if (!auth?.user) {
+        router.push("/login");
+        return;
+      }
+
+      const settingsRow = await loadFinanceSettings();
+      const storeList = await loadStores();
+
+      await loadFinance(storeList, calcParamsFromSettingsRow(settingsRow));
+
+      setLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function onApply() {
     setLoading(true);
     const storeList = await loadStores();
-    await loadFinance(storeList);
+    await loadFinance(storeList, calcParamsFromCurrentState());
     setLoading(false);
   }
 
+  // ✅ CORREÇÃO 2:
+  // “A pagar (exibido)” no resumo deve somar só os EM ABERTO (não pagos)
   const resumo = useMemo(() => {
     const totalMercadoria = rows.reduce((a, r) => a + r.mercadoria, 0);
     const totalFrete = rows.reduce((a, r) => a + r.frete, 0);
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
 
-    // ✅ Agora tudo usa a_pagar_exib (pago = valor pago real; aberto = com encargos)
-    const totalApagar = rows.reduce((a, r) => a + r.a_pagar_exib, 0);
+    const totalApagar = rows.reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
     const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_exib : 0), 0);
-    const totalAberto = totalApagar - totalPago;
+
+    const totalAberto = totalApagar;
 
     const qtdVencidos = rows.filter((r) => r.is_overdue).length;
     const qtdAVencer = rows.filter((r) => r.is_due_soon).length;
@@ -558,7 +605,6 @@ export default function AdmFinanceiroPage() {
             {dueBadge}
           </div>
 
-          {/* Em aberto e vencido: mostra encargos */}
           {!r.is_paid && r.encargos > 0 ? (
             <div className="text-xs text-slate-600">
               Encargos: <b className="text-slate-900">{money(r.encargos)}</b>{" "}
@@ -568,7 +614,6 @@ export default function AdmFinanceiroPage() {
             </div>
           ) : null}
 
-          {/* Pago: se tiver paid_amount e for maior que base, mostra que pagou com encargos */}
           {r.is_paid && r.paid_amount != null && r.paid_amount > r.a_pagar_base ? (
             <div className="text-xs text-slate-600">
               Pago com encargos: <b className="text-slate-900">{money(r.paid_amount - r.a_pagar_base)}</b>{" "}

@@ -16,6 +16,9 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
+  // ✅ NOVO: valor real pago no MP (com juros/multa, se houve)
+  paid_amount: number | null;
+
   logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
@@ -61,8 +64,14 @@ type RowUi = {
   paid_at: string | null;
   payment_method: OrderRow["payment_method"];
 
+  // ✅ NOVO
+  paid_amount: number | null;
+
   due_date: string | null;
   due_status: "PAGO" | "VENCIDO" | "A_VENCER" | "SEM_VENCIMENTO";
+
+  // ✅ NOVO: valor exibido em "A pagar" (pago = valor real pago)
+  a_pagar_exib: number;
 
   credit_balance: number;
 };
@@ -293,7 +302,10 @@ export default function FinanceiroFranqueadoPage() {
 
     let q = supabase
       .from("orders")
-      .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied,due_date")
+      // ✅ NOVO: inclui paid_amount
+      .select(
+        "id,store_id,status,created_at,is_paid,paid_at,payment_method,paid_amount,logistic_status,delivery_mode,freight_fee,credit_applied,due_date"
+      )
       .eq("store_id", sId)
       .order("created_at", { ascending: false });
 
@@ -380,6 +392,10 @@ export default function FinanceiroFranqueadoPage() {
         a_pagar_com_encargos = Math.max(a_pagar + late_fee + late_interest, 0);
       }
 
+      // ✅ NOVO: se está pago e temos paid_amount, exibimos o valor real pago
+      const paid_amount_num = Number(o.paid_amount ?? 0) || 0;
+      const a_pagar_exib = isPaid && paid_amount_num > 0 ? paid_amount_num : (due_status === "VENCIDO" ? a_pagar_com_encargos : a_pagar);
+
       return {
         id: o.id,
         status: o.status,
@@ -402,8 +418,12 @@ export default function FinanceiroFranqueadoPage() {
         paid_at: o.paid_at,
         payment_method: o.payment_method,
 
+        paid_amount: o.paid_amount ?? null,
+
         due_date: o.due_date ?? null,
         due_status,
+
+        a_pagar_exib,
 
         credit_balance: bal,
       };
@@ -427,18 +447,18 @@ export default function FinanceiroFranqueadoPage() {
     const totalTotal = rows.reduce((a, r) => a + r.total, 0);
     const totalCredito = rows.reduce((a, r) => a + r.credit_applied, 0);
 
-    const totalApagar = rows.reduce((a, r) => a + r.a_pagar_com_encargos, 0);
-    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_com_encargos : 0), 0);
-    const totalAberto = totalApagar - totalPago;
+    // ✅ ajusta: usa o exibido (pago = paid_amount; aberto = com encargos se vencido)
+    const totalApagar = rows.reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
+    const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_exib : 0), 0);
+    const totalAberto = totalApagar;
 
-    const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + r.a_pagar_com_encargos, 0);
-    const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + r.a_pagar_com_encargos, 0);
+    const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
+    const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
 
     return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto, totalVencido, totalAVencer };
   }, [rows]);
 
   async function checkPaymentOnce(paymentId: string) {
-    // atualiza o relógio SEMPRE, mesmo se der erro
     setPoll((p) => ({ ...p, lastCheckAt: new Date().toISOString() }));
 
     const resp = await fetch(`/api/mp/payment-status?paymentId=${encodeURIComponent(paymentId)}`, { method: "GET" });
@@ -472,7 +492,6 @@ export default function FinanceiroFranqueadoPage() {
       return;
     }
 
-    // pending / in_process etc.
     setPoll((p) => ({ ...p, state: "checking", mpStatus: st, mpDetail: det }));
   }
 
@@ -490,7 +509,6 @@ export default function FinanceiroFranqueadoPage() {
       setCountdownMs(left);
       if (left !== null && left <= 0) {
         setPoll((p) => (p.state === "approved" ? p : { ...p, state: "expired", message: "QR expirado. Gere um novo PIX." }));
-        // não precisa parar polling aqui; mas paramos para evitar spam
         if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
       }
@@ -506,7 +524,6 @@ export default function FinanceiroFranqueadoPage() {
 
     startCountdown(expiresAtISO);
 
-    // primeira checagem imediata
     try {
       await checkPaymentOnce(paymentId);
     } catch (e: any) {
@@ -514,10 +531,8 @@ export default function FinanceiroFranqueadoPage() {
       return;
     }
 
-    // depois a cada 3s
     pollTimerRef.current = window.setInterval(async () => {
       try {
-        // se já aprovou/expirou/falhou, não continua
         setPoll((p) => {
           if (p.state === "approved" || p.state === "failed" || p.state === "expired") return p;
           return p;
@@ -642,14 +657,26 @@ export default function FinanceiroFranqueadoPage() {
       <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
       <span key="t" className="font-semibold">{money(r.total)}</span>,
       <span key="c">- {money(r.credit_applied)}</span>,
+
       <div key="ap" className="min-w-0">
-        <div className="font-semibold">{money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}</div>
-        {hasCharges ? (
+        {/* ✅ agora mostra “valor pago” se estiver pago */}
+        <div className="font-semibold">{money(r.a_pagar_exib)}</div>
+
+        {/* Em aberto e vencido: detalha encargos */}
+        {!r.is_paid && hasCharges ? (
           <div className="mt-1 text-[11px] text-slate-500">
             Base {money(r.a_pagar)} + multa {money(r.late_fee)} + juros {money(r.late_interest)} ({r.late_days} dia(s))
           </div>
         ) : null}
+
+        {/* Pago: se tiver paid_amount e for maior que base, mostra que pagou com encargos */}
+        {r.is_paid && r.paid_amount != null && (Number(r.paid_amount ?? 0) || 0) > r.a_pagar ? (
+          <div className="mt-1 text-[11px] text-slate-500">
+            Pago com encargos: {money((Number(r.paid_amount ?? 0) || 0) - r.a_pagar)}
+          </div>
+        ) : null}
       </div>,
+
       <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
       <span key="dt">{fmtBR(r.paid_at)}</span>,
       <span key="bal" className="font-semibold">{money(r.credit_balance)}</span>,
@@ -833,18 +860,14 @@ export default function FinanceiroFranqueadoPage() {
                       </div>
                     ) : null}
 
-                    {/* contador de expiração */}
                     {pixData.expiresAt ? (
                       <div className="text-sm text-slate-700">
                         Validade do QR:{" "}
-                        <b>
-                          {countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}
-                        </b>{" "}
+                        <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>{" "}
                         <span className="text-xs text-slate-500">(expira em 5 min)</span>
                       </div>
                     ) : null}
 
-                    {/* status do polling */}
                     <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
                       <div className="font-semibold text-slate-800">Status</div>
                       <div className="mt-1 text-slate-700">
