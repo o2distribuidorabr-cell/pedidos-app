@@ -48,7 +48,7 @@ function makeIdempotencyKey(input: {
   dailyPct: number;
 }) {
   const seed = [
-    "v4_pix_expira_1min",
+    "v5_pix_expira_30min_mp",
     input.orderId,
     clamp2(input.amountFinal).toFixed(2),
     input.dueDate ?? "no_due",
@@ -135,7 +135,6 @@ export async function POST(req: Request) {
 
     const totalItems = Number(tot?.total_cost ?? 0) || 0;
     const freightFee = Number((ord as any)?.freight_fee ?? 0) || 0;
-
     const credit = Number(ord.credit_applied ?? 0) || 0;
 
     const totalBeforeCredit = totalItems + freightFee;
@@ -163,8 +162,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Valor inválido para cobrança", amountFinal }, { status: 400 });
     }
 
-    // ✅ expiração local: 1 minuto
-    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    // ✅ expiração real no Mercado Pago: 30 minutos (com folga de 10s para evitar rejeição por clock/latência)
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000 + 10 * 1000).toISOString();
 
     const idempotencyKey = makeIdempotencyKey({
       orderId,
@@ -180,6 +179,9 @@ export async function POST(req: Request) {
       payment_method_id: "pix",
       external_reference: orderId,
       payer: { email: payerEmail },
+
+      // ✅ garante expiração do PIX no MP
+      date_of_expiration: expiresAt,
     };
 
     const resp = await fetch("https://api.mercadopago.com/v1/payments", {
@@ -195,7 +197,10 @@ export async function POST(req: Request) {
     const data = await resp.json();
 
     if (!resp.ok) {
-      return NextResponse.json({ error: "Erro ao criar pagamento no Mercado Pago", details: data }, { status: resp.status });
+      return NextResponse.json(
+        { error: "Erro ao criar pagamento no Mercado Pago", details: data },
+        { status: resp.status }
+      );
     }
 
     const paymentId = data?.id;
@@ -208,7 +213,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Resposta do Mercado Pago sem dados de QR Code", raw: data }, { status: 500 });
     }
 
-    // ✅ grava no pedido: mp_payment_id, mp_status e pix_expires_at (1 min)
+    // ✅ grava no pedido: mp_payment_id, mp_status e pix_expires_at (30 min)
     const { error: upErr } = await supabase
       .from("orders")
       .update({

@@ -465,13 +465,21 @@ export default function FinanceiroFranqueadoPage() {
       throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
     }
 
-    const st = String(data?.status ?? "");
+    // ✅ ajuste mínimo: usa normalized_status quando existir (fallback para status)
+    const st = String(data?.normalized_status ?? data?.status ?? "");
     const det = String(data?.status_detail ?? "");
 
     if (st === "approved") {
       setPoll({ state: "approved", lastCheckAt: new Date().toISOString(), mpStatus: st, mpDetail: det, approvedAt: data?.date_approved ?? null });
       stopAllTimers();
       await onReload();
+      return;
+    }
+
+    // ✅ trata expiração como expiração (para UX e parar timers)
+    if (st === "expired") {
+      setPoll({ state: "expired", lastCheckAt: new Date().toISOString(), mpStatus: st, mpDetail: det, message: "QR expirado. Gere um novo PIX." });
+      stopAllTimers();
       return;
     }
 
@@ -819,17 +827,10 @@ export default function FinanceiroFranqueadoPage() {
 
         {/* ✅ Modal PIX (corrigido: rolável e botões sempre visíveis) */}
         {pixOpen ? (
-          <div
-            className="fixed inset-0 z-[60] bg-black/40"
-            role="dialog"
-            aria-modal="true"
-          >
-            {/* overlay rolável */}
+          <div className="fixed inset-0 z-[60] bg-black/40" role="dialog" aria-modal="true">
             <div className="h-full w-full overflow-y-auto p-4">
               <div className="mx-auto flex min-h-[calc(100vh-2rem)] items-center justify-center">
-                {/* container do modal com altura máxima */}
                 <div className="w-full max-w-xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-xl flex flex-col">
-                  {/* header fixo */}
                   <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-4 py-3">
                     <div className="min-w-0">
                       <div className="text-base font-semibold">Pagamento PIX</div>
@@ -842,7 +843,6 @@ export default function FinanceiroFranqueadoPage() {
                     </Button>
                   </div>
 
-                  {/* body rolável */}
                   <div className="flex-1 overflow-y-auto p-4">
                     {pixLoading ? <div className="text-sm">Gerando QR Code…</div> : null}
 
@@ -865,7 +865,7 @@ export default function FinanceiroFranqueadoPage() {
                           <div className="text-sm text-slate-700">
                             Validade do QR:{" "}
                             <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>{" "}
-                            <span className="text-xs text-slate-500">(expira em 5 min)</span>
+                            <span className="text-xs text-slate-500">(expira em 30 min)</span>
                           </div>
                         ) : null}
 
@@ -931,7 +931,6 @@ export default function FinanceiroFranqueadoPage() {
                     ) : null}
                   </div>
 
-                  {/* footer fixo (botões nunca somem) */}
                   <div className="sticky bottom-0 z-10 border-t bg-white px-4 py-3">
                     <div className="flex flex-wrap gap-2">
                       <Button

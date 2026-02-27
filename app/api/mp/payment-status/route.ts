@@ -3,6 +3,25 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+function normalizeStatus(mpStatus: string, mpDetail: string) {
+  const st = (mpStatus || "").toLowerCase();
+  const det = (mpDetail || "").toLowerCase();
+
+  // MP normalmente usa: approved | pending | in_process | rejected | cancelled | refunded | charged_back
+  if (st === "approved") return "approved";
+  if (st === "rejected") return "rejected";
+  if (st === "refunded" || st === "charged_back") return "refunded";
+  if (st === "cancelled" || st === "canceled") return "expired"; // trata cancelado como expirado p/ UX
+
+  // alguns detalhes podem indicar expiração
+  if (det.includes("expired") || det.includes("expiration") || det.includes("due")) return "expired";
+
+  // pending / in_process etc.
+  if (st === "pending" || st === "in_process") return "pending";
+
+  return st || "unknown";
+}
+
 export async function GET(req: Request) {
   try {
     const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
@@ -43,8 +62,9 @@ export async function GET(req: Request) {
 
     const mpStatus = String(data?.status ?? "");
     const mpDetail = String(data?.status_detail ?? "");
+    const normalized = normalizeStatus(mpStatus, mpDetail);
 
-    // 2) Busca expiração local no pedido (se existir)
+    // 2) Busca pedido vinculado para pegar expiresAt (salvo no banco)
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: { persistSession: false },
     });
@@ -55,48 +75,42 @@ export async function GET(req: Request) {
       .eq("mp_payment_id", paymentId)
       .maybeSingle();
 
-    // se não achar pedido, só devolve MP mesmo (não quebra)
-    if (oErr) {
+    // ✅ se não achou pedido (ou deu erro), devolve MP puro
+    if (oErr || !ord) {
       return NextResponse.json({
         paymentId: String(data?.id ?? paymentId),
         status: mpStatus || null,
         status_detail: mpDetail || null,
+        normalized_status: normalized,
         transaction_amount: data?.transaction_amount ?? null,
         date_approved: data?.date_approved ?? null,
         date_last_updated: data?.date_last_updated ?? null,
       });
     }
 
-    const expiresAt = (ord as any)?.pix_expires_at ? String((ord as any).pix_expires_at) : null;
-    const expiredLocal = expiresAt ? Date.now() > new Date(expiresAt).getTime() : false;
+    const expiresAt = ord.pix_expires_at ? String(ord.pix_expires_at) : null;
 
-    // ✅ Se expirou localmente e MP ainda não aprovou, força status "expired"
-    if (expiredLocal && mpStatus !== "approved") {
-      return NextResponse.json({
-        paymentId: String(data?.id ?? paymentId),
-        status: "expired",
-        status_detail: "local_expired",
-        expiresAt,
-        transaction_amount: data?.transaction_amount ?? null,
-        date_approved: data?.date_approved ?? null,
-        date_last_updated: data?.date_last_updated ?? null,
-      });
-    }
+    // ✅ UX: se já passou do expiresAt e MP ainda não aprovou, trate como "expired"
+    // (mesmo que MP ainda retorne pending, seu front já bloqueia e pede gerar novo)
+    const expiredByTime = expiresAt ? Date.now() > new Date(expiresAt).getTime() : false;
+    const shouldForceExpired = expiredByTime && normalized !== "approved";
 
-    // (opcional) atualiza status no pedido para acompanhamento
-    // não falha o request se der erro
-    if ((ord as any)?.id) {
-      supabase
-        .from("orders")
-        .update({ mp_status: mpStatus || null })
-        .eq("id", (ord as any).id)
-        .then(() => {});
-    }
+    const finalNormalized = shouldForceExpired ? "expired" : normalized;
+    const finalStatus = shouldForceExpired ? "expired" : (mpStatus || null);
+    const finalDetail = shouldForceExpired ? "expired_by_time_window" : (mpDetail || null);
+
+    // 3) Atualiza mp_status no pedido (sem travar se falhar)
+    supabase
+      .from("orders")
+      .update({ mp_status: String(finalStatus ?? mpStatus ?? "") })
+      .eq("id", ord.id)
+      .then(() => {});
 
     return NextResponse.json({
       paymentId: String(data?.id ?? paymentId),
-      status: mpStatus || null,
-      status_detail: mpDetail || null,
+      status: finalStatus,
+      status_detail: finalDetail,
+      normalized_status: finalNormalized,
       expiresAt,
       transaction_amount: data?.transaction_amount ?? null,
       date_approved: data?.date_approved ?? null,
