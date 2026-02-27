@@ -5,18 +5,17 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import PortalShell from "@/app/components/PortalShell";
 
-import { PageHeader, Card, Button, Badge, Input } from "@/app/components/ui";
+import { PageHeader, Card, Button, Badge } from "@/app/components/ui";
 
 type Product = {
   id: string;
   sku: string;
   name: string;
   unit: string | null;
-  unit_cost: number | null; // preço efetivo (override ou base)
+  unit_cost: number | null;
   base_price?: number | null;
   override_price?: number | null;
 
-  // ✅ NOVO (para NF-e)
   ncm?: string | null;
   cest?: string | null;
   cfop?: string | null;
@@ -35,7 +34,6 @@ type CartItem = {
   unit_cost: number;
   qty: number;
 
-  // ✅ NOVO (para NF-e)
   ncm?: string | null;
   cest?: string | null;
   cfop?: string | null;
@@ -48,6 +46,14 @@ type CartItem = {
 
 type StoreRow = { id: string; name: string; freight_fee: number };
 type PriceOverrideRow = { product_id: string; unit_price: number | null };
+
+// ✅ NOVO: títulos vencidos (para bloquear)
+type OverdueOrderRow = {
+  id: string;
+  due_date: string | null;
+  is_paid: boolean | null;
+  created_at: string | null;
+};
 
 const STEP_BY_SKU: Record<string, number> = {
   "110129": 120,
@@ -82,6 +88,25 @@ function money(v: number) {
   return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function ymdToday() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function fmtYMDToBR(ymd: string | null | undefined) {
+  if (!ymd) return "-";
+  try {
+    const [y, m, d] = ymd.split("-").map(Number);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
+    return dt.toLocaleDateString("pt-BR");
+  } catch {
+    return String(ymd);
+  }
+}
+
 export default function PedidoPage() {
   const router = useRouter();
 
@@ -96,14 +121,17 @@ export default function PedidoPage() {
   const [storeName, setStoreName] = useState<string>("-");
   const [storeId, setStoreId] = useState<string | null>(null);
 
+  // ✅ NOVO: bloqueio por vencidos
+  const [overdueLoading, setOverdueLoading] = useState(false);
+  const [overdues, setOverdues] = useState<OverdueOrderRow[]>([]);
+  const hasOverdue = overdues.length > 0;
+
   const itemsTotal = useMemo(() => {
     return Object.values(cart).reduce((acc, it) => acc + it.qty * it.unit_cost, 0);
   }, [cart]);
 
   const freightApplied = useMemo(() => (deliveryMode === "FRETE" ? freightFee : 0), [deliveryMode, freightFee]);
-
   const grandTotal = useMemo(() => itemsTotal + freightApplied, [itemsTotal, freightApplied]);
-
   const hasItems = useMemo(() => Object.keys(cart).length > 0, [cart]);
 
   useEffect(() => {
@@ -118,7 +146,11 @@ export default function PedidoPage() {
       }
 
       // 1) store_id do profile
-      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", auth.user.id).maybeSingle();
+      const { data: profile, error: pErr } = await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", auth.user.id)
+        .maybeSingle();
 
       if (pErr) {
         setLoading(false);
@@ -135,8 +167,15 @@ export default function PedidoPage() {
         return;
       }
 
+      // ✅ NOVO: checar títulos vencidos ANTES de carregar produtos (UX rápido)
+      await loadOverdues(sId);
+
       // 2) frete padrão da loja
-      const { data: store, error: sErr } = await supabase.from("stores").select("id,name,freight_fee").eq("id", sId).maybeSingle();
+      const { data: store, error: sErr } = await supabase
+        .from("stores")
+        .select("id,name,freight_fee")
+        .eq("id", sId)
+        .maybeSingle();
 
       if (sErr || !store) {
         setLoading(false);
@@ -149,7 +188,6 @@ export default function PedidoPage() {
       setFreightFee(Number(st.freight_fee ?? 0) || 0);
 
       // 3) produtos (preço padrão)
-      // ✅ NOVO: tenta buscar com campos fiscais; se falhar por coluna inexistente, faz fallback para o select antigo
       const selectOld = "id, sku, name, unit, unit_price, active";
       const selectNew =
         "id, sku, name, unit, unit_price, active, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
@@ -190,7 +228,10 @@ export default function PedidoPage() {
       }
 
       // 4) overrides da loja (preço por loja)
-      const { data: ovData, error: ovErr } = await supabase.from("store_product_prices").select("product_id, unit_price").eq("store_id", sId);
+      const { data: ovData, error: ovErr } = await supabase
+        .from("store_product_prices")
+        .select("product_id, unit_price")
+        .eq("store_id", sId);
 
       if (ovErr) {
         setLoading(false);
@@ -220,7 +261,6 @@ export default function PedidoPage() {
           base_price: base,
           override_price: ov ?? null,
 
-          // ✅ NOVO (para NF-e)
           ncm: (p.ncm ?? null) as any,
           cest: (p.cest ?? null) as any,
           cfop: (p.cfop ?? null) as any,
@@ -237,6 +277,34 @@ export default function PedidoPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ✅ NOVO: carregar pedidos vencidos da loja
+  async function loadOverdues(sId: string) {
+    setOverdueLoading(true);
+    try {
+      const today = ymdToday();
+
+      const { data, error } = await supabase
+        .from("orders")
+        .select("id,due_date,is_paid,created_at")
+        .eq("store_id", sId)
+        .or("is_paid.is.null,is_paid.eq.false")
+        .not("due_date", "is", null)
+        .lt("due_date", today)
+        .order("due_date", { ascending: true })
+        .limit(10);
+
+      if (error) {
+        console.warn("loadOverdues:", error.message);
+        setOverdues([]);
+        return;
+      }
+
+      setOverdues((data ?? []) as OverdueOrderRow[]);
+    } finally {
+      setOverdueLoading(false);
+    }
+  }
 
   function setQty(prod: Product, qtyRaw: number) {
     const unit = (prod.unit ?? "un").toString();
@@ -259,7 +327,6 @@ export default function PedidoPage() {
         unit_cost,
         qty,
 
-        // ✅ NOVO (para NF-e)
         ncm: prod.ncm ?? null,
         cest: prod.cest ?? null,
         cfop: prod.cfop ?? null,
@@ -301,8 +368,13 @@ export default function PedidoPage() {
     router.push("/pedido/confirmar");
   }
 
+  const continueBlocked = hasOverdue || !hasItems;
+
   return (
-    <PortalShell title="Novo pedido" subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Selecione as quantidades"}>
+    <PortalShell
+      title="Novo pedido"
+      subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Selecione as quantidades"}
+    >
       <div className="space-y-4">
         <PageHeader
           title="Novo pedido"
@@ -316,12 +388,60 @@ export default function PedidoPage() {
               <Button variant="secondary" onClick={() => router.push("/pedidos")}>
                 Histórico
               </Button>
-              <Button onClick={onContinue} disabled={!hasItems}>
-                Continuar ({money(grandTotal)})
+
+              {/* ✅ BLOQUEIO */}
+              <Button onClick={onContinue} disabled={continueBlocked}>
+                {hasOverdue ? "Bloqueado por vencidos" : `Continuar (${money(grandTotal)})`}
               </Button>
             </div>
           }
         />
+
+        {/* ✅ NOVO: aviso de bloqueio */}
+        {!loading && storeId && (overdueLoading || hasOverdue) ? (
+          <Card
+            title="Atenção: existem títulos vencidos"
+            subtitle="Para criar novos pedidos, regularize os títulos vencidos no Financeiro."
+            right={
+              <div className="flex flex-wrap gap-2">
+                <Button variant="secondary" onClick={() => router.push("/financeiro")}>
+                  Ir para Financeiro
+                </Button>
+                <Button variant="secondary" onClick={() => loadOverdues(storeId)} disabled={overdueLoading}>
+                  {overdueLoading ? "Verificando..." : "Atualizar vencidos"}
+                </Button>
+              </div>
+            }
+          >
+            {overdueLoading ? (
+              <div className="text-sm text-slate-600">Carregando títulos vencidos...</div>
+            ) : overdues.length === 0 ? (
+              <div className="text-sm text-slate-600">Nenhum título vencido encontrado.</div>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-sm text-slate-700">
+                  Você tem <b>{overdues.length}</b> pedido(s) vencido(s). O botão de continuar fica bloqueado até regularizar.
+                </div>
+
+                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                  {overdues.map((o) => (
+                    <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t border-slate-100 first:border-t-0">
+                      <div className="min-w-0">
+                        <div className="font-mono text-xs text-slate-600 truncate">{o.id}</div>
+                        <div className="text-sm text-slate-800">
+                          Vencimento: <b>{fmtYMDToBR(o.due_date)}</b> <Badge tone="red">Vencido</Badge>
+                        </div>
+                      </div>
+                      <Button variant="secondary" onClick={() => router.push("/financeiro")}>
+                        Ver no Financeiro
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        ) : null}
 
         {msg ? (
           <Card title="Erro">
@@ -338,10 +458,18 @@ export default function PedidoPage() {
         {!loading && !msg ? (
           <Card title="Entrega" subtitle="O frete é o valor padrão cadastrado para a sua loja.">
             <div className="flex flex-wrap items-center gap-3">
-              <Button variant={deliveryMode === "RETIRADA" ? "primary" : "secondary"} onClick={() => setDeliveryMode("RETIRADA")}>
+              <Button
+                variant={deliveryMode === "RETIRADA" ? "primary" : "secondary"}
+                onClick={() => setDeliveryMode("RETIRADA")}
+                disabled={hasOverdue}
+              >
                 Retirada
               </Button>
-              <Button variant={deliveryMode === "FRETE" ? "primary" : "secondary"} onClick={() => setDeliveryMode("FRETE")}>
+              <Button
+                variant={deliveryMode === "FRETE" ? "primary" : "secondary"}
+                onClick={() => setDeliveryMode("FRETE")}
+                disabled={hasOverdue}
+              >
                 Frete
               </Button>
 
@@ -355,6 +483,12 @@ export default function PedidoPage() {
             <div className="mt-2 text-xs text-slate-500">
               Quantidades com <b>passo</b> são travadas por caixa/lote (ex.: 216, 120, etc.).
             </div>
+
+            {hasOverdue ? (
+              <div className="mt-3 text-sm text-red-700">
+                Você possui títulos vencidos. Regularize no <b>Financeiro</b> para continuar.
+              </div>
+            ) : null}
           </Card>
         ) : null}
 
@@ -385,7 +519,7 @@ export default function PedidoPage() {
                       const lineTotal = qty * unit_cost;
 
                       return (
-                        <tr key={p.id} className="hover:bg-slate-50">
+                        <tr key={p.id} className={`hover:bg-slate-50 ${hasOverdue ? "opacity-60" : ""}`}>
                           <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
                             <div className="font-mono text-xs text-slate-600">{p.sku}</div>
                           </td>
@@ -403,7 +537,7 @@ export default function PedidoPage() {
 
                           <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
                             <div className="flex flex-wrap items-center gap-2">
-                              <Button variant="secondary" onClick={() => dec(p)} disabled={qty <= 0}>
+                              <Button variant="secondary" onClick={() => dec(p)} disabled={hasOverdue || qty <= 0}>
                                 -
                               </Button>
 
@@ -413,10 +547,11 @@ export default function PedidoPage() {
                                 value={qty}
                                 step={step}
                                 min={0}
+                                disabled={hasOverdue}
                                 onChange={(e) => setQty(p, Number(e.target.value))}
                               />
 
-                              <Button variant="secondary" onClick={() => inc(p)}>
+                              <Button variant="secondary" onClick={() => inc(p)} disabled={hasOverdue}>
                                 +
                               </Button>
                             </div>
@@ -453,10 +588,16 @@ export default function PedidoPage() {
                 <div className="text-2xl font-semibold text-slate-900">{money(grandTotal)}</div>
 
                 <div className="mt-3 flex justify-end">
-                  <Button onClick={onContinue} disabled={!hasItems}>
-                    Continuar
+                  <Button onClick={onContinue} disabled={continueBlocked}>
+                    {hasOverdue ? "Bloqueado por vencidos" : "Continuar"}
                   </Button>
                 </div>
+
+                {hasOverdue ? (
+                  <div className="mt-2 text-xs text-red-700">
+                    Regularize os títulos vencidos no <b>Financeiro</b> para criar novos pedidos.
+                  </div>
+                ) : null}
               </div>
             </div>
           </Card>
