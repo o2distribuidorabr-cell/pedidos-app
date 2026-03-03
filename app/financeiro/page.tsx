@@ -30,12 +30,15 @@ type TotalsRow = { order_id: string; store_id: string; total_cost: number | null
 type OrderItemRow = { order_id: string; qty: number | null; unit_cost: number | null };
 type CreditBalRow = { store_id: string; balance: number | null };
 
+type PixProvider = "MP" | "ASAAS";
+
 type FinanceSettingsRow = {
   id: number;
   pix_key: string | null;
   apply_late_charges: boolean | null;
   late_fee_percent: number | null;
   daily_interest_percent: number | null;
+  pix_provider?: PixProvider | null;
 };
 
 type RowUi = {
@@ -65,6 +68,30 @@ type RowUi = {
   due_status: "PAGO" | "VENCIDO" | "A_VENCER" | "SEM_VENCIMENTO";
 
   credit_balance: number;
+};
+
+type PixCreateResponse = {
+  paymentId: string;
+  status?: string;
+  detail?: string;
+  qrCode: string;
+  qrCodeBase64: string;
+  amountUsed?: number;
+  expiresAt?: string;
+  gateway: PixProvider;
+  invoiceUrl?: string;
+  externalReference?: string;
+  rawResponse?: any;
+};
+
+type PixPoll = {
+  state: "idle" | "checking" | "approved" | "failed" | "expired";
+  lastCheckAt?: string;
+  provider?: PixProvider;
+  providerStatus?: string | null;
+  providerDetail?: string | null;
+  message?: string;
+  approvedAt?: string | null;
 };
 
 function money(n: number) {
@@ -131,30 +158,9 @@ function daysLateYMD(dueYmd: string) {
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
   return Math.max(days, 0);
 }
-
-type PixCreateResponse = {
-  paymentId: string;
-  status?: string;
-  detail?: string;
-  qrCode: string;
-  qrCodeBase64: string;
-  amountUsed?: number;
-  expiresAt?: string; // ISO
-};
-
 function clamp2(n: number) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
-
-type PixPoll = {
-  state: "idle" | "checking" | "approved" | "failed" | "expired";
-  lastCheckAt?: string; // ISO (do browser)
-  mpStatus?: string | null;
-  mpDetail?: string | null;
-  message?: string;
-  approvedAt?: string | null;
-};
-
 function msLeft(expiresAtISO: string | null) {
   if (!expiresAtISO) return null;
   const t = new Date(expiresAtISO).getTime();
@@ -166,6 +172,17 @@ function fmtMMSS(ms: number) {
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   return `${mm}:${ss}`;
+}
+function normalizeProvider(v?: string | null): PixProvider {
+  return String(v || "MP").toUpperCase() === "ASAAS" ? "ASAAS" : "MP";
+}
+function parseAsaasExpiration(value?: string | null): string | null {
+  const v = String(value || "").trim();
+  if (!v) return null;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v)) {
+    return v.replace(" ", "T");
+  }
+  return v;
 }
 
 export default function FinanceiroFranqueadoPage() {
@@ -179,6 +196,7 @@ export default function FinanceiroFranqueadoPage() {
   const [creditBalance, setCreditBalance] = useState<number>(0);
 
   const [financeSettings, setFinanceSettings] = useState<FinanceSettingsRow | null>(null);
+  const [pixProvider, setPixProvider] = useState<PixProvider>("MP");
 
   const [paidFilter, setPaidFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -199,7 +217,6 @@ export default function FinanceiroFranqueadoPage() {
 
   const [poll, setPoll] = useState<PixPoll>({ state: "idle" });
 
-  // timers
   const pollTimerRef = useRef<number | null>(null);
   const countdownTimerRef = useRef<number | null>(null);
   const [countdownMs, setCountdownMs] = useState<number | null>(null);
@@ -218,7 +235,12 @@ export default function FinanceiroFranqueadoPage() {
 
       setUserEmail(user.email ?? "");
 
-      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", user.id).maybeSingle();
+      const { data: profile, error: pErr } = await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", user.id)
+        .maybeSingle();
+
       if (pErr) {
         setMsg(pErr.message);
         setLoading(false);
@@ -239,17 +261,14 @@ export default function FinanceiroFranqueadoPage() {
 
       setLoading(false);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [router]);
 
-  // limpa timers ao desmontar
   useEffect(() => {
     return () => {
       stopAllTimers();
     };
   }, []);
 
-  // ✅ trava scroll do BODY quando modal abre (mantém o scroll dentro do modal)
   useEffect(() => {
     if (!pixOpen) return;
     const prev = document.body.style.overflow;
@@ -269,23 +288,29 @@ export default function FinanceiroFranqueadoPage() {
   async function loadFinanceSettings(): Promise<FinanceSettingsRow | null> {
     const { data, error } = await supabase
       .from("finance_settings")
-      .select("id,pix_key,apply_late_charges,late_fee_percent,daily_interest_percent")
+      .select("id,pix_key,apply_late_charges,late_fee_percent,daily_interest_percent,pix_provider")
       .eq("id", 1)
       .maybeSingle();
 
     if (error) {
       console.warn("finance_settings:", error.message);
       setFinanceSettings(null);
+      setPixProvider("MP");
       return null;
     }
 
     const row = (data ?? null) as FinanceSettingsRow | null;
     setFinanceSettings(row);
+    setPixProvider(normalizeProvider((row as any)?.pix_provider));
     return row;
   }
 
   async function loadCreditBalance(sId: string): Promise<number> {
-    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id,balance").eq("store_id", sId).maybeSingle();
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id,balance")
+      .eq("store_id", sId)
+      .maybeSingle();
 
     if (error) {
       console.warn("credit balance:", error.message);
@@ -332,13 +357,21 @@ export default function FinanceiroFranqueadoPage() {
 
     const orderIds = orders.map((o) => o.id);
 
-    const { data: tots, error: tErr } = await supabase.from("v_order_totals").select("order_id,store_id,total_cost").in("order_id", orderIds);
+    const { data: tots, error: tErr } = await supabase
+      .from("v_order_totals")
+      .select("order_id,store_id,total_cost")
+      .in("order_id", orderIds);
+
     if (tErr) setMsg(tErr.message);
 
     const totalsMap = new Map<string, number>();
     for (const r of (tots ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
-    const { data: itemsRaw, error: iErr } = await supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds);
+    const { data: itemsRaw, error: iErr } = await supabase
+      .from("order_items")
+      .select("order_id,qty,unit_cost")
+      .in("order_id", orderIds);
+
     if (iErr) console.warn("order_items calc:", iErr.message);
 
     const itemsCalcMap = new Map<string, number>();
@@ -447,8 +480,124 @@ export default function FinanceiroFranqueadoPage() {
     return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto, totalVencido, totalAVencer };
   }, [rows]);
 
-  async function checkPaymentOnce(paymentId: string) {
-    setPoll((p) => ({ ...p, lastCheckAt: new Date().toISOString() }));
+  async function logPaymentRecord(params: {
+    orderId: string;
+    storeId: string;
+    gateway: PixProvider;
+    paymentId: string;
+    status?: string | null;
+    amount?: number | null;
+    qrCode?: string | null;
+    qrCodeBase64?: string | null;
+    expiresAt?: string | null;
+    invoiceUrl?: string | null;
+    externalReference?: string | null;
+    rawResponse?: any;
+  }) {
+    const resp = await fetch("/api/payments/log", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+
+    const text = await resp.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+
+    if (!resp.ok) {
+      const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
+      throw new Error(`Erro ao gravar log do pagamento | HTTP ${resp.status} ${resp.statusText} | ${details}`);
+    }
+
+    return data;
+  }
+
+  async function checkPaymentOnce(paymentId: string, provider: PixProvider) {
+    setPoll((p) => ({ ...p, lastCheckAt: new Date().toISOString(), provider }));
+
+    if (provider === "ASAAS") {
+      const resp = await fetch(`/api/asaas/status?paymentId=${encodeURIComponent(paymentId)}`, {
+        method: "GET",
+      });
+
+      const text = await resp.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+
+      if (!resp.ok) {
+        const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 300);
+        throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
+      }
+
+      const st = String(data?.status ?? data?.payment?.status ?? "").toUpperCase();
+      const detail = String(data?.payment?.description ?? "");
+
+      if (st === "RECEIVED" || st === "CONFIRMED" || st === "RECEIVED_IN_CASH") {
+        setPoll({
+          state: "approved",
+          provider: "ASAAS",
+          lastCheckAt: new Date().toISOString(),
+          providerStatus: st,
+          providerDetail: detail,
+          approvedAt: data?.payment?.paymentDate ?? data?.payment?.clientPaymentDate ?? null,
+        });
+        stopAllTimers();
+        await onReload();
+        return;
+      }
+
+      if (st === "OVERDUE") {
+        setPoll({
+          state: "expired",
+          provider: "ASAAS",
+          lastCheckAt: new Date().toISOString(),
+          providerStatus: st,
+          providerDetail: detail,
+          message: "Cobrança vencida. Gere um novo PIX.",
+        });
+        stopAllTimers();
+        return;
+      }
+
+      if (
+        st === "REFUNDED" ||
+        st === "REFUND_REQUESTED" ||
+        st === "CHARGEBACK_DISPUTE" ||
+        st === "AWAITING_CHARGEBACK_REVERSAL" ||
+        st === "DUNNING_REQUESTED" ||
+        st === "DUNNING_RECEIVED"
+      ) {
+        setPoll({
+          state: "failed",
+          provider: "ASAAS",
+          lastCheckAt: new Date().toISOString(),
+          providerStatus: st,
+          providerDetail: detail,
+          message: `Pagamento em estado ${st}`,
+        });
+        stopAllTimers();
+        return;
+      }
+
+      setPoll((p) => ({
+        ...p,
+        state: "checking",
+        provider: "ASAAS",
+        providerStatus: st,
+        providerDetail: detail,
+      }));
+      return;
+    }
 
     const resp = await fetch(`/api/mp/payment-status?paymentId=${encodeURIComponent(paymentId)}`, { method: "GET" });
     const text = await resp.text();
@@ -465,31 +614,56 @@ export default function FinanceiroFranqueadoPage() {
       throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
     }
 
-    // ✅ ajuste mínimo: usa normalized_status quando existir (fallback para status)
     const st = String(data?.normalized_status ?? data?.status ?? "");
     const det = String(data?.status_detail ?? "");
 
     if (st === "approved") {
-      setPoll({ state: "approved", lastCheckAt: new Date().toISOString(), mpStatus: st, mpDetail: det, approvedAt: data?.date_approved ?? null });
+      setPoll({
+        state: "approved",
+        provider: "MP",
+        lastCheckAt: new Date().toISOString(),
+        providerStatus: st,
+        providerDetail: det,
+        approvedAt: data?.date_approved ?? null,
+      });
       stopAllTimers();
       await onReload();
       return;
     }
 
-    // ✅ trata expiração como expiração (para UX e parar timers)
     if (st === "expired") {
-      setPoll({ state: "expired", lastCheckAt: new Date().toISOString(), mpStatus: st, mpDetail: det, message: "QR expirado. Gere um novo PIX." });
+      setPoll({
+        state: "expired",
+        provider: "MP",
+        lastCheckAt: new Date().toISOString(),
+        providerStatus: st,
+        providerDetail: det,
+        message: "QR expirado. Gere um novo PIX.",
+      });
       stopAllTimers();
       return;
     }
 
     if (st === "rejected" || st === "cancelled" || st === "refunded" || st === "charged_back") {
-      setPoll({ state: "failed", lastCheckAt: new Date().toISOString(), mpStatus: st, mpDetail: det, message: `Pagamento ${st}` });
+      setPoll({
+        state: "failed",
+        provider: "MP",
+        lastCheckAt: new Date().toISOString(),
+        providerStatus: st,
+        providerDetail: det,
+        message: `Pagamento ${st}`,
+      });
       stopAllTimers();
       return;
     }
 
-    setPoll((p) => ({ ...p, state: "checking", mpStatus: st, mpDetail: det }));
+    setPoll((p) => ({
+      ...p,
+      state: "checking",
+      provider: "MP",
+      providerStatus: st,
+      providerDetail: det,
+    }));
   }
 
   function startCountdown(expiresAtISO: string | null) {
@@ -504,6 +678,7 @@ export default function FinanceiroFranqueadoPage() {
     const tick = () => {
       const left = msLeft(expiresAtISO);
       setCountdownMs(left);
+
       if (left !== null && left <= 0) {
         setPoll((p) => (p.state === "approved" ? p : { ...p, state: "expired", message: "QR expirado. Gere um novo PIX." }));
         if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
@@ -515,41 +690,51 @@ export default function FinanceiroFranqueadoPage() {
     countdownTimerRef.current = window.setInterval(tick, 1000) as any;
   }
 
-  async function startPolling(paymentId: string, expiresAtISO: string | null) {
+  async function startPolling(paymentId: string, expiresAtISO: string | null, provider: PixProvider) {
     stopAllTimers();
-    setPoll({ state: "checking", lastCheckAt: new Date().toISOString() });
+    setPoll({ state: "checking", lastCheckAt: new Date().toISOString(), provider });
 
     startCountdown(expiresAtISO);
 
     try {
-      await checkPaymentOnce(paymentId);
+      await checkPaymentOnce(paymentId, provider);
     } catch (e: any) {
-      setPoll({ state: "failed", lastCheckAt: new Date().toISOString(), message: String(e?.message ?? e) });
+      setPoll({
+        state: "failed",
+        provider,
+        lastCheckAt: new Date().toISOString(),
+        message: String(e?.message ?? e),
+      });
       return;
     }
 
     pollTimerRef.current = window.setInterval(async () => {
       try {
-        setPoll((p) => {
-          if (p.state === "approved" || p.state === "failed" || p.state === "expired") return p;
-          return p;
-        });
-
-        await checkPaymentOnce(paymentId);
+        await checkPaymentOnce(paymentId, provider);
       } catch (e: any) {
-        setPoll({ state: "failed", lastCheckAt: new Date().toISOString(), message: String(e?.message ?? e) });
+        setPoll({
+          state: "failed",
+          provider,
+          lastCheckAt: new Date().toISOString(),
+          message: String(e?.message ?? e),
+        });
         stopAllTimers();
       }
     }, 3000) as any;
   }
 
   async function openPixForOrder(r: RowUi) {
+    if (!storeId) {
+      setPixErr("Loja não identificada.");
+      return;
+    }
+
     setPixErr("");
     setPixData(null);
     setPixOrderId(r.id);
     setPixOpen(true);
     setPixAmountUsed(null);
-    setPoll({ state: "idle" });
+    setPoll({ state: "idle", provider: pixProvider });
     setCountdownMs(null);
     stopAllTimers();
 
@@ -558,6 +743,84 @@ export default function FinanceiroFranqueadoPage() {
 
     try {
       setPixLoading(true);
+
+      if (pixProvider === "ASAAS") {
+        const resp = await fetch("/api/asaas/pix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            value: amountFront,
+            description: `Pedido ${r.id}`,
+            externalReference: r.id,
+            dueDate: todayYMD(),
+            customer: {
+              name: "Cliente Loja",
+              cpfCnpj: "12345678909",
+              email: userEmail || "cliente@cliente.com",
+            },
+          }),
+        });
+
+        const text = await resp.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = null;
+        }
+
+        if (!resp.ok) {
+          const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
+          throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
+        }
+
+        const payId = String(data?.payment?.id ?? "");
+        if (!payId) {
+          throw new Error("Asaas não retornou payment.id");
+        }
+
+        const used = Number(amountFront);
+        if (Number.isFinite(used)) setPixAmountUsed(used);
+
+        const expiresAt = parseAsaasExpiration(data?.pix?.expirationDate);
+        const qrCode = String(data?.pix?.payload ?? "");
+        const qrCodeBase64 = String(data?.pix?.encodedImage ?? "");
+        const paymentStatus = String(data?.payment?.status ?? "");
+        const invoiceUrl = String(data?.payment?.invoiceUrl ?? "");
+        const externalReference = String(data?.payment?.externalReference ?? r.id);
+
+        await logPaymentRecord({
+          orderId: r.id,
+          storeId,
+          gateway: "ASAAS",
+          paymentId: payId,
+          status: paymentStatus,
+          amount: used,
+          qrCode,
+          qrCodeBase64,
+          expiresAt,
+          invoiceUrl,
+          externalReference,
+          rawResponse: data,
+        });
+
+        setPixData({
+          gateway: "ASAAS",
+          paymentId: payId,
+          status: paymentStatus,
+          detail: String(data?.payment?.description ?? ""),
+          qrCode,
+          qrCodeBase64,
+          amountUsed: used,
+          expiresAt: expiresAt ?? undefined,
+          invoiceUrl,
+          externalReference,
+          rawResponse: data,
+        });
+
+        await startPolling(payId, expiresAt, "ASAAS");
+        return;
+      }
 
       const resp = await fetch("/api/mp/pix", {
         method: "POST",
@@ -583,23 +846,50 @@ export default function FinanceiroFranqueadoPage() {
         throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
       }
 
-      const payId = String(data.paymentId);
-      const used = Number(data.amountUsed ?? NaN);
+      const payId = String(data?.paymentId ?? "");
+      if (!payId) {
+        throw new Error("Mercado Pago não retornou paymentId");
+      }
+
+      const used = Number(data?.amountUsed ?? amountFront);
       if (Number.isFinite(used)) setPixAmountUsed(used);
 
-      const expiresAt = data.expiresAt ? String(data.expiresAt) : null;
+      const expiresAt = data?.expiresAt ? String(data.expiresAt) : null;
+      const qrCode = String(data?.qrCode ?? "");
+      const qrCodeBase64 = String(data?.qrCodeBase64 ?? "");
+      const paymentStatus = String(data?.status ?? "");
+      const externalReference = r.id;
 
-      setPixData({
+      await logPaymentRecord({
+        orderId: r.id,
+        storeId,
+        gateway: "MP",
         paymentId: payId,
-        status: data.status,
-        detail: data.detail,
-        qrCode: data.qrCode,
-        qrCodeBase64: data.qrCodeBase64,
-        amountUsed: data.amountUsed,
-        expiresAt: expiresAt ?? undefined,
+        status: paymentStatus,
+        amount: used,
+        qrCode,
+        qrCodeBase64,
+        expiresAt,
+        invoiceUrl: null,
+        externalReference,
+        rawResponse: data,
       });
 
-      await startPolling(payId, expiresAt);
+      setPixData({
+        gateway: "MP",
+        paymentId: payId,
+        status: paymentStatus,
+        detail: data?.detail,
+        qrCode,
+        qrCodeBase64,
+        amountUsed: used,
+        expiresAt: expiresAt ?? undefined,
+        invoiceUrl: undefined,
+        externalReference,
+        rawResponse: data,
+      });
+
+      await startPolling(payId, expiresAt, "MP");
     } catch (e: any) {
       setPixErr(String(e?.message ?? e));
     } finally {
@@ -643,24 +933,16 @@ export default function FinanceiroFranqueadoPage() {
     const canPayPix = !r.is_paid && (hasCharges ? r.a_pagar_com_encargos : r.a_pagar) > 0;
 
     return [
-      <span key="id" className="font-mono text-xs">
-        {r.id}
-      </span>,
-      <Badge key="st" tone={statusTone(r.status) as any}>
-        {r.status}
-      </Badge>,
+      <span key="id" className="font-mono text-xs">{r.id}</span>,
+      <Badge key="st" tone={statusTone(r.status) as any}>{r.status}</Badge>,
       <span key="op">{logisticLabel(r.logistic_status)}</span>,
       <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
       <span key="due">{r.due_date ?? "-"}</span>,
       <span key="dueSt">{dueBadge(r.due_status)}</span>,
       <span key="pm">{r.payment_method ?? "-"}</span>,
-      <span key="m" className="font-semibold">
-        {money(r.mercadoria)}
-      </span>,
+      <span key="m" className="font-semibold">{money(r.mercadoria)}</span>,
       <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
-      <span key="t" className="font-semibold">
-        {money(r.total)}
-      </span>,
+      <span key="t" className="font-semibold">{money(r.total)}</span>,
       <span key="c">- {money(r.credit_applied)}</span>,
       <div key="ap" className="min-w-0">
         <div className="font-semibold">{money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}</div>
@@ -672,9 +954,7 @@ export default function FinanceiroFranqueadoPage() {
       </div>,
       <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
       <span key="dt">{fmtBR(r.paid_at)}</span>,
-      <span key="bal" className="font-semibold">
-        {money(r.credit_balance)}
-      </span>,
+      <span key="bal" className="font-semibold">{money(r.credit_balance)}</span>,
       <div key="act" className="flex gap-2">
         <Button
           variant="secondary"
@@ -704,10 +984,17 @@ export default function FinanceiroFranqueadoPage() {
   return (
     <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
       <div className="space-y-4">
-        <PageHeader title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos" />
+        <PageHeader
+          title="Financeiro"
+          subtitle={`Resumo de pedidos, crédito e pagamentos. Provedor PIX ativo: ${pixProvider === "ASAAS" ? "Asaas" : "Mercado Pago"}`}
+        />
 
         <Card title="Filtros" right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}>
           {msg ? <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div> : null}
+
+          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            Provedor PIX ativo nesta loja: <b>{pixProvider === "ASAAS" ? "Asaas" : "Mercado Pago"}</b>
+          </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
             <Select
@@ -825,7 +1112,6 @@ export default function FinanceiroFranqueadoPage() {
           {rows.length === 0 ? <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div> : null}
         </Card>
 
-        {/* ✅ Modal PIX (corrigido: rolável e botões sempre visíveis) */}
         {pixOpen ? (
           <div className="fixed inset-0 z-[60] bg-black/40" role="dialog" aria-modal="true">
             <div className="h-full w-full overflow-y-auto p-4">
@@ -836,6 +1122,9 @@ export default function FinanceiroFranqueadoPage() {
                       <div className="text-base font-semibold">Pagamento PIX</div>
                       <div className="text-xs text-slate-500 truncate">
                         Pedido: <span className="font-mono">{pixOrderId}</span>
+                      </div>
+                      <div className="text-xs text-slate-500 truncate">
+                        Provedor: <span className="font-semibold">{pixData?.gateway === "ASAAS" ? "Asaas" : pixData?.gateway === "MP" ? "Mercado Pago" : pixProvider === "ASAAS" ? "Asaas" : "Mercado Pago"}</span>
                       </div>
                     </div>
                     <Button variant="secondary" onClick={closePixModal}>
@@ -864,8 +1153,7 @@ export default function FinanceiroFranqueadoPage() {
                         {pixData.expiresAt ? (
                           <div className="text-sm text-slate-700">
                             Validade do QR:{" "}
-                            <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>{" "}
-                            <span className="text-xs text-slate-500">(expira em 30 min)</span>
+                            <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>
                           </div>
                         ) : null}
 
@@ -881,8 +1169,9 @@ export default function FinanceiroFranqueadoPage() {
 
                           <div className="mt-1 text-xs text-slate-500">
                             Última checagem: {poll.lastCheckAt ? fmtBR(poll.lastCheckAt) : "—"}
-                            {poll.mpStatus ? ` • MP: ${poll.mpStatus}` : ""}
-                            {poll.mpDetail ? ` (${poll.mpDetail})` : ""}
+                            {poll.provider ? ` • Provedor: ${poll.provider === "ASAAS" ? "Asaas" : "MP"}` : ""}
+                            {poll.providerStatus ? ` • Status: ${poll.providerStatus}` : ""}
+                            {poll.providerDetail ? ` (${poll.providerDetail})` : ""}
                           </div>
 
                           {poll.state === "failed" && poll.message ? (
@@ -895,11 +1184,16 @@ export default function FinanceiroFranqueadoPage() {
                             <Button
                               variant="secondary"
                               onClick={async () => {
-                                if (!pixData?.paymentId) return;
+                                if (!pixData?.paymentId || !pixData?.gateway) return;
                                 try {
-                                  await checkPaymentOnce(pixData.paymentId);
+                                  await checkPaymentOnce(pixData.paymentId, pixData.gateway);
                                 } catch (e: any) {
-                                  setPoll({ state: "failed", lastCheckAt: new Date().toISOString(), message: String(e?.message ?? e) });
+                                  setPoll({
+                                    state: "failed",
+                                    provider: pixData.gateway,
+                                    lastCheckAt: new Date().toISOString(),
+                                    message: String(e?.message ?? e),
+                                  });
                                 }
                               }}
                             >

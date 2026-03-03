@@ -35,12 +35,18 @@ type TotalsRow = { order_id: string; store_id: string; total_cost: number | null
 type OrderItemRow = { order_id: string; qty: number | null; unit_cost: number | null };
 type CreditBalRow = { store_id: string; balance: number | null };
 
+type PixProvider = "MP" | "ASAAS";
+
 type FinanceSettingsRow = {
   id: number;
   pix_key: string | null;
   apply_late_charges: boolean | null;
   late_fee_percent: number | null;
   daily_interest_percent: number | null;
+
+  // ✅ NOVO: provedor ativo (MP ou ASAAS)
+  pix_provider?: PixProvider | null;
+
   updated_at?: string | null;
 };
 
@@ -201,6 +207,9 @@ export default function AdmFinanceiroPage() {
   const [lateFeePercent, setLateFeePercent] = useState<string>("2");
   const [dailyInterestPercent, setDailyInterestPercent] = useState<string>("0,033");
 
+  // ✅ NOVO: provedor ativo no admin
+  const [pixProvider, setPixProvider] = useState<PixProvider>("MP");
+
   const [storeSelected, setStoreSelected] = useState<string[]>([]);
   const [storePopoverOpen, setStorePopoverOpen] = useState(false);
   const [storeSearch, setStoreSearch] = useState("");
@@ -246,14 +255,13 @@ export default function AdmFinanceiroPage() {
     return { aplicar, multaPct, jurosDiaPct };
   }
 
-  // ✅ CORREÇÃO 1:
-  // loadFinanceSettings agora retorna a "row" para uso imediato no 1º load (antes do setState surtir efeito)
+  // ✅ loadFinanceSettings agora também carrega pix_provider
   async function loadFinanceSettings(): Promise<FinanceSettingsRow | null> {
     setSettingsLoading(true);
     try {
       const { data, error } = await supabase
         .from("finance_settings")
-        .select("id,pix_key,apply_late_charges,late_fee_percent,daily_interest_percent")
+        .select("id,pix_key,apply_late_charges,late_fee_percent,daily_interest_percent,pix_provider")
         .eq("id", 1)
         .maybeSingle();
 
@@ -269,6 +277,9 @@ export default function AdmFinanceiroPage() {
         setApplyLateCharges(!!(row.apply_late_charges ?? true));
         setLateFeePercent(String(row.late_fee_percent ?? 2).replace(".", ","));
         setDailyInterestPercent(String(row.daily_interest_percent ?? 0.033).replace(".", ","));
+
+        const prov = String((row as any).pix_provider ?? "MP").toUpperCase();
+        setPixProvider(prov === "ASAAS" ? "ASAAS" : "MP");
       }
 
       return row;
@@ -290,6 +301,9 @@ export default function AdmFinanceiroPage() {
       apply_late_charges: !!applyLateCharges,
       late_fee_percent: multa,
       daily_interest_percent: jurosDia,
+
+      // ✅ salva o provedor escolhido
+      pix_provider: pixProvider,
     };
 
     const { error } = await supabase.from("finance_settings").upsert(payload, { onConflict: "id" });
@@ -303,7 +317,6 @@ export default function AdmFinanceiroPage() {
     setSettingsSaving(false);
 
     const storeList = await loadStores();
-    // usa os valores atuais do state (já são os que você acabou de salvar)
     await loadFinance(storeList, calcParamsFromCurrentState());
   }
 
@@ -343,8 +356,6 @@ export default function AdmFinanceiroPage() {
     setStoreSelected(list.map((s) => s.id));
   }
 
-  // ✅ CORREÇÃO 1:
-  // loadFinance recebe os parâmetros de cálculo; no primeiro load usamos os que vieram do DB
   async function loadFinance(storeList: StoreRow[], calc?: CalcParams) {
     setMsg("");
 
@@ -515,8 +526,6 @@ export default function AdmFinanceiroPage() {
     setRows(ui);
   }
 
-  // ✅ CORREÇÃO 1:
-  // no 1º carregamento, calcula com os settings vindos do banco (sem depender do state ainda)
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -545,8 +554,6 @@ export default function AdmFinanceiroPage() {
     setLoading(false);
   }
 
-  // ✅ CORREÇÃO 2:
-  // “A pagar (exibido)” no resumo deve somar só os EM ABERTO (não pagos)
   const resumo = useMemo(() => {
     const totalMercadoria = rows.reduce((a, r) => a + r.mercadoria, 0);
     const totalFrete = rows.reduce((a, r) => a + r.frete, 0);
@@ -685,6 +692,17 @@ export default function AdmFinanceiroPage() {
         }
       >
         <div className="grid gap-3 md:grid-cols-6">
+          {/* ✅ NOVO: seletor do provedor PIX */}
+          <Select
+            label="Provedor PIX ativo"
+            value={pixProvider}
+            onChange={(v) => setPixProvider((String(v).toUpperCase() === "ASAAS" ? "ASAAS" : "MP") as PixProvider)}
+            options={[
+              { value: "MP", label: "Mercado Pago (MP)" },
+              { value: "ASAAS", label: "Asaas" },
+            ]}
+          />
+
           <Select
             label="Aplicar multa/juros após vencimento?"
             value={applyLateCharges ? "true" : "false"}
@@ -698,6 +716,8 @@ export default function AdmFinanceiroPage() {
           <Input label="Juros (% ao dia)" value={dailyInterestPercent} onChange={setDailyInterestPercent} placeholder="Ex.: 0,033" />
 
           <div className="md:col-span-6 text-xs text-slate-500">
+            <b>Provedor PIX ativo:</b> define qual API vai gerar os próximos QR Codes quando o franqueado clicar em “Pagar com PIX”.
+            <br />
             Cálculo (somente pedidos <b>em aberto</b> e <b>vencidos</b>): multa = A pagar × (%/100) (uma vez) • juros = A pagar × (%/100) × dias em atraso.
             <br />
             <b>Pago:</b> o sistema mostra o valor real pago (campo <code>orders.paid_amount</code> vindo do Mercado Pago).
