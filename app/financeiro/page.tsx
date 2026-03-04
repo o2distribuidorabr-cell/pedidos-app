@@ -77,7 +77,13 @@ type PixCreateResponse = {
   qrCode: string;
   qrCodeBase64: string;
   amountUsed?: number;
+
+  // expiração real retornada pelo gateway
   expiresAt?: string;
+
+  // expiração operacional controlada pelo sistema (10 min)
+  operationalExpiresAt?: string;
+
   gateway: PixProvider;
   invoiceUrl?: string;
   externalReference?: string;
@@ -183,6 +189,11 @@ function parseAsaasExpiration(value?: string | null): string | null {
     return v.replace(" ", "T");
   }
   return v;
+}
+function addMinutesISO(minutes: number) {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + minutes);
+  return d.toISOString();
 }
 
 export default function FinanceiroFranqueadoPage() {
@@ -690,11 +701,11 @@ export default function FinanceiroFranqueadoPage() {
     countdownTimerRef.current = window.setInterval(tick, 1000) as any;
   }
 
-  async function startPolling(paymentId: string, expiresAtISO: string | null, provider: PixProvider) {
+  async function startPolling(paymentId: string, provider: PixProvider, operationalExpiresAtISO: string | null) {
     stopAllTimers();
     setPoll({ state: "checking", lastCheckAt: new Date().toISOString(), provider });
 
-    startCountdown(expiresAtISO);
+    startCountdown(operationalExpiresAtISO);
 
     try {
       await checkPaymentOnce(paymentId, provider);
@@ -710,6 +721,18 @@ export default function FinanceiroFranqueadoPage() {
 
     pollTimerRef.current = window.setInterval(async () => {
       try {
+        const left = msLeft(operationalExpiresAtISO);
+        if (left !== null && left <= 0) {
+          setPoll({
+            state: "expired",
+            provider,
+            lastCheckAt: new Date().toISOString(),
+            message: "QR expirado. Gere um novo PIX.",
+          });
+          stopAllTimers();
+          return;
+        }
+
         await checkPaymentOnce(paymentId, provider);
       } catch (e: any) {
         setPoll({
@@ -749,15 +772,12 @@ export default function FinanceiroFranqueadoPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            orderId: r.id,
+            storeId,
             value: amountFront,
             description: `Pedido ${r.id}`,
             externalReference: r.id,
             dueDate: todayYMD(),
-            customer: {
-              name: "Cliente Loja",
-              cpfCnpj: "12345678909",
-              email: userEmail || "cliente@cliente.com",
-            },
           }),
         });
 
@@ -779,10 +799,22 @@ export default function FinanceiroFranqueadoPage() {
           throw new Error("Asaas não retornou payment.id");
         }
 
-        const used = Number(amountFront);
-        if (Number.isFinite(used)) setPixAmountUsed(used);
+        const used = Number(
+          data?.payment?.value ??
+            data?.pricing?.amountToCharge ??
+            data?.amountUsed ??
+            amountFront
+        );
+
+        if (Number.isFinite(used)) {
+          setPixAmountUsed(used);
+        } else {
+          setPixAmountUsed(amountFront);
+        }
 
         const expiresAt = parseAsaasExpiration(data?.pix?.expirationDate);
+        const operationalExpiresAt = addMinutesISO(10);
+
         const qrCode = String(data?.pix?.payload ?? "");
         const qrCodeBase64 = String(data?.pix?.encodedImage ?? "");
         const paymentStatus = String(data?.payment?.status ?? "");
@@ -795,7 +827,7 @@ export default function FinanceiroFranqueadoPage() {
           gateway: "ASAAS",
           paymentId: payId,
           status: paymentStatus,
-          amount: used,
+          amount: Number.isFinite(used) ? used : amountFront,
           qrCode,
           qrCodeBase64,
           expiresAt,
@@ -811,14 +843,15 @@ export default function FinanceiroFranqueadoPage() {
           detail: String(data?.payment?.description ?? ""),
           qrCode,
           qrCodeBase64,
-          amountUsed: used,
+          amountUsed: Number.isFinite(used) ? used : amountFront,
           expiresAt: expiresAt ?? undefined,
+          operationalExpiresAt,
           invoiceUrl,
           externalReference,
           rawResponse: data,
         });
 
-        await startPolling(payId, expiresAt, "ASAAS");
+        await startPolling(payId, "ASAAS", operationalExpiresAt);
         return;
       }
 
@@ -855,6 +888,8 @@ export default function FinanceiroFranqueadoPage() {
       if (Number.isFinite(used)) setPixAmountUsed(used);
 
       const expiresAt = data?.expiresAt ? String(data.expiresAt) : null;
+      const operationalExpiresAt = addMinutesISO(10);
+
       const qrCode = String(data?.qrCode ?? "");
       const qrCodeBase64 = String(data?.qrCodeBase64 ?? "");
       const paymentStatus = String(data?.status ?? "");
@@ -884,12 +919,13 @@ export default function FinanceiroFranqueadoPage() {
         qrCodeBase64,
         amountUsed: used,
         expiresAt: expiresAt ?? undefined,
+        operationalExpiresAt,
         invoiceUrl: undefined,
         externalReference,
         rawResponse: data,
       });
 
-      await startPolling(payId, expiresAt, "MP");
+      await startPolling(payId, "MP", operationalExpiresAt);
     } catch (e: any) {
       setPixErr(String(e?.message ?? e));
     } finally {
@@ -1146,14 +1182,20 @@ export default function FinanceiroFranqueadoPage() {
                       <div className="grid gap-3">
                         {pixAmountUsed != null ? (
                           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                            Valor cobrado no PIX: <b>{money(pixAmountUsed)}</b>
+                            Valor da cobrança gerada: <b>{money(pixAmountUsed)}</b>
+                            {pixData.gateway === "ASAAS" ? (
+                              <div className="mt-1 text-xs text-slate-500">
+                                No Asaas, multa e juros serão aplicados conforme o vencimento da cobrança.
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
 
-                        {pixData.expiresAt ? (
+                        {pixData.operationalExpiresAt ? (
                           <div className="text-sm text-slate-700">
-                            Validade do QR:{" "}
-                            <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>
+                            Validade operacional do QR:{" "}
+                            <b>{countdownMs == null ? "—" : countdownMs <= 0 ? "Expirado" : fmtMMSS(countdownMs)}</b>{" "}
+                            <span className="text-xs text-slate-500">(10 minutos no sistema)</span>
                           </div>
                         ) : null}
 

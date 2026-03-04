@@ -16,20 +16,25 @@ type StoreRow = {
   code?: string | null;
   freight_fee?: number | null;
 
-  // ✅ NOVOS CAMPOS (cadastro completo)
-  legal_name: string | null; // Razão social
+  // cadastro completo
+  legal_name: string | null;
   cnpj: string | null;
 
-  address_zip: string | null; // CEP
-  address_street: string | null; // Rua/Av
-  address_number: string | null; // Número
-  address_complement: string | null; // Complemento
-  address_neighborhood: string | null; // Bairro
+  address_zip: string | null;
+  address_street: string | null;
+  address_number: string | null;
+  address_complement: string | null;
+  address_neighborhood: string | null;
 
-  // ✅ NOVOS CAMPOS (NFe - destinatário)
-  ie?: string | null; // Inscrição Estadual
-  email_nf?: string | null; // Email para NFe
-  phone_nf?: string | null; // Telefone para NFe
+  // NFe
+  ie?: string | null;
+  email_nf?: string | null;
+  phone_nf?: string | null;
+
+  // cobrança / Asaas
+  billing_email?: string | null;
+  billing_phone?: string | null;
+  asaas_customer_id?: string | null;
 };
 
 function money(n: number) {
@@ -67,7 +72,7 @@ export default function AdmLojasPage() {
   const [active, setActive] = useState(true);
   const [freightFee, setFreightFee] = useState<string>("");
 
-  // ✅ NOVO: campos completos
+  // cadastro completo
   const [legalName, setLegalName] = useState("");
   const [cnpj, setCnpj] = useState("");
   const [zip, setZip] = useState("");
@@ -76,10 +81,15 @@ export default function AdmLojasPage() {
   const [complement, setComplement] = useState("");
   const [neighborhood, setNeighborhood] = useState("");
 
-  // ✅ NOVO: campos NFe
+  // NFe
   const [ie, setIe] = useState("");
   const [emailNf, setEmailNf] = useState("");
   const [phoneNf, setPhoneNf] = useState("");
+
+  // cobrança / Asaas
+  const [billingEmail, setBillingEmail] = useState("");
+  const [billingPhone, setBillingPhone] = useState("");
+  const [asaasCustomerId, setAsaasCustomerId] = useState("");
 
   // crédito
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
@@ -134,12 +144,10 @@ export default function AdmLojasPage() {
     const ok = await requireAuth();
     if (!ok) return;
 
-    const baseSelect =
-      "id,name,city,state,active,freight_fee,code";
+    const baseSelect = "id,name,city,state,active,freight_fee,code";
     const fullSelect =
-      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf";
+      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id";
 
-    // ✅ tenta com colunas novas; se falhar por coluna inexistente, faz fallback
     let data: any[] | null = null;
 
     const first = await supabase
@@ -173,6 +181,9 @@ export default function AdmLojasPage() {
         ie: null,
         email_nf: null,
         phone_nf: null,
+        billing_email: null,
+        billing_phone: null,
+        asaas_customer_id: null,
       }));
     } else {
       data = first.data ?? [];
@@ -195,10 +206,16 @@ export default function AdmLojasPage() {
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
     if (!qq) return stores;
+
     return stores.filter((s) => {
-      const blob = `${s.name} ${s.legal_name ?? ""} ${s.cnpj ?? ""} ${s.address_street ?? ""} ${s.address_neighborhood ?? ""} ${
-        s.address_zip ?? ""
-      } ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.ie ?? ""} ${s.email_nf ?? ""} ${s.phone_nf ?? ""} ${s.id}`.toLowerCase();
+      const blob = `${s.name} ${s.legal_name ?? ""} ${s.cnpj ?? ""} ${s.address_street ?? ""} ${
+        s.address_neighborhood ?? ""
+      } ${s.address_zip ?? ""} ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.ie ?? ""} ${
+        s.email_nf ?? ""
+      } ${s.phone_nf ?? ""} ${s.billing_email ?? ""} ${s.billing_phone ?? ""} ${s.asaas_customer_id ?? ""} ${
+        s.id
+      }`.toLowerCase();
+
       return blob.includes(qq);
     });
   }, [stores, q]);
@@ -211,7 +228,6 @@ export default function AdmLojasPage() {
     setActive(true);
     setFreightFee("");
 
-    // ✅ NOVO
     setLegalName("");
     setCnpj("");
     setZip("");
@@ -220,10 +236,13 @@ export default function AdmLojasPage() {
     setComplement("");
     setNeighborhood("");
 
-    // ✅ NOVO (NFe)
     setIe("");
     setEmailNf("");
     setPhoneNf("");
+
+    setBillingEmail("");
+    setBillingPhone("");
+    setAsaasCustomerId("");
   }
 
   function startEdit(s: StoreRow) {
@@ -235,7 +254,6 @@ export default function AdmLojasPage() {
     setFreightFee(s.freight_fee != null ? String(s.freight_fee) : "");
     setMsg("");
 
-    // ✅ NOVO
     setLegalName(s.legal_name ?? "");
     setCnpj(s.cnpj ?? "");
     setZip(s.address_zip ?? "");
@@ -244,10 +262,13 @@ export default function AdmLojasPage() {
     setComplement(s.address_complement ?? "");
     setNeighborhood(s.address_neighborhood ?? "");
 
-    // ✅ NOVO (NFe)
     setIe(s.ie ?? "");
     setEmailNf(s.email_nf ?? "");
     setPhoneNf(s.phone_nf ?? "");
+
+    setBillingEmail(s.billing_email ?? "");
+    setBillingPhone(s.billing_phone ?? "");
+    setAsaasCustomerId(s.asaas_customer_id ?? "");
   }
 
   async function saveStore() {
@@ -261,7 +282,6 @@ export default function AdmLojasPage() {
       return;
     }
 
-    // ✅ NOVO: validações obrigatórias (cadastro completo)
     const ln = legalName.trim();
     if (!ln) {
       setWorking(false);
@@ -331,8 +351,6 @@ export default function AdmLojasPage() {
 
     const payload: any = {
       name: nm,
-
-      // ✅ cadastro completo
       legal_name: ln,
       cnpj: cnpjNorm,
       address_zip: zipNorm,
@@ -340,17 +358,21 @@ export default function AdmLojasPage() {
       address_number: num,
       address_complement: complement.trim() || null,
       address_neighborhood: neigh,
-
       city: ct || null,
       state: uf || null,
-
       active: !!active,
       freight_fee: ff,
 
-      // ✅ NFe (destinatário) - opcionais
       ie: (ie || "").trim() || null,
       email_nf: (emailNf || "").trim() || null,
       phone_nf: (phoneNf || "").trim() || null,
+
+      billing_email: (billingEmail || "").trim() || null,
+      billing_phone: (billingPhone || "").trim() || null,
+
+      // normalmente esse campo é gerado pelo sistema, mas deixei persistindo
+      // se já existir e você quiser manter manualmente
+      asaas_customer_id: (asaasCustomerId || "").trim() || null,
     };
 
     if (editingId) {
@@ -378,7 +400,10 @@ export default function AdmLojasPage() {
     setMsg("");
     setWorking(true);
 
-    const { error } = await supabase.from("stores").update({ active: !(s.active ?? true) }).eq("id", s.id);
+    const { error } = await supabase
+      .from("stores")
+      .update({ active: !(s.active ?? true) })
+      .eq("id", s.id);
 
     if (error) {
       setWorking(false);
@@ -405,33 +430,26 @@ export default function AdmLojasPage() {
     setCreditMode("ADD");
   }
 
-  // ✅ aceita: "1000", "1000.50", "1000,50", "1.000,50", "1,000.50"
   function parseAmountBR(v: string) {
     const raw = String(v ?? "").trim();
     if (!raw) return NaN;
 
-    // remove espaços e símbolos
     let s = raw.replace(/\s/g, "").replace(/[R$\u00A0]/g, "");
 
     const hasComma = s.includes(",");
     const hasDot = s.includes(".");
 
     if (hasComma && hasDot) {
-      // Heurística: o último separador define decimal
       const lastComma = s.lastIndexOf(",");
       const lastDot = s.lastIndexOf(".");
       if (lastComma > lastDot) {
-        // decimal = ","  milhar = "."
         s = s.replace(/\./g, "").replace(",", ".");
       } else {
-        // decimal = "."  milhar = ","
         s = s.replace(/,/g, "");
       }
     } else if (hasComma) {
-      // decimal ","
       s = s.replace(/\./g, "").replace(",", ".");
     } else {
-      // só "." ou nada => mantém
       s = s.replace(/,/g, "");
     }
 
@@ -523,18 +541,15 @@ export default function AdmLojasPage() {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Form */}
         <Card title={editingId ? "Editar loja" : "Nova loja"}>
           <div className="grid gap-3">
             <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Loja Shopping Cidade" />
 
-            {/* ✅ NOVO: Razão social / CNPJ */}
             <div className="grid gap-3 sm:grid-cols-2">
               <Input label="Razão social" value={legalName} onChange={setLegalName} placeholder="Ex.: Minha Empresa LTDA" />
               <Input label="CNPJ" value={cnpj} onChange={(v) => setCnpj(v)} placeholder="Somente números (14 dígitos)" />
             </div>
 
-            {/* ✅ NOVO: Endereço completo */}
             <div className="grid gap-3 sm:grid-cols-2">
               <Input label="CEP" value={zip} onChange={(v) => setZip(v)} placeholder="Somente números (8 dígitos)" />
               <Input label="Bairro" value={neighborhood} onChange={setNeighborhood} placeholder="Ex.: Centro" />
@@ -554,13 +569,35 @@ export default function AdmLojasPage() {
               <Input label="UF" value={stateUf} onChange={(v) => setStateUf(v.toUpperCase())} placeholder="MG" maxLength={2} />
             </div>
 
-            {/* ✅ NOVO: dados NFe (opcionais) */}
             <div className="grid gap-3 sm:grid-cols-2">
               <Input label="IE (opcional)" value={ie} onChange={setIe} placeholder="Inscrição Estadual" />
               <Input label="Email NFe (opcional)" value={emailNf} onChange={setEmailNf} placeholder="financeiro@loja.com" inputMode="email" />
             </div>
 
             <Input label="Telefone NFe (opcional)" value={phoneNf} onChange={setPhoneNf} placeholder="(xx) xxxxx-xxxx" />
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input
+                label="Email cobrança / Asaas"
+                value={billingEmail}
+                onChange={setBillingEmail}
+                placeholder="financeiro@loja.com"
+                inputMode="email"
+              />
+              <Input
+                label="Telefone cobrança / Asaas"
+                value={billingPhone}
+                onChange={setBillingPhone}
+                placeholder="(xx) xxxxx-xxxx"
+              />
+            </div>
+
+            <Input
+              label="Asaas customer id"
+              value={asaasCustomerId}
+              onChange={setAsaasCustomerId}
+              placeholder="Será preenchido pelo sistema quando existir"
+            />
 
             <Input label="Frete padrão (opcional)" value={freightFee} onChange={setFreightFee} placeholder="Ex.: 65,00" />
 
@@ -591,7 +628,6 @@ export default function AdmLojasPage() {
           </div>
         </Card>
 
-        {/* List */}
         <Card title="Lista">
           <div className="grid gap-3">
             <Input value={q} onChange={setQ} placeholder="Buscar por nome, cidade, UF..." />
@@ -616,9 +652,20 @@ export default function AdmLojasPage() {
                         </div>
 
                         <div className="mt-1 text-sm text-slate-600">
-                          {(s.city ?? "-")}
+                          {s.city ?? "-"}
                           {s.state ? `/${s.state}` : ""} {s.freight_fee != null ? `· Frete: ${money(Number(s.freight_fee))}` : ""}
                         </div>
+
+                        <div className="mt-1 text-xs text-slate-500">
+                          {s.billing_email ? `Cobrança: ${s.billing_email}` : "Cobrança: —"}
+                          {s.billing_phone ? ` · ${s.billing_phone}` : ""}
+                        </div>
+
+                        {s.asaas_customer_id ? (
+                          <div className="mt-1 text-xs text-slate-500">
+                            Asaas customer: <span className="font-mono">{s.asaas_customer_id}</span>
+                          </div>
+                        ) : null}
 
                         <div className="mt-2 text-sm">
                           <span className="font-semibold text-slate-900">Crédito:</span>{" "}
@@ -653,7 +700,6 @@ export default function AdmLojasPage() {
         </Card>
       </div>
 
-      {/* Modal crédito */}
       {creditStoreId ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCredit}>
           <div

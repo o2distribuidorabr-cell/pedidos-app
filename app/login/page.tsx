@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -33,6 +34,7 @@ export default function LoginPage() {
   const [tab, setTab] = useState<"franchisee" | "admin">("franchisee");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const [working, setWorking] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -210,6 +212,7 @@ export default function LoginPage() {
     await supabase.auth.signOut();
     setShowSignup(false);
     setPassword("");
+    setShowPassword(false);
     setSignup({
       franchisee_name: "",
       phone: "",
@@ -311,13 +314,67 @@ export default function LoginPage() {
               autoCapitalize="none"
             />
 
-            <Input
-              label="Senha"
-              value={password}
-              onChange={setPassword}
-              placeholder="********"
-              type="password"
-            />
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Senha</label>
+              <div className="relative">
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="********"
+                  type={showPassword ? "text" : "password"}
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 pr-12 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-slate-500 hover:text-slate-800"
+                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  title={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                >
+                  {showPassword ? (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      className="h-5 w-5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M3 3l18 18M10.584 10.587a2 2 0 102.829 2.828M9.878 5.092A10.45 10.45 0 0112 4.909c5.25 0 8.727 4.608 9.622 5.967a1.09 1.09 0 010 1.248 16.757 16.757 0 01-4.114 4.417M6.228 6.228C3.943 7.756 2.454 9.733 1.91 10.876a1.09 1.09 0 000 1.248C2.805 13.483 6.282 18.09 11.532 18.09c1.55 0 2.979-.401 4.278-1.02"
+                      />
+                    </svg>
+                  ) : (
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      className="h-5 w-5"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                      />
+                      <circle cx="12" cy="12" r="3" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex justify-end -mt-1">
+              <Link
+                href="/login/esqueci-senha"
+                className="text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline"
+              >
+                Esqueci minha senha
+              </Link>
+            </div>
 
             <div className="flex flex-wrap gap-2 pt-1">
               <Button onClick={onLogin} disabled={working}>
@@ -386,6 +443,59 @@ export default function LoginPage() {
                     placeholder="MG"
                     maxLength={2}
                   />
+                </div>
+
+                <div className="mt-3">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Senha</label>
+                  <div className="relative">
+                    <input
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="********"
+                      type={showPassword ? "text" : "password"}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 pr-12 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-slate-500 hover:text-slate-800"
+                      aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                      title={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                    >
+                      {showPassword ? (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          className="h-5 w-5"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M3 3l18 18M10.584 10.587a2 2 0 102.829 2.828M9.878 5.092A10.45 10.45 0 0112 4.909c5.25 0 8.727 4.608 9.622 5.967a1.09 1.09 0 010 1.248 16.757 16.757 0 01-4.114 4.417M6.228 6.228C3.943 7.756 2.454 9.733 1.91 10.876a1.09 1.09 0 000 1.248C2.805 13.483 6.282 18.09 11.532 18.09c1.55 0 2.979-.401 4.278-1.02"
+                          />
+                        </svg>
+                      ) : (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          className="h-5 w-5"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                          />
+                          <circle cx="12" cy="12" r="3" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
