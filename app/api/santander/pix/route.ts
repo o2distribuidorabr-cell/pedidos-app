@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import https from "https";
-import fs from "fs";
 import crypto from "crypto";
 import axios from "axios";
 import QRCode from "qrcode";
@@ -34,15 +33,12 @@ function readEnv(name: string) {
   return v;
 }
 
-function readOptionalEnv(name: string) {
-  return String(process.env[name] || "").trim();
+function readEnvOptional(name: string) {
+  const v = String(process.env[name] || "").trim();
+  return v || null;
 }
 
-const CERT_PATH = readOptionalEnv("SANTANDER_CERT_PATH");
-const CERT_BASE64_1 = readOptionalEnv("SANTANDER_CERT_BASE64_1");
-const CERT_BASE64_2 = readOptionalEnv("SANTANDER_CERT_BASE64_2");
-const CERT_BASE64_3 = readOptionalEnv("SANTANDER_CERT_BASE64_3");
-
+// ✅ Mantém as mesmas envs obrigatórias (só não lê CERT_PATH no topo)
 const CERT_PASS = readEnv("SANTANDER_CERT_PASS");
 const CLIENT_ID = readEnv("SANTANDER_CLIENT_ID");
 const CLIENT_SECRET = readEnv("SANTANDER_CLIENT_SECRET");
@@ -59,32 +55,27 @@ const DEFAULT_MERCHANT_CITY = String(
   process.env.SANTANDER_MERCHANT_CITY || "CONTAGEM"
 ).trim();
 
-function getPfxBuffer() {
-  const certBase64 = `${CERT_BASE64_1}${CERT_BASE64_2}${CERT_BASE64_3}`.trim();
+// ✅ Netlify: certificado em Base64 quebrado em 3 partes
+function getPfxBuffer(): Buffer {
+  const p1 = readEnvOptional("SANTANDER_CERT_BASE64_1");
+  const p2 = readEnvOptional("SANTANDER_CERT_BASE64_2");
+  const p3 = readEnvOptional("SANTANDER_CERT_BASE64_3");
 
-  if (certBase64) {
-    try {
-      return Buffer.from(certBase64, "base64");
-    } catch (e: any) {
-      throw new Error(
-        `Falha ao decodificar certificado Base64 do Santander: ${String(
-          e?.message || e
-        )}`
-      );
-    }
+  if (p1 && p2 && p3) {
+    const base64 = `${p1}${p2}${p3}`.replace(/\s/g, "");
+    return Buffer.from(base64, "base64");
   }
 
-  if (CERT_PATH) {
-    if (!fs.existsSync(CERT_PATH)) {
-      throw new Error(
-        `SANTANDER_CERT_PATH informado, mas arquivo não encontrado: ${CERT_PATH}`
-      );
-    }
-    return fs.readFileSync(CERT_PATH);
+  // ✅ fallback local opcional (não mexe no comportamento de quem usa path)
+  const certPath = readEnvOptional("SANTANDER_CERT_PATH");
+  if (certPath) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    return fs.readFileSync(certPath);
   }
 
   throw new Error(
-    "Certificado Santander não configurado. Use SANTANDER_CERT_PATH no ambiente local ou SANTANDER_CERT_BASE64_1/2/3 no Netlify."
+    "Certificado Santander não configurado. Use SANTANDER_CERT_BASE64_1/2/3 (Netlify) ou SANTANDER_CERT_PATH (local)."
   );
 }
 
@@ -451,8 +442,5 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
-  return NextResponse.json(
-    { error: "Use POST neste endpoint." },
-    { status: 405 }
-  );
+  return NextResponse.json({ error: "Use POST neste endpoint." }, { status: 405 });
 }

@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import https from "https";
-import fs from "fs";
 import axios from "axios";
 import { createClient } from "@supabase/supabase-js";
 
@@ -14,7 +13,12 @@ function readEnv(name: string) {
   return v;
 }
 
-const CERT_PATH = readEnv("SANTANDER_CERT_PATH");
+function readEnvOptional(name: string) {
+  const v = String(process.env[name] || "").trim();
+  return v || null;
+}
+
+// ✅ Não exige CERT_PATH para Netlify
 const CERT_PASS = readEnv("SANTANDER_CERT_PASS");
 const CLIENT_ID = readEnv("SANTANDER_CLIENT_ID");
 const CLIENT_SECRET = readEnv("SANTANDER_CLIENT_SECRET");
@@ -22,9 +26,33 @@ const CLIENT_SECRET = readEnv("SANTANDER_CLIENT_SECRET");
 const SUPABASE_URL = readEnv("NEXT_PUBLIC_SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = readEnv("SUPABASE_SERVICE_ROLE_KEY");
 
+// ✅ Netlify: certificado em Base64 (3 partes)
+function getPfxBuffer(): Buffer {
+  const p1 = readEnvOptional("SANTANDER_CERT_BASE64_1");
+  const p2 = readEnvOptional("SANTANDER_CERT_BASE64_2");
+  const p3 = readEnvOptional("SANTANDER_CERT_BASE64_3");
+
+  if (p1 && p2 && p3) {
+    const base64 = `${p1}${p2}${p3}`.replace(/\s/g, "");
+    return Buffer.from(base64, "base64");
+  }
+
+  // ✅ fallback local opcional (se você ainda quiser rodar local por arquivo)
+  const certPath = readEnvOptional("SANTANDER_CERT_PATH");
+  if (certPath) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    return fs.readFileSync(certPath);
+  }
+
+  throw new Error(
+    "Certificado Santander não configurado. Use SANTANDER_CERT_BASE64_1/2/3 (Netlify) ou SANTANDER_CERT_PATH (local)."
+  );
+}
+
 function buildHttpsAgent() {
   return new https.Agent({
-    pfx: fs.readFileSync(CERT_PATH),
+    pfx: getPfxBuffer(),
     passphrase: CERT_PASS,
     rejectUnauthorized: true,
   });
@@ -108,10 +136,13 @@ export async function GET(req: Request) {
       }
 
       if (!ord) {
-        return NextResponse.json({ error: "Pedido não encontrado." }, { status: 404 });
+        return NextResponse.json(
+          { error: "Pedido não encontrado." },
+          { status: 404 }
+        );
       }
 
-      resolvedTxid = String(ord.santander_txid || "").trim();
+      resolvedTxid = String((ord as any).santander_txid || "").trim();
       if (!resolvedTxid) {
         return NextResponse.json(
           { error: "Pedido ainda não possui santander_txid." },
@@ -127,8 +158,8 @@ export async function GET(req: Request) {
         .eq("santander_txid", resolvedTxid)
         .maybeSingle();
 
-      if (ordByTxid?.id) {
-        resolvedOrderId = ordByTxid.id;
+      if ((ordByTxid as any)?.id) {
+        resolvedOrderId = (ordByTxid as any).id;
       }
     }
 
@@ -154,7 +185,9 @@ export async function GET(req: Request) {
 
     if (response.status < 200 || response.status >= 300) {
       return NextResponse.json(
-        { error: `Erro ao consultar Santander | HTTP ${response.status} | ${raw}` },
+        {
+          error: `Erro ao consultar Santander | HTTP ${response.status} | ${raw}`,
+        },
         { status: 500 }
       );
     }
@@ -170,7 +203,10 @@ export async function GET(req: Request) {
       paid = true;
     } else if (status === "ATIVA") {
       normalizedStatus = "pending";
-    } else if (status === "REMOVIDA_PELO_USUARIO_RECEBEDOR" || status === "REMOVIDA_PELO_PSP") {
+    } else if (
+      status === "REMOVIDA_PELO_USUARIO_RECEBEDOR" ||
+      status === "REMOVIDA_PELO_PSP"
+    ) {
       normalizedStatus = "cancelled";
     } else {
       normalizedStatus = status ? status.toLowerCase() : "unknown";
@@ -194,7 +230,10 @@ export async function GET(req: Request) {
         updatePayload.paid_amount = paidAmount;
       }
 
-      await supabase.from("orders").update(updatePayload).eq("id", resolvedOrderId);
+      await supabase
+        .from("orders")
+        .update(updatePayload)
+        .eq("id", resolvedOrderId);
     }
 
     return NextResponse.json({
