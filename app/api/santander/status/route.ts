@@ -229,7 +229,11 @@ export async function GET(req: Request) {
     let normalizedStatus = "pending";
     let paid = false;
 
-    if (status === "CONCLUIDA") {
+    // ✅ CORREÇÃO (mínima): só marca pago se existir pix[] com pagamento
+    const pixList = Array.isArray((cob as any)?.pix) ? (cob as any).pix : [];
+    const hasPixPayment = pixList.length > 0;
+
+    if (status === "CONCLUIDA" && hasPixPayment) {
       normalizedStatus = "approved";
       paid = true;
     } else if (status === "ATIVA") {
