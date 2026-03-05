@@ -47,13 +47,9 @@ const PIX_KEY = readEnv("SANTANDER_PIX_KEY");
 const SUPABASE_URL = readEnv("NEXT_PUBLIC_SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = readEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-const DEFAULT_MERCHANT_NAME = String(
-  process.env.SANTANDER_MERCHANT_NAME || "o2 Distribuidora"
-).trim();
+const DEFAULT_MERCHANT_NAME = String(process.env.SANTANDER_MERCHANT_NAME || "o2 Distribuidora").trim();
 
-const DEFAULT_MERCHANT_CITY = String(
-  process.env.SANTANDER_MERCHANT_CITY || "CONTAGEM"
-).trim();
+const DEFAULT_MERCHANT_CITY = String(process.env.SANTANDER_MERCHANT_CITY || "CONTAGEM").trim();
 
 // ✅ cache do pfx (evita baixar do storage a cada request)
 let _pfxCache: Buffer | undefined;
@@ -98,12 +94,12 @@ async function getPfxBuffer(): Promise<Buffer> {
 
   // 3) ✅ fallback local opcional
   const certPath = readEnvOptional("SANTANDER_CERT_PATH");
-if (certPath) {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const fs = require("fs");
-  _pfxCache = fs.readFileSync(certPath) as Buffer;
-  return _pfxCache;
-}
+  if (certPath) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require("fs");
+    _pfxCache = fs.readFileSync(certPath) as Buffer;
+    return _pfxCache;
+  }
 
   throw new Error(
     "Certificado Santander não configurado. Use SANTANDER_CERT_BUCKET + SANTANDER_CERT_OBJECT (Netlify/Supabase Storage) ou SANTANDER_CERT_BASE64_1/2/3 (Netlify antigo) ou SANTANDER_CERT_PATH (local)."
@@ -236,8 +232,7 @@ function buildBrCodeDynamic(params: {
 }
 
 async function getToken(agent: https.Agent) {
-  const url =
-    "https://trust-pix.santander.com.br/oauth/token?grant_type=client_credentials";
+  const url = "https://trust-pix.santander.com.br/oauth/token?grant_type=client_credentials";
 
   const body = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -254,15 +249,10 @@ async function getToken(agent: https.Agent) {
     validateStatus: () => true,
   });
 
-  const raw =
-    typeof response.data === "string"
-      ? response.data
-      : JSON.stringify(response.data);
+  const raw = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
 
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(
-      `Erro ao gerar token Santander | HTTP ${response.status} | ${raw}`
-    );
+    throw new Error(`Erro ao gerar token Santander | HTTP ${response.status} | ${raw}`);
   }
 
   const accessToken = response.data?.access_token;
@@ -273,11 +263,7 @@ async function getToken(agent: https.Agent) {
   return String(accessToken);
 }
 
-async function getCobByTxid(params: {
-  httpsAgent: https.Agent;
-  token: string;
-  txid: string;
-}) {
+async function getCobByTxid(params: { httpsAgent: https.Agent; token: string; txid: string }) {
   const { httpsAgent, token, txid } = params;
 
   const url = `https://trust-pix.santander.com.br/api/v1/cob/${txid}`;
@@ -296,14 +282,9 @@ async function getCobByTxid(params: {
     return response.data;
   }
 
-  const raw =
-    typeof response.data === "string"
-      ? response.data
-      : JSON.stringify(response.data);
+  const raw = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
 
-  throw new Error(
-    `Erro ao consultar cobrança Santander | HTTP ${response.status} | ${raw}`
-  );
+  throw new Error(`Erro ao consultar cobrança Santander | HTTP ${response.status} | ${raw}`);
 }
 
 async function createOrGetCob(params: {
@@ -331,11 +312,7 @@ async function createOrGetCob(params: {
     return response.data;
   }
 
-  const raw =
-    typeof response.data === "string"
-      ? response.data
-      : JSON.stringify(response.data);
-
+  const raw = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
   const lower = raw.toLowerCase();
 
   const isDuplicateTxid =
@@ -348,14 +325,46 @@ async function createOrGetCob(params: {
     return await getCobByTxid({ httpsAgent, token, txid });
   }
 
-  throw new Error(
-    `Erro ao criar cobrança Santander | HTTP ${response.status} | ${raw}`
-  );
+  throw new Error(`Erro ao criar cobrança Santander | HTTP ${response.status} | ${raw}`);
 }
 
 function addSecondsToIso(baseIso: string | null, seconds: number) {
   const base = baseIso ? new Date(baseIso) : new Date();
   return new Date(base.getTime() + seconds * 1000).toISOString();
+}
+
+// ✅ NOVO (mínimo): se já existe txid no pedido, só reaproveita se ainda estiver ATIVA; senão gera um novo
+async function resolveTxidToUse(params: {
+  supabase: ReturnType<typeof getAdminSupabase>;
+  orderId: string;
+  fallbackTxid: string;
+  httpsAgent: https.Agent;
+  token: string;
+}) {
+  const { supabase, orderId, fallbackTxid, httpsAgent, token } = params;
+
+  if (!orderId) return fallbackTxid;
+
+  const { data: ord } = await supabase.from("orders").select("santander_txid").eq("id", orderId).maybeSingle();
+
+  const existing = String((ord as any)?.santander_txid || "").trim();
+  if (!existing) return fallbackTxid;
+
+  try {
+    const cob = await getCobByTxid({ httpsAgent, token, txid: existing });
+    const st = String(cob?.status || "").toUpperCase();
+
+    // Se ainda está ativa, reaproveita o mesmo QR
+    if (st === "ATIVA") return existing;
+
+    // Se não está ativa (expirada/removida/concluída/etc), gera um txid novo
+    const newTxid = sanitizeTxid(`${existing}${crypto.randomBytes(6).toString("hex")}`);
+    return newTxid;
+  } catch {
+    // Se não conseguiu consultar, cria um novo para não travar o usuário
+    const newTxid = sanitizeTxid(`${fallbackTxid}${crypto.randomBytes(6).toString("hex")}`);
+    return newTxid;
+  }
 }
 
 export async function POST(req: Request) {
@@ -369,7 +378,8 @@ export async function POST(req: Request) {
     const nome = String(body?.payer?.name || body?.nome || "Cliente").trim();
     const cpf = onlyDigits(body?.payer?.cpf || body?.cpf);
 
-    const txid = buildTxid(orderId, pedido);
+    // ✅ mantém seu txid base como estava
+    const txidBase = buildTxid(orderId, pedido);
 
     // ✅ ÚNICA mudança fora do certificado: agora é async
     const httpsAgent = await buildHttpsAgent();
@@ -392,6 +402,16 @@ export async function POST(req: Request) {
         nome: nome.slice(0, 200),
       };
     }
+
+    // ✅ aqui escolhe se reaproveita ou gera um novo depois que expirou
+    const supabase = getAdminSupabase();
+    const txid = await resolveTxidToUse({
+      supabase,
+      orderId,
+      fallbackTxid: txidBase,
+      httpsAgent,
+      token,
+    });
 
     const cob = await createOrGetCob({
       httpsAgent,
@@ -423,18 +443,11 @@ export async function POST(req: Request) {
 
     const qrCodeBase64 = qrCodeDataUrl.replace(/^data:image\/png;base64,/, "");
 
-    const createdAtIso = cob?.calendario?.criacao
-      ? new Date(cob.calendario.criacao).toISOString()
-      : new Date().toISOString();
+    const createdAtIso = cob?.calendario?.criacao ? new Date(cob.calendario.criacao).toISOString() : new Date().toISOString();
 
-    const expiresAt = addSecondsToIso(
-      createdAtIso,
-      Number(cob?.calendario?.expiracao ?? 3600) || 3600
-    );
+    const expiresAt = addSecondsToIso(createdAtIso, Number(cob?.calendario?.expiracao ?? 3600) || 3600);
 
     if (orderId) {
-      const supabase = getAdminSupabase();
-
       const { error: updateErr } = await supabase
         .from("orders")
         .update({
@@ -443,9 +456,7 @@ export async function POST(req: Request) {
         .eq("id", orderId);
 
       if (updateErr) {
-        throw new Error(
-          `Cobrança criada, mas falhou ao salvar santander_txid no pedido: ${updateErr.message}`
-        );
+        throw new Error(`Cobrança criada, mas falhou ao salvar santander_txid no pedido: ${updateErr.message}`);
       }
     }
 

@@ -18,7 +18,6 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
-  // ✅ valor real pago no MP (com juros/multa)
   paid_amount: number | null;
 
   logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
@@ -43,17 +42,14 @@ type FinanceSettingsRow = {
   apply_late_charges: boolean | null;
   late_fee_percent: number | null;
   daily_interest_percent: number | null;
-
-  // ✅ provedor ativo
   pix_provider?: PixProvider | null;
-
   updated_at?: string | null;
 };
 
 type CalcParams = {
   aplicar: boolean;
-  multaPct: number; // ex.: 0.02
-  jurosDiaPct: number; // ex.: 0.00033
+  multaPct: number;
+  jurosDiaPct: number;
 };
 
 type RowUi = {
@@ -180,20 +176,67 @@ function clampPercent(n: number) {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(n, 1000));
 }
-
-// ✅ helper simples: aceita "1,5" ou "1.5"
 function parsePercentInput(v: string) {
   const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, "");
   if (!s) return 0;
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : 0;
 }
-
 function normalizeProvider(v?: string | null): PixProvider {
   const p = String(v || "MP").toUpperCase();
   if (p === "ASAAS") return "ASAAS";
   if (p === "SANTANDER") return "SANTANDER";
   return "MP";
+}
+function parseMoneyInput(v: string) {
+  const s = String(v || "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+function dateToTs(v: string | null | undefined) {
+  if (!v) return 0;
+  const ts = new Date(v).getTime();
+  return Number.isFinite(ts) ? ts : 0;
+}
+function activeFilterCount(params: {
+  storeSelected: string[];
+  searchTerm: string;
+  paidFilter: string;
+  statusFilter: string;
+  logisticFilter: string;
+  deliveryFilter: string;
+  dateFrom: string;
+  dateTo: string;
+  payMethodFilter: string;
+  dueFilter: string;
+  dueFrom: string;
+  dueTo: string;
+  amountMin: string;
+  amountMax: string;
+  withCreditFilter: string;
+  sortBy: string;
+}) {
+  let n = 0;
+  if (params.storeSelected.length > 0) n++;
+  if (params.searchTerm.trim()) n++;
+  if (params.paidFilter !== "all") n++;
+  if (params.statusFilter !== "all") n++;
+  if (params.logisticFilter !== "all") n++;
+  if (params.deliveryFilter !== "all") n++;
+  if (params.dateFrom) n++;
+  if (params.dateTo) n++;
+  if (params.payMethodFilter !== "all") n++;
+  if (params.dueFilter !== "all") n++;
+  if (params.dueFrom) n++;
+  if (params.dueTo) n++;
+  if (params.amountMin) n++;
+  if (params.amountMax) n++;
+  if (params.withCreditFilter !== "all") n++;
+  if (params.sortBy !== "created_desc") n++;
+  return n;
 }
 
 export default function AdmFinanceiroPage() {
@@ -213,7 +256,6 @@ export default function AdmFinanceiroPage() {
   const [lateFeePercent, setLateFeePercent] = useState<string>("2");
   const [dailyInterestPercent, setDailyInterestPercent] = useState<string>("0,033");
 
-  // ✅ provedor ativo no admin
   const [pixProvider, setPixProvider] = useState<PixProvider>("MP");
 
   const [storeSelected, setStoreSelected] = useState<string[]>([]);
@@ -221,8 +263,11 @@ export default function AdmFinanceiroPage() {
   const [storeSearch, setStoreSearch] = useState("");
   const popRef = useRef<HTMLDivElement | null>(null);
 
+  const [searchTerm, setSearchTerm] = useState("");
+
   const [paidFilter, setPaidFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [logisticFilter, setLogisticFilter] = useState<string>("all");
   const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
@@ -231,6 +276,12 @@ export default function AdmFinanceiroPage() {
   const [dueFilter, setDueFilter] = useState<string>("all");
   const [dueFrom, setDueFrom] = useState<string>("");
   const [dueTo, setDueTo] = useState<string>("");
+
+  const [amountMin, setAmountMin] = useState<string>("");
+  const [amountMax, setAmountMax] = useState<string>("");
+  const [withCreditFilter, setWithCreditFilter] = useState<string>("all");
+
+  const [sortBy, setSortBy] = useState<string>("created_desc");
 
   const [viewMode, setViewMode] = useState<"compact" | "full">("compact");
 
@@ -281,7 +332,6 @@ export default function AdmFinanceiroPage() {
         setApplyLateCharges(!!(row.apply_late_charges ?? true));
         setLateFeePercent(String(row.late_fee_percent ?? 2).replace(".", ","));
         setDailyInterestPercent(String(row.daily_interest_percent ?? 0.033).replace(".", ","));
-
         setPixProvider(normalizeProvider((row as any).pix_provider));
       }
 
@@ -357,6 +407,25 @@ export default function AdmFinanceiroPage() {
     setStoreSelected(list.map((s) => s.id));
   }
 
+  function resetAllFilters() {
+    setSearchTerm("");
+    setPaidFilter("all");
+    setStatusFilter("all");
+    setLogisticFilter("all");
+    setDeliveryFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    setPayMethodFilter("all");
+    setDueFilter("all");
+    setDueFrom("");
+    setDueTo("");
+    setAmountMin("");
+    setAmountMax("");
+    setWithCreditFilter("all");
+    setSortBy("created_desc");
+    clearStores();
+  }
+
   async function loadFinance(storeList: StoreRow[], calc?: CalcParams) {
     setMsg("");
 
@@ -370,6 +439,7 @@ export default function AdmFinanceiroPage() {
     if (storeSelected.length > 0) q = q.in("store_id", storeSelected);
 
     if (statusFilter !== "all") q = q.eq("status", statusFilter);
+    if (logisticFilter !== "all") q = q.eq("logistic_status", logisticFilter);
     if (deliveryFilter !== "all") q = q.eq("delivery_mode", deliveryFilter);
 
     if (paidFilter === "paid") q = q.eq("is_paid", true);
@@ -402,6 +472,25 @@ export default function AdmFinanceiroPage() {
       orders = orders.filter((o) => !o.is_paid && !!o.due_date && o.due_date < today);
     } else if (dueFilter === "due_soon") {
       orders = orders.filter((o) => !o.is_paid && !!o.due_date && o.due_date >= today && o.due_date <= soonLimit);
+    } else if (dueFilter === "today") {
+      orders = orders.filter((o) => !!o.due_date && o.due_date === today);
+    } else if (dueFilter === "future") {
+      orders = orders.filter((o) => !!o.due_date && o.due_date > today);
+    } else if (dueFilter === "with_due") {
+      orders = orders.filter((o) => !!o.due_date);
+    }
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().toLowerCase();
+      const storeMapText = new Map<string, string>();
+      for (const s of storeList) {
+        storeMapText.set(s.id, `${s.name ?? ""} ${s.id}`.toLowerCase());
+      }
+
+      orders = orders.filter((o) => {
+        const storeText = storeMapText.get(o.store_id) ?? "";
+        return o.id.toLowerCase().includes(term) || storeText.includes(term);
+      });
     }
 
     if (orders.length === 0) {
@@ -454,7 +543,7 @@ export default function AdmFinanceiroPage() {
     const multaPct = calcUse.multaPct;
     const jurosDiaPct = calcUse.jurosDiaPct;
 
-    const ui: RowUi[] = orders.map((o) => {
+    let ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
 
       const viewTotal = totalsMap.get(o.id) ?? 0;
@@ -522,6 +611,30 @@ export default function AdmFinanceiroPage() {
 
         credit_balance: balMap.get(o.store_id) ?? 0,
       };
+    });
+
+    if (withCreditFilter === "yes") {
+      ui = ui.filter((r) => r.credit_applied > 0);
+    } else if (withCreditFilter === "no") {
+      ui = ui.filter((r) => r.credit_applied <= 0);
+    }
+
+    const min = amountMin ? parseMoneyInput(amountMin) : null;
+    const max = amountMax ? parseMoneyInput(amountMax) : null;
+
+    if (min !== null) ui = ui.filter((r) => r.a_pagar_exib >= min);
+    if (max !== null) ui = ui.filter((r) => r.a_pagar_exib <= max);
+
+    ui.sort((a, b) => {
+      if (sortBy === "created_asc") return dateToTs(a.created_at) - dateToTs(b.created_at);
+      if (sortBy === "created_desc") return dateToTs(b.created_at) - dateToTs(a.created_at);
+      if (sortBy === "due_asc") return dateToTs(a.due_date) - dateToTs(b.due_date);
+      if (sortBy === "due_desc") return dateToTs(b.due_date) - dateToTs(a.due_date);
+      if (sortBy === "amount_asc") return a.a_pagar_exib - b.a_pagar_exib;
+      if (sortBy === "amount_desc") return b.a_pagar_exib - a.a_pagar_exib;
+      if (sortBy === "store_asc") return a.store_name.localeCompare(b.store_name, "pt-BR");
+      if (sortBy === "store_desc") return b.store_name.localeCompare(a.store_name, "pt-BR");
+      return dateToTs(b.created_at) - dateToTs(a.created_at);
     });
 
     setRows(ui);
@@ -663,6 +776,25 @@ export default function AdmFinanceiroPage() {
     });
   }, [rows, viewMode]);
 
+  const filtrosAtivos = activeFilterCount({
+    storeSelected,
+    searchTerm,
+    paidFilter,
+    statusFilter,
+    logisticFilter,
+    deliveryFilter,
+    dateFrom,
+    dateTo,
+    payMethodFilter,
+    dueFilter,
+    dueFrom,
+    dueTo,
+    amountMin,
+    amountMax,
+    withCreditFilter,
+    sortBy,
+  });
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -726,63 +858,265 @@ export default function AdmFinanceiroPage() {
         </div>
       </Card>
 
-      {/* resto do arquivo permanece igual */}
-      <Card title="Filtros">
-        <div className="grid gap-3 md:grid-cols-6">
-          <div className="relative" ref={popRef}>
-            <div className="text-xs font-semibold text-slate-600 mb-1">Loja</div>
-            <Button variant="secondary" onClick={() => setStorePopoverOpen((v) => !v)} disabled={loading} className="w-full justify-between">
-              <span className="truncate">{storeButtonLabel()}</span>
-              <span className="ml-2 text-slate-500">{storePopoverOpen ? "▲" : "▼"}</span>
+      <Card
+        title="Filtros"
+        subtitle={filtrosAtivos === 0 ? "Nenhum filtro ativo." : `${filtrosAtivos} filtro(s) ativo(s).`}
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="secondary" onClick={resetAllFilters} disabled={loading}>
+              Limpar filtros
             </Button>
+            <Button onClick={onApply} disabled={loading}>
+              {loading ? "Aplicando..." : "Aplicar filtros"}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-6">
+            <div className="relative md:col-span-2" ref={popRef}>
+              <div className="text-xs font-semibold text-slate-600 mb-1">Loja</div>
+              <Button variant="secondary" onClick={() => setStorePopoverOpen((v) => !v)} disabled={loading} className="w-full justify-between">
+                <span className="truncate">{storeButtonLabel()}</span>
+                <span className="ml-2 text-slate-500">{storePopoverOpen ? "▲" : "▼"}</span>
+              </Button>
 
-            {storePopoverOpen ? (
-              <div className="absolute z-50 mt-2 w-[360px] max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold text-slate-900">Selecionar lojas</div>
-                  <Button variant="secondary" onClick={() => setStorePopoverOpen(false)}>Fechar</Button>
-                </div>
+              {storePopoverOpen ? (
+                <div className="absolute z-50 mt-2 w-[360px] max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-900">Selecionar lojas</div>
+                    <Button variant="secondary" onClick={() => setStorePopoverOpen(false)}>Fechar</Button>
+                  </div>
 
-                <div className="mt-3">
-                  <Input value={storeSearch} onChange={setStoreSearch} placeholder="Buscar loja..." />
-                </div>
+                  <div className="mt-3">
+                    <Input value={storeSearch} onChange={setStoreSearch} placeholder="Buscar loja..." />
+                  </div>
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={clearStores} disabled={loading}>Todas</Button>
-                  <Button variant="secondary" onClick={() => selectOnlyVisible(storeFilteredList)} disabled={loading || storeFilteredList.length === 0}>
-                    Selecionar filtradas
-                  </Button>
-                </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button variant="secondary" onClick={clearStores} disabled={loading}>Todas</Button>
+                    <Button variant="secondary" onClick={() => selectOnlyVisible(storeFilteredList)} disabled={loading || storeFilteredList.length === 0}>
+                      Selecionar filtradas
+                    </Button>
+                  </div>
 
-                <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200">
-                  {storeFilteredList.length === 0 ? (
-                    <div className="p-3 text-sm text-slate-500">Nenhuma loja encontrada.</div>
-                  ) : (
-                    <div className="divide-y divide-slate-100">
-                      {storeFilteredList.map((s) => {
-                        const checked = storeSelected.includes(s.id);
-                        return (
-                          <label key={s.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-slate-50">
-                            <input type="checkbox" checked={checked} onChange={() => toggleStore(s.id)} />
-                            <div className="min-w-0">
-                              <div className="text-sm font-semibold text-slate-900 truncate">{s.name ?? s.id}</div>
-                              <div className="text-xs font-mono text-slate-500 truncate">{s.id}</div>
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
+                  <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200">
+                    {storeFilteredList.length === 0 ? (
+                      <div className="p-3 text-sm text-slate-500">Nenhuma loja encontrada.</div>
+                    ) : (
+                      <div className="divide-y divide-slate-100">
+                        {storeFilteredList.map((s) => {
+                          const checked = storeSelected.includes(s.id);
+                          return (
+                            <label key={s.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-slate-50">
+                              <input type="checkbox" checked={checked} onChange={() => toggleStore(s.id)} />
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-slate-900 truncate">{s.name ?? s.id}</div>
+                                <div className="text-xs font-mono text-slate-500 truncate">{s.id}</div>
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ) : null}
+              ) : null}
+            </div>
+
+            <div className="md:col-span-2">
+              <Input
+                label="Buscar pedido ou loja"
+                value={searchTerm}
+                onChange={setSearchTerm}
+                placeholder="Ex.: ID do pedido ou nome da unidade"
+              />
+            </div>
+
+            <Select
+              label="Situação financeira"
+              value={paidFilter}
+              onChange={setPaidFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "paid", label: "Somente pagos" },
+                { value: "unpaid", label: "Somente em aberto" },
+              ]}
+            />
+
+            <Select
+              label="Forma de pagamento"
+              value={payMethodFilter}
+              onChange={setPayMethodFilter}
+              options={[
+                { value: "all", label: "Todas" },
+                { value: "PIX", label: "PIX" },
+                { value: "CARTAO", label: "Cartão" },
+                { value: "BOLETO", label: "Boleto" },
+              ]}
+            />
           </div>
 
-          {/* ... (mantive o restante exatamente como estava no seu arquivo) */}
+          <div className="grid gap-3 md:grid-cols-6">
+            <Select
+              label="Status do pedido"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "submitted", label: "Submitted" },
+                { value: "approved", label: "Approved" },
+                { value: "rejected", label: "Rejected" },
+              ]}
+            />
+
+            <Select
+              label="Status logístico"
+              value={logisticFilter}
+              onChange={setLogisticFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "RECEBIDO", label: "Recebido" },
+                { value: "EM_SEPARACAO", label: "Em separação" },
+                { value: "ENTREGUE", label: "Entregue" },
+              ]}
+            />
+
+            <Select
+              label="Entrega"
+              value={deliveryFilter}
+              onChange={setDeliveryFilter}
+              options={[
+                { value: "all", label: "Todas" },
+                { value: "FRETE", label: "Frete" },
+                { value: "RETIRADA", label: "Retirada" },
+              ]}
+            />
+
+            <Select
+              label="Vencimento"
+              value={dueFilter}
+              onChange={setDueFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "overdue", label: "Vencidos" },
+                { value: "due_soon", label: "A vencer (3 dias)" },
+                { value: "today", label: "Vence hoje" },
+                { value: "future", label: "Vence depois" },
+                { value: "with_due", label: "Com vencimento" },
+                { value: "no_due", label: "Sem vencimento" },
+              ]}
+            />
+
+            <Select
+              label="Usou crédito?"
+              value={withCreditFilter}
+              onChange={setWithCreditFilter}
+              options={[
+                { value: "all", label: "Todos" },
+                { value: "yes", label: "Com crédito" },
+                { value: "no", label: "Sem crédito" },
+              ]}
+            />
+
+            <Select
+              label="Ordenar por"
+              value={sortBy}
+              onChange={setSortBy}
+              options={[
+                { value: "created_desc", label: "Criação (mais recente)" },
+                { value: "created_asc", label: "Criação (mais antiga)" },
+                { value: "due_asc", label: "Vencimento (mais próximo)" },
+                { value: "due_desc", label: "Vencimento (mais distante)" },
+                { value: "amount_desc", label: "A pagar (maior)" },
+                { value: "amount_asc", label: "A pagar (menor)" },
+                { value: "store_asc", label: "Loja (A-Z)" },
+                { value: "store_desc", label: "Loja (Z-A)" },
+              ]}
+            />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-6">
+            <Input label="Criado de" type="date" value={dateFrom} onChange={setDateFrom} />
+            <Input label="Criado até" type="date" value={dateTo} onChange={setDateTo} />
+            <Input label="Vencimento de" type="date" value={dueFrom} onChange={setDueFrom} />
+            <Input label="Vencimento até" type="date" value={dueTo} onChange={setDueTo} />
+            <Input label="A pagar mín." value={amountMin} onChange={setAmountMin} placeholder="Ex.: 100" />
+            <Input label="A pagar máx." value={amountMax} onChange={setAmountMax} placeholder="Ex.: 5000" />
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const hoje = ymdToday();
+                setDateFrom(hoje);
+                setDateTo(hoje);
+              }}
+            >
+              Criados hoje
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDateFrom(addDaysYMD(-7));
+                setDateTo(ymdToday());
+              }}
+            >
+              Últimos 7 dias
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDateFrom(addDaysYMD(-30));
+                setDateTo(ymdToday());
+              }}
+            >
+              Últimos 30 dias
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDueFilter("overdue");
+                setPaidFilter("unpaid");
+              }}
+            >
+              Em aberto vencidos
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDueFilter("due_soon");
+                setPaidFilter("unpaid");
+              }}
+            >
+              A vencer
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPaidFilter("paid");
+              }}
+            >
+              Somente pagos
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPaidFilter("unpaid");
+              }}
+            >
+              Somente em aberto
+            </Button>
+          </div>
         </div>
       </Card>
 
-      {/* A partir daqui o seu arquivo segue igual. */}
       <Card title="Resumo">
         <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -818,6 +1152,16 @@ export default function AdmFinanceiroPage() {
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-semibold text-slate-500">Em aberto</div>
             <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalAberto)}</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Qtd. vencidos</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{resumo.qtdVencidos}</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold text-slate-500">Qtd. a vencer</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900">{resumo.qtdAVencer}</div>
           </div>
         </div>
       </Card>
