@@ -30,7 +30,7 @@ type TotalsRow = { order_id: string; store_id: string; total_cost: number | null
 type OrderItemRow = { order_id: string; qty: number | null; unit_cost: number | null };
 type CreditBalRow = { store_id: string; balance: number | null };
 
-type PixProvider = "MP" | "ASAAS";
+type PixProvider = "MP" | "ASAAS" | "SANTANDER";
 
 type FinanceSettingsRow = {
   id: number;
@@ -73,17 +73,12 @@ type RowUi = {
 type PixCreateResponse = {
   paymentId: string;
   status?: string;
-  detail?: string;
+  detail?: string | null;
   qrCode: string;
   qrCodeBase64: string;
   amountUsed?: number;
-
-  // expiração real retornada pelo gateway
-  expiresAt?: string;
-
-  // expiração operacional controlada pelo sistema (10 min)
+  expiresAt?: string | null;
   operationalExpiresAt?: string;
-
   gateway: PixProvider;
   invoiceUrl?: string;
   externalReference?: string;
@@ -92,7 +87,7 @@ type PixCreateResponse = {
 
 type PixPoll = {
   state: "idle" | "checking" | "approved" | "failed" | "expired";
-  lastCheckAt?: string;
+  lastCheckAt?: string; // ISO
   provider?: PixProvider;
   providerStatus?: string | null;
   providerDetail?: string | null;
@@ -180,7 +175,10 @@ function fmtMMSS(ms: number) {
   return `${mm}:${ss}`;
 }
 function normalizeProvider(v?: string | null): PixProvider {
-  return String(v || "MP").toUpperCase() === "ASAAS" ? "ASAAS" : "MP";
+  const p = String(v || "MP").toUpperCase();
+  if (p === "ASAAS") return "ASAAS";
+  if (p === "SANTANDER") return "SANTANDER";
+  return "MP";
 }
 function parseAsaasExpiration(value?: string | null): string | null {
   const v = String(value || "").trim();
@@ -194,6 +192,25 @@ function addMinutesISO(minutes: number) {
   const d = new Date();
   d.setMinutes(d.getMinutes() + minutes);
   return d.toISOString();
+}
+function providerLabel(p?: PixProvider | null) {
+  if (p === "ASAAS") return "Asaas";
+  if (p === "SANTANDER") return "Santander";
+  return "Mercado Pago";
+}
+
+/** ✅ relógio de "há X segundos" só para UX (não depende de polling) */
+function sinceLabel(iso?: string) {
+  if (!iso) return "";
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const diff = Math.max(Date.now() - t, 0);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `há ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `há ${m}min`;
+  const h = Math.floor(m / 60);
+  return `há ${h}h`;
 }
 
 export default function FinanceiroFranqueadoPage() {
@@ -230,7 +247,9 @@ export default function FinanceiroFranqueadoPage() {
 
   const pollTimerRef = useRef<number | null>(null);
   const countdownTimerRef = useRef<number | null>(null);
+  const lastCheckClockRef = useRef<number | null>(null); // ✅ relógio de UI
   const [countdownMs, setCountdownMs] = useState<number | null>(null);
+  const [lastCheckUiNow, setLastCheckUiNow] = useState<number>(Date.now()); // força re-render do "há X"
 
   useEffect(() => {
     (async () => {
@@ -292,8 +311,16 @@ export default function FinanceiroFranqueadoPage() {
   function stopAllTimers() {
     if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
     if (countdownTimerRef.current) window.clearInterval(countdownTimerRef.current);
+    if (lastCheckClockRef.current) window.clearInterval(lastCheckClockRef.current);
     pollTimerRef.current = null;
     countdownTimerRef.current = null;
+    lastCheckClockRef.current = null;
+  }
+
+  /** ✅ inicia relógio local para atualizar "há X" sem depender de polling */
+  function startLastCheckClock() {
+    if (lastCheckClockRef.current) window.clearInterval(lastCheckClockRef.current);
+    lastCheckClockRef.current = window.setInterval(() => setLastCheckUiNow(Date.now()), 1000) as any;
   }
 
   async function loadFinanceSettings(): Promise<FinanceSettingsRow | null> {
@@ -505,38 +532,106 @@ export default function FinanceiroFranqueadoPage() {
     externalReference?: string | null;
     rawResponse?: any;
   }) {
-    const resp = await fetch("/api/payments/log", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(params),
-    });
-
-    const text = await resp.text();
-    let data: any = null;
     try {
-      data = JSON.parse(text);
-    } catch {
-      data = null;
-    }
+      const resp = await fetch("/api/payments/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
 
-    if (!resp.ok) {
-      const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
-      throw new Error(`Erro ao gravar log do pagamento | HTTP ${resp.status} ${resp.statusText} | ${details}`);
-    }
+      const text = await resp.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
 
-    return data;
+      if (!resp.ok) {
+        const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
+        throw new Error(`Erro ao gravar log do pagamento | HTTP ${resp.status} ${resp.statusText} | ${details}`);
+      }
+
+      return data;
+    } catch (e) {
+      console.warn("Falha ao gravar log de pagamento:", e);
+      return null;
+    }
   }
 
   async function checkPaymentOnce(paymentId: string, provider: PixProvider) {
+    // ✅ sempre atualiza lastCheckAt (mesmo se der erro depois)
     setPoll((p) => ({ ...p, lastCheckAt: new Date().toISOString(), provider }));
 
-    if (provider === "ASAAS") {
-      const resp = await fetch(`/api/asaas/status?paymentId=${encodeURIComponent(paymentId)}`, {
-        method: "GET",
-      });
+    if (provider === "SANTANDER") {
+      const resp = await fetch(
+        `/api/santander/status?txid=${encodeURIComponent(paymentId)}${
+          pixOrderId ? `&orderId=${encodeURIComponent(pixOrderId)}` : ""
+        }`,
+        { method: "GET" }
+      );
 
+      const text = await resp.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
+      }
+
+      if (!resp.ok) {
+        const details = data?.error
+          ? String(data.error)
+          : data?.details
+          ? JSON.stringify(data.details)
+          : text.slice(0, 300);
+
+        throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
+      }
+
+      const st = String(data?.normalized_status ?? "").toLowerCase();
+      const providerStatus = String(data?.status ?? "ATIVA");
+
+      if (st === "approved") {
+        setPoll({
+          state: "approved",
+          provider: "SANTANDER",
+          lastCheckAt: new Date().toISOString(),
+          providerStatus,
+          providerDetail: "Pagamento confirmado",
+          approvedAt: data?.approved_at ?? new Date().toISOString(),
+        });
+        stopAllTimers();
+        await onReload();
+        return;
+      }
+
+      if (st === "expired" || st === "cancelled") {
+        setPoll({
+          state: "expired",
+          provider: "SANTANDER",
+          lastCheckAt: new Date().toISOString(),
+          providerStatus,
+          providerDetail: "Cobrança não está mais ativa",
+          message: "QR expirado ou cancelado. Gere um novo PIX.",
+        });
+        stopAllTimers();
+        return;
+      }
+
+      setPoll((p) => ({
+        ...p,
+        state: "checking",
+        provider: "SANTANDER",
+        providerStatus,
+        providerDetail: "Aguardando pagamento",
+        lastCheckAt: new Date().toISOString(),
+      }));
+      return;
+    }
+
+    if (provider === "ASAAS") {
+      const resp = await fetch(`/api/asaas/status?paymentId=${encodeURIComponent(paymentId)}`, { method: "GET" });
       const text = await resp.text();
       let data: any = null;
       try {
@@ -580,39 +675,20 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      if (
-        st === "REFUNDED" ||
-        st === "REFUND_REQUESTED" ||
-        st === "CHARGEBACK_DISPUTE" ||
-        st === "AWAITING_CHARGEBACK_REVERSAL" ||
-        st === "DUNNING_REQUESTED" ||
-        st === "DUNNING_RECEIVED"
-      ) {
-        setPoll({
-          state: "failed",
-          provider: "ASAAS",
-          lastCheckAt: new Date().toISOString(),
-          providerStatus: st,
-          providerDetail: detail,
-          message: `Pagamento em estado ${st}`,
-        });
-        stopAllTimers();
-        return;
-      }
-
       setPoll((p) => ({
         ...p,
         state: "checking",
         provider: "ASAAS",
         providerStatus: st,
         providerDetail: detail,
+        lastCheckAt: new Date().toISOString(),
       }));
       return;
     }
 
+    // MP
     const resp = await fetch(`/api/mp/payment-status?paymentId=${encodeURIComponent(paymentId)}`, { method: "GET" });
     const text = await resp.text();
-
     let data: any = null;
     try {
       data = JSON.parse(text);
@@ -655,25 +731,13 @@ export default function FinanceiroFranqueadoPage() {
       return;
     }
 
-    if (st === "rejected" || st === "cancelled" || st === "refunded" || st === "charged_back") {
-      setPoll({
-        state: "failed",
-        provider: "MP",
-        lastCheckAt: new Date().toISOString(),
-        providerStatus: st,
-        providerDetail: det,
-        message: `Pagamento ${st}`,
-      });
-      stopAllTimers();
-      return;
-    }
-
     setPoll((p) => ({
       ...p,
       state: "checking",
       provider: "MP",
       providerStatus: st,
       providerDetail: det,
+      lastCheckAt: new Date().toISOString(),
     }));
   }
 
@@ -703,6 +767,8 @@ export default function FinanceiroFranqueadoPage() {
 
   async function startPolling(paymentId: string, provider: PixProvider, operationalExpiresAtISO: string | null) {
     stopAllTimers();
+    startLastCheckClock(); // ✅ mantém UI viva
+
     setPoll({ state: "checking", lastCheckAt: new Date().toISOString(), provider });
 
     startCountdown(operationalExpiresAtISO);
@@ -761,11 +827,98 @@ export default function FinanceiroFranqueadoPage() {
     setCountdownMs(null);
     stopAllTimers();
 
-    const hasCharges = r.late_days > 0 && (r.late_fee > 0 || r.late_interest > 0) && !r.is_paid && r.due_status === "VENCIDO";
+    const hasCharges =
+      r.late_days > 0 &&
+      (r.late_fee > 0 || r.late_interest > 0) &&
+      !r.is_paid &&
+      r.due_status === "VENCIDO";
+
     const amountFront = clamp2(hasCharges ? r.a_pagar_com_encargos : r.a_pagar);
 
     try {
       setPixLoading(true);
+
+      if (pixProvider === "SANTANDER") {
+        const resp = await fetch("/api/santander/pix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            orderId: r.id,
+            pedido: r.id,
+            storeId,
+            value: amountFront,
+            valor: amountFront,
+            description: `Pedido ${r.id}`,
+            nome: "Cliente",
+            cpf: "",
+            payer: {
+              email: userEmail || "cliente@cliente.com",
+              name: "Cliente",
+              cpf: "",
+            },
+          }),
+        });
+
+        const text = await resp.text();
+        let data: any = null;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = null;
+        }
+
+        if (!resp.ok) {
+          const details = data?.error ? String(data.error) : data?.details ? JSON.stringify(data.details) : text.slice(0, 500);
+          throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
+        }
+
+        const paymentId = String(data?.paymentId ?? data?.txid ?? data?.id ?? "").trim();
+        const status = String(data?.status ?? "ATIVA").trim();
+        const qrCode = String(data?.qrCode ?? "").trim();
+        const qrCodeBase64 = String(data?.qrCodeBase64 ?? "").trim();
+
+        if (!paymentId) throw new Error("Santander não retornou paymentId.");
+        if (!qrCode) throw new Error("Santander não retornou qrCode.");
+        if (!qrCodeBase64) throw new Error("Santander não retornou qrCodeBase64.");
+
+        setPixAmountUsed(Number(data?.amountUsed ?? amountFront));
+
+        await logPaymentRecord({
+          orderId: r.id,
+          storeId,
+          gateway: "SANTANDER",
+          paymentId,
+          status,
+          amount: Number(data?.amountUsed ?? amountFront),
+          qrCode,
+          qrCodeBase64,
+          expiresAt: data?.expiresAt ? String(data.expiresAt) : null,
+          invoiceUrl: null,
+          externalReference: r.id,
+          rawResponse: data,
+        });
+
+        // ✅ Santander: validade operacional SEMPRE 10 min a partir de agora
+        const operationalExpiresAt = addMinutesISO(10);
+
+        setPixData({
+          gateway: "SANTANDER",
+          paymentId,
+          status,
+          detail: data?.detail ?? "QR gerado com sucesso",
+          qrCode,
+          qrCodeBase64,
+          amountUsed: Number(data?.amountUsed ?? amountFront),
+          expiresAt: data?.expiresAt ? String(data.expiresAt) : null,
+          operationalExpiresAt,
+          invoiceUrl: undefined,
+          externalReference: r.id,
+          rawResponse: data,
+        });
+
+        await startPolling(paymentId, "SANTANDER", operationalExpiresAt);
+        return;
+      }
 
       if (pixProvider === "ASAAS") {
         const resp = await fetch("/api/asaas/pix", {
@@ -795,22 +948,10 @@ export default function FinanceiroFranqueadoPage() {
         }
 
         const payId = String(data?.payment?.id ?? "");
-        if (!payId) {
-          throw new Error("Asaas não retornou payment.id");
-        }
+        if (!payId) throw new Error("Asaas não retornou payment.id");
 
-        const used = Number(
-          data?.payment?.value ??
-            data?.pricing?.amountToCharge ??
-            data?.amountUsed ??
-            amountFront
-        );
-
-        if (Number.isFinite(used)) {
-          setPixAmountUsed(used);
-        } else {
-          setPixAmountUsed(amountFront);
-        }
+        const used = Number(data?.payment?.value ?? data?.pricing?.amountToCharge ?? data?.amountUsed ?? amountFront);
+        setPixAmountUsed(Number.isFinite(used) ? used : amountFront);
 
         const expiresAt = parseAsaasExpiration(data?.pix?.expirationDate);
         const operationalExpiresAt = addMinutesISO(10);
@@ -855,6 +996,7 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
+      // MP
       const resp = await fetch("/api/mp/pix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -880,9 +1022,7 @@ export default function FinanceiroFranqueadoPage() {
       }
 
       const payId = String(data?.paymentId ?? "");
-      if (!payId) {
-        throw new Error("Mercado Pago não retornou paymentId");
-      }
+      if (!payId) throw new Error("Mercado Pago não retornou paymentId");
 
       const used = Number(data?.amountUsed ?? amountFront);
       if (Number.isFinite(used)) setPixAmountUsed(used);
@@ -1022,14 +1162,14 @@ export default function FinanceiroFranqueadoPage() {
       <div className="space-y-4">
         <PageHeader
           title="Financeiro"
-          subtitle={`Resumo de pedidos, crédito e pagamentos. Provedor PIX ativo: ${pixProvider === "ASAAS" ? "Asaas" : "Mercado Pago"}`}
+          subtitle={`Resumo de pedidos, crédito e pagamentos. Provedor PIX ativo: ${providerLabel(pixProvider)}`}
         />
 
         <Card title="Filtros" right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}>
           {msg ? <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div> : null}
 
           <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-            Provedor PIX ativo nesta loja: <b>{pixProvider === "ASAAS" ? "Asaas" : "Mercado Pago"}</b>
+            Provedor PIX ativo nesta loja: <b>{providerLabel(pixProvider)}</b>
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
@@ -1160,7 +1300,7 @@ export default function FinanceiroFranqueadoPage() {
                         Pedido: <span className="font-mono">{pixOrderId}</span>
                       </div>
                       <div className="text-xs text-slate-500 truncate">
-                        Provedor: <span className="font-semibold">{pixData?.gateway === "ASAAS" ? "Asaas" : pixData?.gateway === "MP" ? "Mercado Pago" : pixProvider === "ASAAS" ? "Asaas" : "Mercado Pago"}</span>
+                        Provedor: <span className="font-semibold">{providerLabel(pixData?.gateway || pixProvider)}</span>
                       </div>
                     </div>
                     <Button variant="secondary" onClick={closePixModal}>
@@ -1211,9 +1351,12 @@ export default function FinanceiroFranqueadoPage() {
 
                           <div className="mt-1 text-xs text-slate-500">
                             Última checagem: {poll.lastCheckAt ? fmtBR(poll.lastCheckAt) : "—"}
-                            {poll.provider ? ` • Provedor: ${poll.provider === "ASAAS" ? "Asaas" : "MP"}` : ""}
+                            {poll.lastCheckAt ? ` • ${sinceLabel(poll.lastCheckAt)}` : ""}
+                            {poll.provider ? ` • Provedor: ${providerLabel(poll.provider)}` : ""}
                             {poll.providerStatus ? ` • Status: ${poll.providerStatus}` : ""}
                             {poll.providerDetail ? ` (${poll.providerDetail})` : ""}
+                            {/* força re-render do "há X" */}
+                            <span className="hidden">{String(lastCheckUiNow)}</span>
                           </div>
 
                           {poll.state === "failed" && poll.message ? (
@@ -1241,6 +1384,7 @@ export default function FinanceiroFranqueadoPage() {
                             >
                               Rechecar agora
                             </Button>
+
                             <Button variant="secondary" onClick={onReload}>
                               Atualizar financeiro
                             </Button>
@@ -1251,17 +1395,19 @@ export default function FinanceiroFranqueadoPage() {
                           ID do pagamento: <span className="font-mono">{pixData.paymentId}</span>
                         </div>
 
-                        <div className="flex justify-center">
-                          <img
-                            alt="QR Code PIX"
-                            src={`data:image/png;base64,${pixData.qrCodeBase64}`}
-                            className="h-auto w-full max-w-[320px] rounded-xl border"
-                          />
-                        </div>
+                        {!!pixData.qrCodeBase64 ? (
+                          <div className="flex justify-center">
+                            <img
+                              alt="QR Code PIX"
+                              src={`data:image/png;base64,${pixData.qrCodeBase64}`}
+                              className="h-auto w-full max-w-[320px] rounded-xl border"
+                            />
+                          </div>
+                        ) : null}
 
                         <div>
                           <div className="mb-1 text-sm font-semibold">PIX Copia e Cola</div>
-                          <textarea readOnly value={pixData.qrCode} className="w-full rounded-xl border px-3 py-2 text-xs" rows={5} />
+                          <textarea readOnly value={pixData.qrCode || ""} className="w-full rounded-xl border px-3 py-2 text-xs" rows={5} />
                         </div>
                       </div>
                     ) : null}
