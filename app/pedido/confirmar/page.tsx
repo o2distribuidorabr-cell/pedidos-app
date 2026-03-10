@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 import PortalShell from "@/app/components/PortalShell";
-import { PageHeader, Card, Button, Badge } from "@/app/components/ui";
+import { PageHeader, Card, Badge } from "@/app/components/ui";
 
 type CartItem = {
   product_id: string;
@@ -15,7 +15,6 @@ type CartItem = {
   unit_cost: number;
   qty: number;
 
-  // ✅ NOVO (para NF-e — vem do localStorage)
   ncm?: string | null;
   cest?: string | null;
   cfop?: string | null;
@@ -39,10 +38,12 @@ type DeliveryInfo = {
 };
 
 function money(v: number) {
-  return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(v) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
-// ✅ NOVO: normaliza o payload do carrinho (não altera nada do fluxo — só evita undefined)
 function normalizeCartItems(raw: any): CartItem[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -54,7 +55,6 @@ function normalizeCartItems(raw: any): CartItem[] {
       unit_cost: Number(it?.unit_cost ?? 0) || 0,
       qty: Number(it?.qty ?? 0) || 0,
 
-      // fiscais (podem ser null)
       ncm: it?.ncm ?? null,
       cest: it?.cest ?? null,
       cfop: it?.cfop ?? null,
@@ -65,6 +65,100 @@ function normalizeCartItems(raw: any): CartItem[] {
       cofins_cst: it?.cofins_cst ?? null,
     }))
     .filter((x) => !!x.product_id && x.qty > 0);
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.26)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SegmentedSwitch({
+  value,
+  onChange,
+  disabled,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-white/80 p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+      <div className="grid grid-cols-2 gap-1.5">
+        {options.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(opt.value)}
+              className={[
+                "h-11 rounded-[16px] px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                active
+                  ? "bg-cyan-600 text-white shadow-[0_12px_24px_rgba(8,145,178,0.22)]"
+                  : "bg-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+              ].join(" ")}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export default function ConfirmarPedidoPage() {
@@ -81,19 +175,34 @@ export default function ConfirmarPedidoPage() {
   const [storeName, setStoreName] = useState<string>("-");
   const [storeId, setStoreId] = useState<string | null>(null);
 
-  // entrega/frete
   const [deliveryMode, setDeliveryMode] = useState<"RETIRADA" | "FRETE">("RETIRADA");
-  const [freightFee, setFreightFee] = useState<number>(0); // sempre "frete padrão da loja"
-  const [storeFreightFee, setStoreFreightFee] = useState<number>(0); // cache do frete da loja (stores.freight_fee)
+  const [freightFee, setFreightFee] = useState<number>(0);
+  const [storeFreightFee, setStoreFreightFee] = useState<number>(0);
 
   const itemsTotal = useMemo(
-    () => items.reduce((acc, it) => acc + (Number(it.qty) || 0) * (Number(it.unit_cost) || 0), 0),
+    () =>
+      items.reduce(
+        (acc, it) => acc + (Number(it.qty) || 0) * (Number(it.unit_cost) || 0),
+        0
+      ),
     [items]
   );
 
-  const freightApplied = useMemo(() => (deliveryMode === "FRETE" ? Number(freightFee || 0) : 0), [deliveryMode, freightFee]);
+  const selectedItemsCount = useMemo(() => items.length, [items]);
 
-  const grandTotal = useMemo(() => itemsTotal + freightApplied, [itemsTotal, freightApplied]);
+  const selectedUnitsCount = useMemo(() => {
+    return items.reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
+  }, [items]);
+
+  const freightApplied = useMemo(
+    () => (deliveryMode === "FRETE" ? Number(freightFee || 0) : 0),
+    [deliveryMode, freightFee]
+  );
+
+  const grandTotal = useMemo(
+    () => itemsTotal + freightApplied,
+    [itemsTotal, freightApplied]
+  );
 
   function persistDelivery(mode: "RETIRADA" | "FRETE", fee: number) {
     const payload: DeliveryInfo = {
@@ -107,7 +216,6 @@ export default function ConfirmarPedidoPage() {
   async function applyDeliveryMode(mode: "RETIRADA" | "FRETE") {
     setDeliveryMode(mode);
 
-    // se for frete, garante que o fee é o padrão da loja
     const fee = mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
     setFreightFee(mode === "FRETE" ? fee : 0);
     persistDelivery(mode, fee);
@@ -128,13 +236,10 @@ export default function ConfirmarPedidoPage() {
 
       setUserEmail(user.email ?? "-");
 
-      // carrinho
       const raw = localStorage.getItem("cart_items");
       const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-      // ✅ NOVO: normaliza para suportar campos fiscais sem quebrar nada
       setItems(normalizeCartItems(parsed));
 
-      // store_id do profile
       const { data: profile, error: pErr } = await supabase
         .from("profiles")
         .select("store_id")
@@ -156,7 +261,6 @@ export default function ConfirmarPedidoPage() {
         return;
       }
 
-      // nome da loja + frete padrão
       const { data: store, error: sErr } = await supabase
         .from("stores")
         .select("id,name,freight_fee")
@@ -176,16 +280,16 @@ export default function ConfirmarPedidoPage() {
       setStoreName(stName);
       setStoreFreightFee(stFreight);
 
-      // delivery_info (mas agora validando com frete da loja)
       const rawDelivery = localStorage.getItem("delivery_info");
-      const dParsed = rawDelivery ? (JSON.parse(rawDelivery) as Partial<DeliveryInfo>) : null;
+      const dParsed = rawDelivery
+        ? (JSON.parse(rawDelivery) as Partial<DeliveryInfo>)
+        : null;
 
       const dMode =
         dParsed?.delivery_mode === "FRETE" || dParsed?.delivery_mode === "RETIRADA"
           ? dParsed.delivery_mode
           : "RETIRADA";
 
-      // se for FRETE, sempre usar o frete da loja (não confiar em valor antigo salvo)
       const effectiveFee = dMode === "FRETE" ? stFreight : 0;
 
       setDeliveryMode(dMode);
@@ -224,9 +328,9 @@ export default function ConfirmarPedidoPage() {
     const status = "submitted";
 
     const delivery_mode: "RETIRADA" | "FRETE" = deliveryMode;
-    const freight_fee = delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
+    const freight_fee =
+      delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
 
-    // 1) cria pedido
     const { data: orderInserted, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -237,7 +341,6 @@ export default function ConfirmarPedidoPage() {
         created_at: now,
         submitted_at: now,
         approved_at: null,
-
         delivery_mode,
         freight_fee,
       })
@@ -252,7 +355,6 @@ export default function ConfirmarPedidoPage() {
 
     const order_id = String(orderInserted.id);
 
-    // 2) cria itens (mantém exatamente como está hoje)
     const rows = items.map((it) => ({
       order_id,
       product_id: it.product_id,
@@ -269,26 +371,6 @@ export default function ConfirmarPedidoPage() {
       setMsg(itemsError.message);
       return;
     }
-
-    // ✅ NOVO (pronto para NF-e):
-    // Aqui está o gancho para salvar dados fiscais por item em uma tabela própria (opcional).
-    // Não executa nada agora para NÃO quebrar seu schema atual.
-    //
-    // Exemplo futuro (quando você criar uma tabela `order_item_taxes`):
-    // const taxRows = items.map((it) => ({
-    //   order_id,
-    //   product_id: it.product_id,
-    //   ncm: it.ncm ?? null,
-    //   cest: it.cest ?? null,
-    //   cfop: it.cfop ?? null,
-    //   ean: it.ean ?? null,
-    //   origin: it.origin ?? null,
-    //   icms_cst: it.icms_cst ?? null,
-    //   pis_cst: it.pis_cst ?? null,
-    //   cofins_cst: it.cofins_cst ?? null,
-    //   created_at: now,
-    // }));
-    // await supabase.from("order_item_taxes").insert(taxRows);
 
     localStorage.removeItem("cart_items");
     localStorage.removeItem("delivery_info");
@@ -308,151 +390,289 @@ export default function ConfirmarPedidoPage() {
   }
 
   return (
-    <PortalShell title="Confirmar pedido" subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Revise antes de enviar"}>
-      <div className="space-y-4">
+    <PortalShell
+      title="Confirmar pedido"
+      subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Revise antes de enviar"}
+    >
+      <div className="space-y-6">
         <PageHeader
           title="Confirmar pedido"
           subtitle={`Usuário: ${userEmail} • Loja: ${storeName}`}
           right={
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => router.push("/pedido")} disabled={sending}>
+              <SecondaryActionButton
+                onClick={() => router.push("/pedido")}
+                disabled={sending}
+              >
                 Voltar
-              </Button>
-              <Button onClick={onSubmit} disabled={sending || items.length === 0}>
+              </SecondaryActionButton>
+
+              <PrimaryActionButton
+                onClick={onSubmit}
+                disabled={sending || items.length === 0}
+              >
                 {sending ? "Enviando..." : `Enviar (${money(grandTotal)})`}
-              </Button>
+              </PrimaryActionButton>
             </div>
           }
         />
 
         {msg ? (
           <Card title="Erro">
-            <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+            <div className="text-sm whitespace-pre-wrap text-red-600">{msg}</div>
           </Card>
         ) : null}
 
         {items.length === 0 ? (
-          <Card>
+          <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <div className="text-sm text-slate-700">
               Seu carrinho está vazio.{" "}
-              <button className="font-semibold text-slate-900 underline" onClick={() => router.push("/pedido")}>
+              <button
+                className="font-semibold text-cyan-700 underline"
+                onClick={() => router.push("/pedido")}
+              >
                 Voltar para novo pedido
               </button>
             </div>
-          </Card>
+          </div>
         ) : (
-          <>
-            {/* Entrega COM EFEITO */}
-            <Card title="Entrega" subtitle="Aqui você ainda pode alterar Retirada/Frete antes de enviar.">
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  variant={deliveryMode === "RETIRADA" ? "primary" : "secondary"}
-                  onClick={() => applyDeliveryMode("RETIRADA")}
-                  disabled={sending}
-                >
-                  Retirada
-                </Button>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-6">
+              <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Entrega</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Você ainda pode alterar a forma de entrega antes de enviar.
+                    </div>
 
-                <Button
-                  variant={deliveryMode === "FRETE" ? "primary" : "secondary"}
-                  onClick={() => applyDeliveryMode("FRETE")}
-                  disabled={sending}
-                >
-                  Frete
-                </Button>
+                    <div className="mt-4 max-w-md">
+                      <SegmentedSwitch
+                        value={deliveryMode}
+                        onChange={(v) => applyDeliveryMode(v as "RETIRADA" | "FRETE")}
+                        disabled={sending}
+                        options={[
+                          { value: "RETIRADA", label: "Retirada" },
+                          { value: "FRETE", label: "Frete" },
+                        ]}
+                      />
+                    </div>
 
-                <div className="ml-auto flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-slate-600">Frete:</span>
-                  <span className="font-semibold text-slate-900">{money(freightApplied)}</span>
-                  {deliveryMode === "FRETE" ? <Badge tone="yellow">Frete</Badge> : <Badge tone="neutral">Retirada</Badge>}
+                    <div className="mt-3 text-xs text-slate-500">
+                      O total do pedido inclui o frete somente quando <b>Frete</b> estiver selecionado.
+                    </div>
+                  </div>
+
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Resumo da entrega
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Modalidade</span>
+                        {deliveryMode === "FRETE" ? (
+                          <Badge tone="yellow">Frete</Badge>
+                        ) : (
+                          <Badge tone="neutral">Retirada</Badge>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Frete aplicado</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {money(freightApplied)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Itens</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {selectedItemsCount}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-2 text-xs text-slate-500">
-                O total do pedido inclui o frete somente quando <b>Frete</b> estiver selecionado.
-              </div>
-            </Card>
+              <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      Itens do pedido ({items.length})
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Revise os itens e quantidades antes do envio.
+                    </div>
+                  </div>
 
-            {/* Itens */}
-            <Card title={`Itens (${items.length})`}>
-              <div className="overflow-x-auto">
-                <table className="w-full border-separate border-spacing-0">
-                  <thead>
-                    <tr className="text-left text-xs text-slate-600">
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Nome</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Qtd</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
-                    </tr>
-                  </thead>
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Quantidade total
+                    </div>
+                    <div className="mt-1 text-lg font-semibold text-slate-900">
+                      {selectedUnitsCount}
+                    </div>
+                  </div>
+                </div>
 
-                  <tbody>
-                    {items.map((it) => {
-                      const line = (Number(it.qty) || 0) * (Number(it.unit_cost) || 0);
-                      return (
-                        <tr key={it.product_id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                            <div className="font-mono text-xs text-slate-600">{it.sku}</div>
-                          </td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                            <div className="text-sm font-semibold text-slate-900">{it.name}</div>
-                          </td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">{it.unit}</td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
-                            {money(Number(it.unit_cost || 0))}
-                          </td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                            {it.qty}
-                          </td>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                            {money(line)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                <div className="mt-6 grid gap-4">
+                  {items.map((it) => {
+                    const line = (Number(it.qty) || 0) * (Number(it.unit_cost) || 0);
 
-              {/* Totais */}
-              <div className="mt-4 flex justify-end">
-                <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-slate-50 p-4 text-right">
-                  <div className="text-xs font-semibold text-slate-600">Itens</div>
-                  <div className="text-base font-semibold text-slate-900">{money(itemsTotal)}</div>
+                    return (
+                      <div
+                        key={it.product_id}
+                        className="rounded-[26px] border border-slate-200 bg-white p-4 transition md:p-5"
+                      >
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-base font-semibold text-slate-900">
+                                {it.name}
+                              </div>
+                              <Badge tone="blue">Confirmado</Badge>
+                            </div>
 
-                  <div className="mt-3 text-xs font-semibold text-slate-600">Frete</div>
-                  <div className="text-base font-semibold text-slate-900">{money(freightApplied)}</div>
+                            <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                              <span className="font-mono text-xs text-slate-500">
+                                SKU {it.sku}
+                              </span>
+                              <span>Unidade: {it.unit}</span>
+                              <span className="font-semibold text-slate-900">
+                                {money(Number(it.unit_cost || 0))}
+                              </span>
+                            </div>
+                          </div>
 
-                  <div className="my-3 h-px bg-slate-200" />
+                          <div className="flex flex-col gap-3 xl:items-end">
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-center">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Quantidade
+                              </div>
+                              <div className="mt-1 text-lg font-semibold text-slate-900">
+                                {it.qty}
+                              </div>
+                            </div>
 
-                  <div className="text-xs font-semibold text-slate-600">Total</div>
-                  <div className="text-2xl font-semibold text-slate-900">{money(grandTotal)}</div>
+                            <div className="text-right">
+                              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Total do item
+                              </div>
+                              <div className="text-lg font-semibold text-slate-900">
+                                {money(line)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            </Card>
 
-            {/* Observações */}
-            <Card title="Observações" subtitle="Opcional">
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Ex.: entregar até sexta-feira; substituir item X se faltar..."
-                className="min-h-[110px] w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                disabled={sending}
-              />
-            </Card>
+              <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="text-sm font-semibold text-slate-900">Observações</div>
+                <div className="mt-1 text-sm text-slate-600">Opcional</div>
 
-            <div className="flex flex-wrap gap-2 justify-end">
-              <Button variant="secondary" onClick={() => router.push("/pedido")} disabled={sending}>
-                ← Voltar
-              </Button>
-              <Button onClick={onSubmit} disabled={sending}>
-                {sending ? "Enviando..." : `Enviar pedido (${money(grandTotal)})`}
-              </Button>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Ex.: entregar até sexta-feira; substituir item X se faltar..."
+                  className="mt-4 min-h-[130px] w-full rounded-[22px] border border-slate-200 bg-slate-50/70 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+                  disabled={sending}
+                />
+              </div>
             </div>
-          </>
+
+            <div>
+              <div className="xl:sticky xl:top-24">
+                <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-5 shadow-sm md:p-6">
+                  <div className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
+                    Resumo final
+                  </div>
+
+                  <div className="mt-1 text-sm text-slate-600">
+                    Confira os valores antes do envio.
+                  </div>
+
+                  <div className="mt-6 space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Itens
+                      </div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">
+                        {selectedItemsCount}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Quantidade total: {selectedUnitsCount}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Subtotal dos itens</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {money(itemsTotal)}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Frete</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {money(freightApplied)}
+                        </span>
+                      </div>
+
+                      <div className="my-4 h-px bg-slate-200" />
+
+                      <div className="flex items-end justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Total do pedido
+                          </div>
+                          <div className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-900">
+                            {money(grandTotal)}
+                          </div>
+                        </div>
+
+                        {deliveryMode === "FRETE" ? (
+                          <Badge tone="yellow">Frete</Badge>
+                        ) : (
+                          <Badge tone="neutral">Retirada</Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3">
+                      <PrimaryActionButton
+                        onClick={onSubmit}
+                        disabled={sending || items.length === 0}
+                        fullWidth
+                      >
+                        {sending ? "Enviando..." : "Enviar pedido"}
+                      </PrimaryActionButton>
+
+                      <SecondaryActionButton
+                        onClick={() => router.push("/pedido")}
+                        disabled={sending}
+                        fullWidth
+                      >
+                        Voltar ao pedido
+                      </SecondaryActionButton>
+                    </div>
+
+                    {items.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        Seu carrinho está vazio.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </PortalShell>

@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 import PortalShell from "@/app/components/PortalShell";
-import { PageHeader, Card, Button, Badge } from "@/app/components/ui";
+import { PageHeader, Card, Badge } from "@/app/components/ui";
 
 type OrderRow = {
   id: string;
@@ -26,13 +26,8 @@ type OrderRow = {
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
 
-  // ✅ novos campos refletidos
-  due_date: string | null; // DATE => "YYYY-MM-DD"
-
-  // ✅ NOVO: previsão de entrega (DATE => "YYYY-MM-DD")
+  due_date: string | null;
   delivery_forecast: string | null;
-
-  // ✅ NOVO: crédito abatido no pedido (numérico)
   credit_applied: number | null;
 
   edited_by_admin: boolean | null;
@@ -40,7 +35,11 @@ type OrderRow = {
   original_items: OriginalItem[] | null;
 };
 
-type ProductRow = { sku: string | null; name: string | null; unit: string | null };
+type ProductRow = {
+  sku: string | null;
+  name: string | null;
+  unit: string | null;
+};
 
 type ItemRow = {
   id: string;
@@ -63,7 +62,10 @@ type OriginalItem = {
 };
 
 function money(n: number) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function fmtDT(v: string | null | undefined) {
@@ -73,6 +75,32 @@ function fmtDT(v: string | null | undefined) {
   } catch {
     return String(v);
   }
+}
+
+function fmtYMD(ymd: string | null | undefined) {
+  if (!ymd) return "-";
+  try {
+    const [y, m, d] = String(ymd).split("-").map(Number);
+    if (!y || !m || !d) return String(ymd);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
+    return dt.toLocaleDateString("pt-BR");
+  } catch {
+    return String(ymd);
+  }
+}
+
+function todayYMD() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function isOrderOverdue(order: Pick<OrderRow, "due_date" | "is_paid">) {
+  if (!order.due_date) return false;
+  if (order.is_paid) return false;
+  return order.due_date < todayYMD();
 }
 
 function logisticLabel(v: OrderRow["logistic_status"]) {
@@ -100,32 +128,79 @@ function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neu
   return "neutral";
 }
 
-function todayYMD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function forecastTone(
+  forecast: string | null,
+  logistic: OrderRow["logistic_status"]
+): "green" | "red" | "neutral" {
+  if (!forecast) return "neutral";
+  if (logistic === "ENTREGUE") return "green";
+  return forecast < todayYMD() ? "red" : "green";
 }
 
-// ✅ NOVO: formata "YYYY-MM-DD" para pt-BR sem mexer no restante
-function fmtYMD(ymd: string | null | undefined) {
-  if (!ymd) return "-";
-  try {
-    const [y, m, d] = String(ymd).split("-").map(Number);
-    if (!y || !m || !d) return String(ymd);
-    const dt = new Date(y, m - 1, d, 12, 0, 0);
-    return dt.toLocaleDateString("pt-BR");
-  } catch {
-    return String(ymd);
-  }
-}
-
-// Normaliza products para SEMPRE virar 1 objeto (ou null)
 function getProduct(p: ItemRow["products"]): ProductRow | null {
   if (!p) return null;
   if (Array.isArray(p)) return p[0] ?? null;
   return p;
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-12 items-center justify-center rounded-[18px] bg-cyan-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(8,145,178,0.26)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-12 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string;
+  value: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
+      {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+    </div>
+  );
 }
 
 export default function PedidoDetalhePage() {
@@ -159,23 +234,34 @@ export default function PedidoDetalhePage() {
   const totalComFrete = useMemo(() => totalItens + frete, [totalItens, frete]);
 
   const edited = useMemo(() => !!order?.edited_by_admin, [order?.edited_by_admin]);
-  const overdue = useMemo(() => {
-    if (!order?.due_date) return false;
-    return order.due_date < todayYMD();
-  }, [order?.due_date]);
 
-  // ✅ NOVO: atraso da previsão (somente se não entregue)
+  const overdue = useMemo(() => {
+    if (!order) return false;
+    return isOrderOverdue(order);
+  }, [order]);
+
   const forecastOverdue = useMemo(() => {
     if (!order?.delivery_forecast) return false;
     if ((order.logistic_status ?? null) === "ENTREGUE") return false;
     return order.delivery_forecast < todayYMD();
   }, [order?.delivery_forecast, order?.logistic_status]);
 
-  // ✅ NOVO: crédito abatido (somente leitura) + total líquido
-  const creditApplied = useMemo(() => Number(order?.credit_applied ?? 0) || 0, [order?.credit_applied]);
+  const creditApplied = useMemo(
+    () => Number(order?.credit_applied ?? 0) || 0,
+    [order?.credit_applied]
+  );
+
   const totalLiquido = useMemo(() => {
     return Math.max(totalComFrete - creditApplied, 0);
   }, [totalComFrete, creditApplied]);
+
+  const originalTotal = useMemo(() => {
+    if (!originalItems || originalItems.length === 0) return 0;
+    return originalItems.reduce((acc, it) => {
+      const unitCost = Number(it.unit_cost ?? 0);
+      return acc + (Number(it.qty ?? 0) || 0) * unitCost;
+    }, 0);
+  }, [originalItems]);
 
   useEffect(() => {
     (async () => {
@@ -206,7 +292,6 @@ export default function PedidoDetalhePage() {
   async function loadAll(id: string) {
     setMsg("");
 
-    // Pedido
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
@@ -227,7 +312,6 @@ export default function PedidoDetalhePage() {
     setOrder(ord);
     setOriginalItems((ord.original_items ?? null) as any);
 
-    // Itens (alias products:products para relação)
     const { data: it, error: itErr } = await supabase
       .from("order_items")
       .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
@@ -252,35 +336,28 @@ export default function PedidoDetalhePage() {
 
   const backTo = "/pedidos";
 
-  const originalTotal = useMemo(() => {
-    if (!originalItems || originalItems.length === 0) return 0;
-    return originalItems.reduce((acc, it) => {
-      const unitCost = Number(it.unit_cost ?? 0);
-      return acc + (Number(it.qty ?? 0) || 0) * unitCost;
-    }, 0);
-  }, [originalItems]);
-
   return (
     <PortalShell title="Pedidos" subtitle="Detalhe do pedido">
-      <div className="space-y-4">
+      <div className="space-y-6">
         <PageHeader
           title="Detalhe do pedido"
           subtitle={orderId ? `ID: ${orderId}` : "—"}
           right={
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => router.push(backTo)} disabled={working}>
-                ← Voltar
-              </Button>
-              <Button variant="secondary" onClick={refresh} disabled={working || loading}>
+              <SecondaryActionButton onClick={() => router.push(backTo)} disabled={working}>
+                Voltar
+              </SecondaryActionButton>
+
+              <SecondaryActionButton onClick={refresh} disabled={working || loading}>
                 {working ? "Atualizando..." : "Atualizar"}
-              </Button>
+              </SecondaryActionButton>
             </div>
           }
         />
 
         {msg ? (
           <Card title="Aviso">
-            <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+            <div className="text-sm whitespace-pre-wrap text-red-600">{msg}</div>
           </Card>
         ) : null}
 
@@ -294,279 +371,412 @@ export default function PedidoDetalhePage() {
           </Card>
         ) : (
           <>
-            {/* Aviso de edição + vencimento */}
-            <Card title="Informações importantes">
-              <div className="flex flex-wrap items-center gap-2">
-                {edited ? (
-                  <Badge tone="blue">Pedido ajustado pela franqueadora</Badge>
-                ) : (
-                  <Badge tone="neutral">Pedido original</Badge>
-                )}
+            <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                    <Badge tone={logisticTone(order.logistic_status)}>
+                      {logisticLabel(order.logistic_status)}
+                    </Badge>
 
-                {order.due_date ? (
-                  overdue ? (
-                    <Badge tone="red">Vencido • {order.due_date}</Badge>
-                  ) : (
-                    <Badge tone="green">Vence em • {order.due_date}</Badge>
-                  )
-                ) : (
-                  <Badge tone="neutral">Sem vencimento</Badge>
-                )}
+                    {edited ? (
+                      <Badge tone="blue">Ajustado pela franqueadora</Badge>
+                    ) : (
+                      <Badge tone="neutral">Pedido original</Badge>
+                    )}
 
-                {/* ✅ NOVO: badge da previsão de entrega */}
-                {order.delivery_forecast ? (
-                  forecastOverdue ? (
-                    <Badge tone="red">Entrega atrasada • {order.delivery_forecast}</Badge>
-                  ) : (
-                    <Badge tone="green">Previsão • {order.delivery_forecast}</Badge>
-                  )
-                ) : (
-                  <Badge tone="neutral">Sem previsão de entrega</Badge>
-                )}
+                    {order.due_date ? (
+                      order.is_paid ? (
+                        <Badge tone="green">Pago</Badge>
+                      ) : overdue ? (
+                        <Badge tone="red">Vencido</Badge>
+                      ) : (
+                        <Badge tone="green">Em dia</Badge>
+                      )
+                    ) : (
+                      <Badge tone="neutral">Sem vencimento</Badge>
+                    )}
+
+                    {order.delivery_forecast ? (
+                      forecastOverdue ? (
+                        <Badge tone="red">Entrega atrasada</Badge>
+                      ) : (
+                        <Badge tone="green">Previsão ativa</Badge>
+                      )
+                    ) : (
+                      <Badge tone="neutral">Sem previsão</Badge>
+                    )}
+                  </div>
+
+                  <div className="mt-4 text-sm leading-7 text-slate-700">
+                    <div>
+                      <span className="font-semibold text-slate-900">Entrega:</span>{" "}
+                      {deliveryLabel(order.delivery_mode)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900">Vencimento:</span>{" "}
+                      {fmtYMD(order.due_date)}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-900">Previsão de entrega:</span>{" "}
+                      {fmtYMD(order.delivery_forecast)}
+                    </div>
+                    {edited ? (
+                      <div>
+                        <span className="font-semibold text-slate-900">Editado em:</span>{" "}
+                        {fmtDT(order.edited_at)}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="w-full max-w-sm rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Resumo financeiro
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-slate-600">Itens</span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {money(totalItens)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-slate-600">Frete</span>
+                      <span className="text-sm font-semibold text-slate-900">{money(frete)}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-slate-600">Crédito abatido</span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        - {money(creditApplied)}
+                      </span>
+                    </div>
+
+                    <div className="h-px bg-slate-200" />
+
+                    <div className="flex items-end justify-between gap-3">
+                      <span className="text-sm font-semibold text-slate-900">Total líquido</span>
+                      <span className="text-2xl font-semibold tracking-[-0.03em] text-slate-900">
+                        {money(totalLiquido)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="mt-3 text-sm text-slate-700">
-                <div>
-                  <span className="font-semibold text-slate-900">Vencimento:</span>{" "}
-                  {order.due_date ? order.due_date : "—"}
+              {edited && originalItems && originalItems.length > 0 ? (
+                <div className="mt-4 text-sm text-slate-600">
+                  Abaixo você verá o <b>pedido original</b> e o <b>pedido atual</b> após os ajustes.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-3">
+                  <MetricCard title="Itens atuais" value={money(totalItens)} />
+                  <MetricCard title="Frete" value={money(frete)} />
+                  <MetricCard title="Total com frete" value={money(totalComFrete)} />
                 </div>
 
-                {/* ✅ NOVO: previsão de entrega em texto */}
-                <div className="mt-1">
-                  <span className="font-semibold text-slate-900">Previsão de entrega:</span>{" "}
-                  {order.delivery_forecast ? order.delivery_forecast : "—"}{" "}
-                  <span className="text-slate-500">{order.delivery_forecast ? `(${fmtYMD(order.delivery_forecast)})` : ""}</span>
+                <div className="grid gap-4 md:grid-cols-3">
+                  <MetricCard title="Crédito abatido" value={`- ${money(creditApplied)}`} />
+                  <MetricCard title="Total líquido" value={money(totalLiquido)} />
+                  <MetricCard
+                    title="Pagamento"
+                    value={order.is_paid ? "Pago" : "Não pago"}
+                    subtitle={order.paid_at ? fmtDT(order.paid_at) : order.payment_method ?? "—"}
+                  />
                 </div>
 
-                {edited ? (
-                  <div className="mt-1">
-                    <span className="font-semibold text-slate-900">Editado em:</span>{" "}
-                    {fmtDT(order.edited_at)}
+                <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                  <div className="text-sm font-semibold text-slate-900">Datas do pedido</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Linha do tempo do processo.
+                  </div>
+
+                  <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Criado
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">
+                        {fmtDT(order.created_at)}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Enviado
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">
+                        {fmtDT(order.submitted_at)}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Aprovado
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">
+                        {fmtDT(order.approved_at)}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Previsão
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-900">
+                        {fmtYMD(order.delivery_forecast)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                  <div className="text-sm font-semibold text-slate-900">Observações</div>
+                  <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {order.notes ?? "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">
+                        Itens atuais ({items.length})
+                      </div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        Itens considerados no pedido final.
+                      </div>
+                    </div>
+                  </div>
+
+                  {items.length === 0 ? (
+                    <div className="mt-6 text-sm text-slate-600">Nenhum item.</div>
+                  ) : (
+                    <div className="mt-6 overflow-x-auto">
+                      <table className="w-full border-separate border-spacing-0">
+                        <thead>
+                          <tr className="text-left text-xs text-slate-600">
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              SKU
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              Produto
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              Unid.
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                              Preço
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                              Qtd
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                              Total
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {items.map((it) => {
+                            const prod = getProduct(it.products);
+                            const sku = prod?.sku ?? "-";
+                            const name = prod?.name ?? "-";
+                            const unit = prod?.unit ?? it.unit ?? "-";
+                            const unitCost = Number(it.unit_cost ?? 0) || 0;
+                            const qty = Number(it.qty ?? 0) || 0;
+                            const line = qty * unitCost;
+
+                            return (
+                              <tr key={it.id} className="hover:bg-slate-50">
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4">
+                                  <div className="font-mono text-xs text-slate-600">{sku}</div>
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-900">
+                                  {name}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-700">
+                                  {unit}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right text-sm text-slate-900">
+                                  {money(unitCost)}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
+                                  {qty}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
+                                  {money(line)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {edited && originalItems && originalItems.length > 0 ? (
+                  <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900">
+                          Pedido original do franqueado ({originalItems.length})
+                        </div>
+                        <div className="mt-1 text-sm text-slate-600">
+                          Snapshot salvo em {fmtDT(order.edited_at)}.
+                        </div>
+                      </div>
+
+                      <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Total original
+                        </div>
+                        <div className="mt-1 text-lg font-semibold text-slate-900">
+                          {money(originalTotal)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 overflow-x-auto">
+                      <table className="w-full border-separate border-spacing-0">
+                        <thead>
+                          <tr className="text-left text-xs text-slate-600">
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              SKU
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              Produto
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                              Unid.
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                              Preço
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                              Qtd
+                            </th>
+                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                              Total
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {originalItems.map((it) => {
+                            const sku = it.sku ?? "-";
+                            const name = it.name ?? "-";
+                            const unit = it.product_unit ?? it.unit ?? "-";
+                            const unitCost = Number(it.unit_cost ?? 0) || 0;
+                            const qty = Number(it.qty ?? 0) || 0;
+                            const line = qty * unitCost;
+
+                            return (
+                              <tr key={it.id} className="hover:bg-slate-50">
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4">
+                                  <div className="font-mono text-xs text-slate-600">{sku}</div>
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-900">
+                                  {name}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-700">
+                                  {unit}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right text-sm text-slate-900">
+                                  {money(unitCost)}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
+                                  {qty}
+                                </td>
+                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
+                                  {money(line)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 ) : null}
               </div>
 
-              {edited && originalItems && originalItems.length > 0 ? (
-                <div className="mt-3 text-sm text-slate-600">
-                  Abaixo você verá o <b>pedido original</b> e o <b>pedido atual</b> após ajustes de estoque.
-                </div>
-              ) : null}
-            </Card>
+              <div>
+                <div className="xl:sticky xl:top-24">
+                  <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-5 shadow-sm md:p-6">
+                    <div className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
+                      Ações
+                    </div>
 
-            {/* ✅ NOVO: Card extra (somente leitura) para previsão/entrega sem mexer nos cards existentes */}
-            <Card title="Entrega (previsão)">
-              <div className="flex flex-wrap items-center gap-2">
-                {order.delivery_forecast ? (
-                  forecastOverdue ? (
-                    <Badge tone="red">Atrasado</Badge>
-                  ) : (
-                    <Badge tone="green">OK</Badge>
-                  )
-                ) : (
-                  <Badge tone="neutral">Sem previsão</Badge>
-                )}
-                <Badge tone={logisticTone(order.logistic_status)}>{logisticLabel(order.logistic_status)}</Badge>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Navegação rápida do pedido.
+                    </div>
+
+                    <div className="mt-6 grid gap-3">
+                      <PrimaryActionButton onClick={() => router.push(backTo)}>
+                        Voltar para histórico
+                      </PrimaryActionButton>
+
+                      <SecondaryActionButton onClick={refresh} disabled={working || loading}>
+                        {working ? "Atualizando..." : "Atualizar pedido"}
+                      </SecondaryActionButton>
+                    </div>
+
+                    <div className="mt-6 rounded-[22px] border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Situação
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                        <Badge tone={logisticTone(order.logistic_status)}>
+                          {logisticLabel(order.logistic_status)}
+                        </Badge>
+                        {order.is_paid ? <Badge tone="green">Pago</Badge> : <Badge tone="yellow">Pendente</Badge>}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Entrega
+                      </div>
+
+                      <div className="mt-3 space-y-2 text-sm text-slate-700">
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Modalidade</span>
+                          <span className="font-semibold text-slate-900">
+                            {deliveryLabel(order.delivery_mode)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Previsão</span>
+                          <span className="font-semibold text-slate-900">
+                            {fmtYMD(order.delivery_forecast)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          <span>Vencimento</span>
+                          <span className="font-semibold text-slate-900">
+                            {fmtYMD(order.due_date)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-
-              <div className="mt-3 text-sm text-slate-700 leading-6">
-                <div>
-                  <span className="font-semibold text-slate-900">Modalidade:</span> {deliveryLabel(order.delivery_mode)}
-                </div>
-                <div>
-                  <span className="font-semibold text-slate-900">Previsão:</span> {order.delivery_forecast ?? "—"}{" "}
-                  <span className="text-slate-500">{order.delivery_forecast ? `(${fmtYMD(order.delivery_forecast)})` : ""}</span>
-                </div>
-              </div>
-            </Card>
-
-            {/* Cards de informações */}
-            <div className="grid gap-3 lg:grid-cols-3">
-              <Card title="Status">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={statusTone(order.status)}>{order.status}</Badge>
-                  <Badge tone={logisticTone(order.logistic_status)}>{logisticLabel(order.logistic_status)}</Badge>
-                </div>
-
-                <div className="mt-3 text-sm text-slate-700">
-                  <span className="font-semibold text-slate-900">Entrega:</span> {deliveryLabel(order.delivery_mode)}
-                </div>
-                <div className="mt-1 text-sm text-slate-700">
-                  <span className="font-semibold text-slate-900">Frete:</span> {money(frete)}
-                </div>
-              </Card>
-
-              <Card title="Pagamento">
-                <div className="text-sm text-slate-700">
-                  <span className="font-semibold text-slate-900">{order.is_paid ? "Pago" : "Não pago"}</span>{" "}
-                  <span className="text-slate-500">{order.paid_at ? `(${fmtDT(order.paid_at)})` : ""}</span>
-                </div>
-                <div className="mt-2 text-sm text-slate-700">
-                  <span className="font-semibold text-slate-900">Forma:</span> {order.payment_method ?? "—"}
-                </div>
-              </Card>
-
-              <Card title="Datas">
-                <div className="text-sm text-slate-700 leading-6">
-                  <div>
-                    <span className="font-semibold text-slate-900">Criado:</span> {fmtDT(order.created_at)}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-slate-900">Enviado:</span> {fmtDT(order.submitted_at)}
-                  </div>
-                  <div>
-                    <span className="font-semibold text-slate-900">Aprovado:</span> {fmtDT(order.approved_at)}
-                  </div>
-                </div>
-              </Card>
             </div>
-
-            {/* Observações */}
-            <Card title="Observações">
-              <div className="whitespace-pre-wrap text-sm text-slate-700">{order.notes ?? "—"}</div>
-            </Card>
-
-            {/* Resumo atual */}
-            <div className="grid gap-3 md:grid-cols-3">
-              <Card title="Itens (atual)">
-                <div className="text-lg font-semibold text-slate-900">{money(totalItens)}</div>
-              </Card>
-              <Card title="Frete">
-                <div className="text-lg font-semibold text-slate-900">{money(frete)}</div>
-              </Card>
-              <Card title="Total (c/ frete)">
-                <div className="text-lg font-semibold text-slate-900">{money(totalComFrete)}</div>
-              </Card>
-            </div>
-
-            {/* ✅ NOVO: resumo do crédito (somente leitura) sem mexer no resumo existente */}
-            <div className="grid gap-3 md:grid-cols-3">
-              <Card title="Crédito abatido">
-                <div className="text-lg font-semibold text-slate-900">- {money(creditApplied)}</div>
-              </Card>
-              <Card title="Total líquido (após crédito)">
-                <div className="text-lg font-semibold text-slate-900">{money(totalLiquido)}</div>
-              </Card>
-            </div>
-
-            {/* Itens atuais */}
-            <Card title={`Itens atuais (${items.length})`}>
-              {items.length === 0 ? (
-                <div className="text-sm text-slate-600">Nenhum item.</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-separate border-spacing-0">
-                    <thead>
-                      <tr className="text-left text-xs text-slate-600">
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Produto</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Qtd</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {items.map((it) => {
-                        const prod = getProduct(it.products);
-                        const sku = prod?.sku ?? "-";
-                        const name = prod?.name ?? "-";
-                        const unit = prod?.unit ?? it.unit ?? "-";
-                        const unitCost = Number(it.unit_cost ?? 0) || 0;
-                        const qty = Number(it.qty ?? 0) || 0;
-                        const line = qty * unitCost;
-
-                        return (
-                          <tr key={it.id} className="hover:bg-slate-50">
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                              <div className="font-mono text-xs text-slate-600">{sku}</div>
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-900">
-                              {name}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
-                              {unit}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
-                              {money(unitCost)}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                              {qty}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                              {money(line)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-
-            {/* Pedido original (snapshot) */}
-            {edited && originalItems && originalItems.length > 0 ? (
-              <Card
-                title={`Pedido original do franqueado (${originalItems.length})`}
-                subtitle={`Snapshot salvo em ${fmtDT(order.edited_at)}`}
-              >
-                <div className="mb-3 grid gap-3 md:grid-cols-3">
-                  <Card title="Total original (itens)">
-                    <div className="text-lg font-semibold text-slate-900">{money(originalTotal)}</div>
-                  </Card>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full border-separate border-spacing-0">
-                    <thead>
-                      <tr className="text-left text-xs text-slate-600">
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Produto</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Qtd</th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {originalItems.map((it) => {
-                        const sku = it.sku ?? "-";
-                        const name = it.name ?? "-";
-                        const unit = it.product_unit ?? it.unit ?? "-";
-                        const unitCost = Number(it.unit_cost ?? 0) || 0;
-                        const qty = Number(it.qty ?? 0) || 0;
-                        const line = qty * unitCost;
-
-                        return (
-                          <tr key={it.id} className="hover:bg-slate-50">
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                              <div className="font-mono text-xs text-slate-600">{sku}</div>
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-900">
-                              {name}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">
-                              {unit}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
-                              {money(unitCost)}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                              {qty}
-                            </td>
-                            <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                              {money(line)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            ) : null}
           </>
         )}
       </div>

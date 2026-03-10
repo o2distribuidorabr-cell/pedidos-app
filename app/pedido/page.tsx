@@ -4,8 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import PortalShell from "@/app/components/PortalShell";
-
-import { PageHeader, Card, Button, Badge } from "@/app/components/ui";
+import { PageHeader, Card, Badge } from "@/app/components/ui";
 
 type Product = {
   id: string;
@@ -15,7 +14,6 @@ type Product = {
   unit_cost: number | null;
   base_price?: number | null;
   override_price?: number | null;
-
   ncm?: string | null;
   cest?: string | null;
   cfop?: string | null;
@@ -33,7 +31,6 @@ type CartItem = {
   unit: string;
   unit_cost: number;
   qty: number;
-
   ncm?: string | null;
   cest?: string | null;
   cfop?: string | null;
@@ -47,7 +44,6 @@ type CartItem = {
 type StoreRow = { id: string; name: string; freight_fee: number };
 type PriceOverrideRow = { product_id: string; unit_price: number | null };
 
-// ✅ NOVO: títulos vencidos (para bloquear)
 type OverdueOrderRow = {
   id: string;
   due_date: string | null;
@@ -85,7 +81,10 @@ function roundToStep(value: number, step: number) {
 }
 
 function money(v: number) {
-  return (Number(v) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(v) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function ymdToday() {
@@ -107,6 +106,159 @@ function fmtYMDToBR(ymd: string | null | undefined) {
   }
 }
 
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.26)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function MiniQtyButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="grid h-10 w-10 place-items-center rounded-[16px] border border-slate-200 bg-white text-base font-semibold text-slate-700 shadow-[0_6px_14px_rgba(15,23,42,0.04)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </button>
+  );
+}
+
+function QtyControl({
+  value,
+  step,
+  disabled,
+  onDecrease,
+  onIncrease,
+  onChange,
+}: {
+  value: number;
+  step: number;
+  disabled?: boolean;
+  onDecrease: () => void;
+  onIncrease: () => void;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <MiniQtyButton onClick={onDecrease} disabled={disabled || value <= 0}>
+        −
+      </MiniQtyButton>
+
+      <input
+        className="h-10 w-28 rounded-[16px] border border-slate-200 bg-white px-3 text-center text-sm font-semibold text-slate-900 outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
+        type="number"
+        value={value}
+        step={step}
+        min={0}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+
+      <MiniQtyButton onClick={onIncrease} disabled={disabled}>
+        +
+      </MiniQtyButton>
+    </div>
+  );
+}
+
+function SegmentedSwitch({
+  value,
+  onChange,
+  disabled,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-white/80 p-1.5 shadow-[0_8px_24px_rgba(15,23,42,0.04)]">
+      <div className="grid grid-cols-2 gap-1.5">
+        {options.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(opt.value)}
+              className={[
+                "h-11 rounded-[16px] px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                active
+                  ? "bg-cyan-600 text-white shadow-[0_12px_24px_rgba(8,145,178,0.22)]"
+                  : "bg-transparent text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+              ].join(" ")}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function PedidoPage() {
   const router = useRouter();
 
@@ -121,18 +273,40 @@ export default function PedidoPage() {
   const [storeName, setStoreName] = useState<string>("-");
   const [storeId, setStoreId] = useState<string | null>(null);
 
-  // ✅ NOVO: bloqueio por vencidos
   const [overdueLoading, setOverdueLoading] = useState(false);
   const [overdues, setOverdues] = useState<OverdueOrderRow[]>([]);
   const hasOverdue = overdues.length > 0;
+
+  const [search, setSearch] = useState("");
 
   const itemsTotal = useMemo(() => {
     return Object.values(cart).reduce((acc, it) => acc + it.qty * it.unit_cost, 0);
   }, [cart]);
 
-  const freightApplied = useMemo(() => (deliveryMode === "FRETE" ? freightFee : 0), [deliveryMode, freightFee]);
+  const selectedItemsCount = useMemo(() => Object.values(cart).length, [cart]);
+
+  const selectedUnitsCount = useMemo(() => {
+    return Object.values(cart).reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
+  }, [cart]);
+
+  const freightApplied = useMemo(
+    () => (deliveryMode === "FRETE" ? freightFee : 0),
+    [deliveryMode, freightFee]
+  );
+
   const grandTotal = useMemo(() => itemsTotal + freightApplied, [itemsTotal, freightApplied]);
   const hasItems = useMemo(() => Object.keys(cart).length > 0, [cart]);
+
+  const filteredProducts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return products;
+
+    return products.filter((p) => {
+      const sku = String(p.sku ?? "").toLowerCase();
+      const name = String(p.name ?? "").toLowerCase();
+      return sku.includes(q) || name.includes(q);
+    });
+  }, [products, search]);
 
   useEffect(() => {
     (async () => {
@@ -145,7 +319,6 @@ export default function PedidoPage() {
         return;
       }
 
-      // 1) store_id do profile
       const { data: profile, error: pErr } = await supabase
         .from("profiles")
         .select("store_id")
@@ -167,10 +340,8 @@ export default function PedidoPage() {
         return;
       }
 
-      // ✅ NOVO: checar títulos vencidos ANTES de carregar produtos (UX rápido)
       await loadOverdues(sId);
 
-      // 2) frete padrão da loja
       const { data: store, error: sErr } = await supabase
         .from("stores")
         .select("id,name,freight_fee")
@@ -187,7 +358,6 @@ export default function PedidoPage() {
       setStoreName(st.name ?? "-");
       setFreightFee(Number(st.freight_fee ?? 0) || 0);
 
-      // 3) produtos (preço padrão)
       const selectOld = "id, sku, name, unit, unit_price, active";
       const selectNew =
         "id, sku, name, unit, unit_price, active, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
@@ -212,6 +382,7 @@ export default function PedidoPage() {
           setMsg(prodFallback.error.message);
           return;
         }
+
         prodData = (prodFallback.data ?? []).map((p: any) => ({
           ...p,
           ncm: null,
@@ -227,7 +398,6 @@ export default function PedidoPage() {
         prodData = prodTry.data ?? [];
       }
 
-      // 4) overrides da loja (preço por loja)
       const { data: ovData, error: ovErr } = await supabase
         .from("store_product_prices")
         .select("product_id, unit_price")
@@ -246,7 +416,6 @@ export default function PedidoPage() {
         if (Number.isFinite(v) && v > 0) ovMap[String(r.product_id)] = v;
       });
 
-      // 5) merge preço efetivo
       const merged: Product[] = (prodData ?? []).map((p: any) => {
         const base = Number(p.unit_price ?? 0) || 0;
         const ov = ovMap[p.id];
@@ -260,7 +429,6 @@ export default function PedidoPage() {
           unit_cost: Number(effective) || 0,
           base_price: base,
           override_price: ov ?? null,
-
           ncm: (p.ncm ?? null) as any,
           cest: (p.cest ?? null) as any,
           cfop: (p.cfop ?? null) as any,
@@ -278,7 +446,6 @@ export default function PedidoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ NOVO: carregar pedidos vencidos da loja
   async function loadOverdues(sId: string) {
     setOverdueLoading(true);
     try {
@@ -315,10 +482,12 @@ export default function PedidoPage() {
 
     setCart((prev) => {
       const next = { ...prev };
+
       if (qty === 0) {
         delete next[prod.id];
         return next;
       }
+
       next[prod.id] = {
         product_id: prod.id,
         sku: prod.sku,
@@ -326,7 +495,6 @@ export default function PedidoPage() {
         unit,
         unit_cost,
         qty,
-
         ncm: prod.ncm ?? null,
         cest: prod.cest ?? null,
         cfop: prod.cfop ?? null,
@@ -336,6 +504,7 @@ export default function PedidoPage() {
         pis_cst: prod.pis_cst ?? null,
         cofins_cst: prod.cofins_cst ?? null,
       };
+
       return next;
     });
   }
@@ -354,8 +523,8 @@ export default function PedidoPage() {
 
   function onContinue() {
     const items = Object.values(cart);
-    localStorage.setItem("cart_items", JSON.stringify(items));
 
+    localStorage.setItem("cart_items", JSON.stringify(items));
     localStorage.setItem(
       "delivery_info",
       JSON.stringify({
@@ -373,79 +542,97 @@ export default function PedidoPage() {
   return (
     <PortalShell
       title="Novo pedido"
-      subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Selecione as quantidades"}
+      subtitle={storeName && storeName !== "-" ? `Loja: ${storeName}` : "Monte seu pedido"}
     >
-      <div className="space-y-4">
+      <div className="space-y-6">
         <PageHeader
           title="Novo pedido"
           subtitle={
             storeName && storeName !== "-"
-              ? `Selecione as quantidades. Loja: ${storeName}`
-              : "Selecione as quantidades. Algumas quantidades são travadas por caixa/lote."
+              ? `Selecione os itens e quantidades da loja ${storeName}.`
+              : "Selecione os itens e quantidades do pedido."
           }
           right={
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary" onClick={() => router.push("/pedidos")}>
+              <SecondaryActionButton onClick={() => router.push("/pedidos")}>
                 Histórico
-              </Button>
+              </SecondaryActionButton>
 
-              {/* ✅ BLOQUEIO */}
-              <Button onClick={onContinue} disabled={continueBlocked}>
+              <PrimaryActionButton onClick={onContinue} disabled={continueBlocked}>
                 {hasOverdue ? "Bloqueado por vencidos" : `Continuar (${money(grandTotal)})`}
-              </Button>
+              </PrimaryActionButton>
             </div>
           }
         />
 
-        {/* ✅ NOVO: aviso de bloqueio */}
         {!loading && storeId && (overdueLoading || hasOverdue) ? (
-          <Card
-            title="Atenção: existem títulos vencidos"
-            subtitle="Para criar novos pedidos, regularize os títulos vencidos no Financeiro."
-            right={
-              <div className="flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => router.push("/financeiro")}>
-                  Ir para Financeiro
-                </Button>
-                <Button variant="secondary" onClick={() => loadOverdues(storeId)} disabled={overdueLoading}>
-                  {overdueLoading ? "Verificando..." : "Atualizar vencidos"}
-                </Button>
-              </div>
-            }
-          >
-            {overdueLoading ? (
-              <div className="text-sm text-slate-600">Carregando títulos vencidos...</div>
-            ) : overdues.length === 0 ? (
-              <div className="text-sm text-slate-600">Nenhum título vencido encontrado.</div>
-            ) : (
-              <div className="space-y-2">
-                <div className="text-sm text-slate-700">
-                  Você tem <b>{overdues.length}</b> pedido(s) vencido(s). O botão de continuar fica bloqueado até regularizar.
+          <div className="rounded-[28px] border border-amber-200 bg-[linear-gradient(180deg,#fffaf0_0%,#fff7e8_100%)] p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="flex items-center gap-2">
+                  <div className="text-base font-semibold text-amber-900">
+                    Atenção: existem títulos vencidos
+                  </div>
+                  <Badge tone="yellow">Bloqueado</Badge>
                 </div>
 
-                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="mt-2 text-sm leading-6 text-amber-900/80">
+                  Para criar novos pedidos, regularize os títulos vencidos no Financeiro.
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <SecondaryActionButton onClick={() => router.push("/financeiro")}>
+                  Ir para Financeiro
+                </SecondaryActionButton>
+
+                <SecondaryActionButton
+                  onClick={() => loadOverdues(storeId)}
+                  disabled={overdueLoading}
+                >
+                  {overdueLoading ? "Verificando..." : "Atualizar vencidos"}
+                </SecondaryActionButton>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              {overdueLoading ? (
+                <div className="text-sm text-slate-600">Carregando títulos vencidos...</div>
+              ) : overdues.length === 0 ? (
+                <div className="text-sm text-slate-600">Nenhum título vencido encontrado.</div>
+              ) : (
+                <div className="grid gap-3">
                   {overdues.map((o) => (
-                    <div key={o.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-t border-slate-100 first:border-t-0">
-                      <div className="min-w-0">
-                        <div className="font-mono text-xs text-slate-600 truncate">{o.id}</div>
-                        <div className="text-sm text-slate-800">
-                          Vencimento: <b>{fmtYMDToBR(o.due_date)}</b> <Badge tone="red">Vencido</Badge>
+                    <div
+                      key={o.id}
+                      className="rounded-2xl border border-amber-200 bg-white/80 px-4 py-3"
+                    >
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-slate-500 truncate">{o.id}</div>
+                          <div className="mt-1 text-sm text-slate-800">
+                            Vencimento: <b>{fmtYMDToBR(o.due_date)}</b>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Badge tone="red">Vencido</Badge>
+                          <SecondaryActionButton onClick={() => router.push("/financeiro")}>
+                            Ver no Financeiro
+                          </SecondaryActionButton>
                         </div>
                       </div>
-                      <Button variant="secondary" onClick={() => router.push("/financeiro")}>
-                        Ver no Financeiro
-                      </Button>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-          </Card>
+              )}
+            </div>
+          </div>
         ) : null}
 
         {msg ? (
           <Card title="Erro">
-            <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+            <div className="text-sm whitespace-pre-wrap text-red-600">{msg}</div>
           </Card>
         ) : null}
 
@@ -456,151 +643,257 @@ export default function PedidoPage() {
         ) : null}
 
         {!loading && !msg ? (
-          <Card title="Entrega" subtitle="O frete é o valor padrão cadastrado para a sua loja.">
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                variant={deliveryMode === "RETIRADA" ? "primary" : "secondary"}
-                onClick={() => setDeliveryMode("RETIRADA")}
-                disabled={hasOverdue}
-              >
-                Retirada
-              </Button>
-              <Button
-                variant={deliveryMode === "FRETE" ? "primary" : "secondary"}
-                onClick={() => setDeliveryMode("FRETE")}
-                disabled={hasOverdue}
-              >
-                Frete
-              </Button>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-6">
+              <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Entrega</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Escolha entre retirada ou frete padrão da loja.
+                    </div>
 
-              <div className="ml-auto flex flex-wrap items-center gap-2">
-                <span className="text-sm text-slate-600">Frete aplicado:</span>
-                <span className="font-semibold text-slate-900">{money(freightApplied)}</span>
-                {deliveryMode === "FRETE" ? <Badge tone="yellow">Frete</Badge> : <Badge tone="neutral">Retirada</Badge>}
+                    <div className="mt-4 max-w-md">
+                      <SegmentedSwitch
+                        value={deliveryMode}
+                        onChange={(v) => setDeliveryMode(v as "RETIRADA" | "FRETE")}
+                        disabled={hasOverdue}
+                        options={[
+                          { value: "RETIRADA", label: "Retirada" },
+                          { value: "FRETE", label: "Frete" },
+                        ]}
+                      />
+                    </div>
+
+                    <div className="mt-3 text-xs text-slate-500">
+                      Quantidades com <b>passo</b> são travadas por caixa ou lote.
+                    </div>
+
+                    {hasOverdue ? (
+                      <div className="mt-3 text-sm text-red-700">
+                        Você possui títulos vencidos. Regularize no <b>Financeiro</b> para continuar.
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Resumo da entrega
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Modalidade</span>
+                        {deliveryMode === "FRETE" ? (
+                          <Badge tone="yellow">Frete</Badge>
+                        ) : (
+                          <Badge tone="neutral">Retirada</Badge>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Frete aplicado</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {money(freightApplied)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Itens selecionados</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {selectedItemsCount}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
 
-            <div className="mt-2 text-xs text-slate-500">
-              Quantidades com <b>passo</b> são travadas por caixa/lote (ex.: 216, 120, etc.).
-            </div>
+              <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">
+                      Produtos ({filteredProducts.length})
+                    </div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Use a busca para localizar mais rápido e ajuste as quantidades.
+                    </div>
+                  </div>
 
-            {hasOverdue ? (
-              <div className="mt-3 text-sm text-red-700">
-                Você possui títulos vencidos. Regularize no <b>Financeiro</b> para continuar.
-              </div>
-            ) : null}
-          </Card>
-        ) : null}
+                  <div className="w-full lg:w-[320px]">
+                    <label className="mb-2 block text-[13px] font-semibold text-slate-700">
+                      Buscar produto
+                    </label>
+                    <input
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Buscar por nome ou SKU"
+                      className="h-12 w-full rounded-[18px] border border-slate-200 bg-slate-50/70 px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+                    />
+                  </div>
+                </div>
 
-        {!loading && !msg ? (
-          <Card title={`Produtos (${products.length})`} subtitle="Use + / - ou digite a quantidade.">
-            {products.length === 0 ? (
-              <div className="text-sm text-slate-600">Nenhum produto ativo.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-separate border-spacing-0">
-                  <thead>
-                    <tr className="text-left text-xs text-slate-600">
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">SKU</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Nome</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Unid.</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Preço</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2">Quantidade</th>
-                      <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-3 py-2 text-right">Total</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {products.map((p) => {
+                {filteredProducts.length === 0 ? (
+                  <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+                    Nenhum produto encontrado.
+                  </div>
+                ) : (
+                  <div className="mt-6 grid gap-4">
+                    {filteredProducts.map((p) => {
                       const unit = (p.unit ?? "un").toString();
                       const unit_cost = Number(p.unit_cost ?? 0) || 0;
                       const qty = cart[p.id]?.qty ?? 0;
                       const step = getStep(p.sku);
                       const lineTotal = qty * unit_cost;
+                      const selected = qty > 0;
 
                       return (
-                        <tr key={p.id} className={`hover:bg-slate-50 ${hasOverdue ? "opacity-60" : ""}`}>
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                            <div className="font-mono text-xs text-slate-600">{p.sku}</div>
-                          </td>
+                        <div
+                          key={p.id}
+                          className={[
+                            "rounded-[26px] border p-4 transition md:p-5",
+                            selected
+                              ? "border-cyan-200 bg-cyan-50/40"
+                              : "border-slate-200 bg-white",
+                            hasOverdue ? "opacity-60" : "",
+                          ].join(" ")}
+                        >
+                          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="text-base font-semibold text-slate-900">
+                                  {p.name}
+                                </div>
 
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                            <div className="text-sm font-semibold text-slate-900">{p.name}</div>
-                            <div className="mt-1 text-xs text-slate-500">{p.id}</div>
-                          </td>
+                                {selected ? <Badge tone="blue">Selecionado</Badge> : null}
+                                {step > 1 ? <Badge tone="yellow">Passo {step}</Badge> : null}
+                              </div>
 
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-sm text-slate-700">{unit}</td>
+                              <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-600">
+                                <span className="font-mono text-xs text-slate-500">
+                                  SKU {p.sku}
+                                </span>
+                                <span>Unidade: {unit}</span>
+                                <span className="font-semibold text-slate-900">
+                                  {money(unit_cost)}
+                                </span>
+                              </div>
+                            </div>
 
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right text-sm text-slate-900">
-                            {money(unit_cost)}
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Button variant="secondary" onClick={() => dec(p)} disabled={hasOverdue || qty <= 0}>
-                                -
-                              </Button>
-
-                              <input
-                                className="w-[140px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold text-slate-900 outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-                                type="number"
+                            <div className="flex flex-col gap-3 xl:items-end">
+                              <QtyControl
                                 value={qty}
                                 step={step}
-                                min={0}
                                 disabled={hasOverdue}
-                                onChange={(e) => setQty(p, Number(e.target.value))}
+                                onDecrease={() => dec(p)}
+                                onIncrease={() => inc(p)}
+                                onChange={(v) => setQty(p, v)}
                               />
 
-                              <Button variant="secondary" onClick={() => inc(p)} disabled={hasOverdue}>
-                                +
-                              </Button>
+                              <div className="text-right">
+                                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  Total do item
+                                </div>
+                                <div className="text-lg font-semibold text-slate-900">
+                                  {money(lineTotal)}
+                                </div>
+                              </div>
                             </div>
-
-                            <div className="mt-1 text-xs text-slate-500">
-                              passo: <b>{step}</b> {unit}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-3 py-3 text-right font-semibold text-slate-900">
-                            {money(lineTotal)}
-                          </td>
-                        </tr>
+                          </div>
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="mt-4 flex justify-end">
-              <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-slate-50 p-4 text-right">
-                <div className="text-xs font-semibold text-slate-600">Itens</div>
-                <div className="text-base font-semibold text-slate-900">{money(itemsTotal)}</div>
-
-                <div className="mt-3 text-xs font-semibold text-slate-600">
-                  Frete ({deliveryMode === "FRETE" ? "Frete" : "Retirada"})
-                </div>
-                <div className="text-base font-semibold text-slate-900">{money(freightApplied)}</div>
-
-                <div className="my-3 h-px bg-slate-200" />
-
-                <div className="text-xs font-semibold text-slate-600">Total do pedido</div>
-                <div className="text-2xl font-semibold text-slate-900">{money(grandTotal)}</div>
-
-                <div className="mt-3 flex justify-end">
-                  <Button onClick={onContinue} disabled={continueBlocked}>
-                    {hasOverdue ? "Bloqueado por vencidos" : "Continuar"}
-                  </Button>
-                </div>
-
-                {hasOverdue ? (
-                  <div className="mt-2 text-xs text-red-700">
-                    Regularize os títulos vencidos no <b>Financeiro</b> para criar novos pedidos.
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
-          </Card>
+
+            <div>
+              <div className="xl:sticky xl:top-24">
+                <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-5 shadow-sm md:p-6">
+                  <div className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
+                    Resumo do pedido
+                  </div>
+
+                  <div className="mt-1 text-sm text-slate-600">
+                    Confira os valores antes de continuar.
+                  </div>
+
+                  <div className="mt-6 space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Itens
+                      </div>
+                      <div className="mt-1 text-2xl font-semibold text-slate-900">
+                        {selectedItemsCount}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Quantidade total: {selectedUnitsCount}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Subtotal dos itens</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {money(itemsTotal)}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <span className="text-sm text-slate-600">Frete</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {money(freightApplied)}
+                        </span>
+                      </div>
+
+                      <div className="my-4 h-px bg-slate-200" />
+
+                      <div className="flex items-end justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Total do pedido
+                          </div>
+                          <div className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-900">
+                            {money(grandTotal)}
+                          </div>
+                        </div>
+
+                        {deliveryMode === "FRETE" ? (
+                          <Badge tone="yellow">Frete</Badge>
+                        ) : (
+                          <Badge tone="neutral">Retirada</Badge>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3">
+                      <PrimaryActionButton onClick={onContinue} disabled={continueBlocked} fullWidth>
+                        {hasOverdue ? "Bloqueado por vencidos" : "Continuar pedido"}
+                      </PrimaryActionButton>
+
+                      <SecondaryActionButton
+                        onClick={() => router.push("/pedidos")}
+                        fullWidth
+                      >
+                        Ver histórico
+                      </SecondaryActionButton>
+                    </div>
+
+                    {hasOverdue ? (
+                      <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                        Regularize os títulos vencidos no <b>Financeiro</b> para criar novos pedidos.
+                      </div>
+                    ) : !hasItems ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                        Selecione pelo menos um item para continuar.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
     </PortalShell>

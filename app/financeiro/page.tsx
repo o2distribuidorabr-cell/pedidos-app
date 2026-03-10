@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { Card, PageHeader, Select, StatCard, Input, Badge } from "@/app/components/ui";
 import PortalShell from "@/app/components/PortalShell";
-import { Card, PageHeader, Select, Button, StatCard, Table, Input, Badge } from "@/app/components/ui";
 
 type OrderRow = {
   id: string;
@@ -87,7 +87,7 @@ type PixCreateResponse = {
 
 type PixPoll = {
   state: "idle" | "checking" | "approved" | "failed" | "expired";
-  lastCheckAt?: string; // ISO
+  lastCheckAt?: string;
   provider?: PixProvider;
   providerStatus?: string | null;
   providerDetail?: string | null;
@@ -96,8 +96,12 @@ type PixPoll = {
 };
 
 function money(n: number) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
+
 function fmtBR(iso: string | null | undefined) {
   if (!iso) return "-";
   try {
@@ -106,32 +110,50 @@ function fmtBR(iso: string | null | undefined) {
     return String(iso);
   }
 }
+
+function fmtDateOnly(ymd: string | null | undefined) {
+  if (!ymd) return "-";
+  try {
+    const [y, m, d] = String(ymd).split("-").map(Number);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
+    return dt.toLocaleDateString("pt-BR");
+  } catch {
+    return String(ymd);
+  }
+}
+
 function toISOStart(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 0, 0, 0).toISOString();
 }
+
 function toISOEnd(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 23, 59, 59).toISOString();
 }
+
 function near(a: number, b: number, eps = 0.01) {
   return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= eps;
 }
+
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
   if (v === "EM_SEPARACAO") return "Em separação";
   if (v === "ENTREGUE") return "Entregue";
   return "—";
 }
+
 function deliveryLabel(v: OrderRow["delivery_mode"]) {
   return v === "FRETE" ? "Frete" : "Retirada";
 }
+
 function statusTone(s: string) {
   if (s === "approved") return "green";
   if (s === "submitted") return "blue";
   if (s === "rejected") return "red";
   return "neutral";
 }
+
 function todayYMD() {
   const d = new Date();
   const y = d.getFullYear();
@@ -139,17 +161,20 @@ function todayYMD() {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
+
 function calcDueStatus(due: string | null, isPaid: boolean) {
   if (isPaid) return "PAGO" as const;
   if (!due) return "SEM_VENCIMENTO" as const;
   return due < todayYMD() ? ("VENCIDO" as const) : ("A_VENCER" as const);
 }
+
 function dueBadge(s: RowUi["due_status"]) {
   if (s === "PAGO") return <Badge tone="green">Pago</Badge>;
   if (s === "VENCIDO") return <Badge tone="red">Vencido</Badge>;
   if (s === "A_VENCER") return <Badge tone="yellow">A vencer</Badge>;
   return <Badge tone="neutral">—</Badge>;
 }
+
 function daysLateYMD(dueYmd: string) {
   const [y, m, d] = dueYmd.split("-").map(Number);
   const due = new Date(y, m - 1, d, 12, 0, 0);
@@ -159,27 +184,32 @@ function daysLateYMD(dueYmd: string) {
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
   return Math.max(days, 0);
 }
+
 function clamp2(n: number) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
+
 function msLeft(expiresAtISO: string | null) {
   if (!expiresAtISO) return null;
   const t = new Date(expiresAtISO).getTime();
   const now = Date.now();
   return Math.max(t - now, 0);
 }
+
 function fmtMMSS(ms: number) {
   const s = Math.floor(ms / 1000);
   const mm = String(Math.floor(s / 60)).padStart(2, "0");
   const ss = String(s % 60).padStart(2, "0");
   return `${mm}:${ss}`;
 }
+
 function normalizeProvider(v?: string | null): PixProvider {
   const p = String(v || "MP").toUpperCase();
   if (p === "ASAAS") return "ASAAS";
   if (p === "SANTANDER") return "SANTANDER";
   return "MP";
 }
+
 function parseAsaasExpiration(value?: string | null): string | null {
   const v = String(value || "").trim();
   if (!v) return null;
@@ -188,18 +218,19 @@ function parseAsaasExpiration(value?: string | null): string | null {
   }
   return v;
 }
+
 function addMinutesISO(minutes: number) {
   const d = new Date();
   d.setMinutes(d.getMinutes() + minutes);
   return d.toISOString();
 }
+
 function providerLabel(p?: PixProvider | null) {
   if (p === "ASAAS") return "Asaas";
   if (p === "SANTANDER") return "Santander";
   return "Mercado Pago";
 }
 
-/** ✅ relógio de "há X segundos" só para UX (não depende de polling) */
 function sinceLabel(iso?: string) {
   if (!iso) return "";
   const t = new Date(iso).getTime();
@@ -211,6 +242,119 @@ function sinceLabel(iso?: string) {
   if (m < 60) return `há ${m}min`;
   const h = Math.floor(m / 60);
   return `há ${h}h`;
+}
+
+function daysUntilDue(due: string | null) {
+  if (!due) return null;
+  const [y, m, d] = due.split("-").map(Number);
+  const dueDate = new Date(y, m - 1, d, 12, 0, 0);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  const diff = dueDate.getTime() - today.getTime();
+  return Math.floor(diff / (1000 * 60 * 60 * 24));
+}
+
+function SummaryBox({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string;
+  value: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
+      {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
+}
+
+function InfoPair({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+    </div>
+  );
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.26)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
 }
 
 export default function FinanceiroFranqueadoPage() {
@@ -231,7 +375,6 @@ export default function FinanceiroFranqueadoPage() {
   const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
-
   const [dueFilter, setDueFilter] = useState<string>("all");
 
   const [userEmail, setUserEmail] = useState<string>("");
@@ -247,9 +390,9 @@ export default function FinanceiroFranqueadoPage() {
 
   const pollTimerRef = useRef<number | null>(null);
   const countdownTimerRef = useRef<number | null>(null);
-  const lastCheckClockRef = useRef<number | null>(null); // ✅ relógio de UI
+  const lastCheckClockRef = useRef<number | null>(null);
   const [countdownMs, setCountdownMs] = useState<number | null>(null);
-  const [lastCheckUiNow, setLastCheckUiNow] = useState<number>(Date.now()); // força re-render do "há X"
+  const [lastCheckUiNow, setLastCheckUiNow] = useState<number>(Date.now());
 
   useEffect(() => {
     (async () => {
@@ -317,7 +460,6 @@ export default function FinanceiroFranqueadoPage() {
     lastCheckClockRef.current = null;
   }
 
-  /** ✅ inicia relógio local para atualizar "há X" sem depender de polling */
   function startLastCheckClock() {
     if (lastCheckClockRef.current) window.clearInterval(lastCheckClockRef.current);
     lastCheckClockRef.current = window.setInterval(() => setLastCheckUiNow(Date.now()), 1000) as any;
@@ -512,10 +654,44 @@ export default function FinanceiroFranqueadoPage() {
     const totalPago = rows.reduce((a, r) => a + (r.is_paid ? r.a_pagar_com_encargos : 0), 0);
     const totalAberto = totalApagar - totalPago;
 
-    const totalVencido = rows.filter((r) => r.due_status === "VENCIDO").reduce((a, r) => a + r.a_pagar_com_encargos, 0);
-    const totalAVencer = rows.filter((r) => r.due_status === "A_VENCER").reduce((a, r) => a + r.a_pagar_com_encargos, 0);
+    const totalVencido = rows
+      .filter((r) => r.due_status === "VENCIDO")
+      .reduce((a, r) => a + r.a_pagar_com_encargos, 0);
 
-    return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto, totalVencido, totalAVencer };
+    const totalAVencer = rows
+      .filter((r) => r.due_status === "A_VENCER")
+      .reduce((a, r) => a + r.a_pagar_com_encargos, 0);
+
+    return {
+      totalMercadoria,
+      totalFrete,
+      totalTotal,
+      totalCredito,
+      totalApagar,
+      totalPago,
+      totalAberto,
+      totalVencido,
+      totalAVencer,
+    };
+  }, [rows]);
+
+  const proximosVencimentos = useMemo(() => {
+    return rows
+      .filter((r) => !r.is_paid && r.due_date && r.due_status === "A_VENCER")
+      .map((r) => ({
+        ...r,
+        days_to_due: daysUntilDue(r.due_date),
+      }))
+      .filter((r) => r.days_to_due !== null && r.days_to_due! <= 7)
+      .sort((a, b) => (a.days_to_due ?? 999) - (b.days_to_due ?? 999))
+      .slice(0, 8);
+  }, [rows]);
+
+  const vencidosLista = useMemo(() => {
+    return rows
+      .filter((r) => r.due_status === "VENCIDO")
+      .sort((a, b) => (b.late_days || 0) - (a.late_days || 0))
+      .slice(0, 8);
   }, [rows]);
 
   async function logPaymentRecord(params: {
@@ -548,8 +724,15 @@ export default function FinanceiroFranqueadoPage() {
       }
 
       if (!resp.ok) {
-        const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
-        throw new Error(`Erro ao gravar log do pagamento | HTTP ${resp.status} ${resp.statusText} | ${details}`);
+        const details = data?.details
+          ? JSON.stringify(data.details)
+          : data?.error
+          ? String(data.error)
+          : text.slice(0, 400);
+
+        throw new Error(
+          `Erro ao gravar log do pagamento | HTTP ${resp.status} ${resp.statusText} | ${details}`
+        );
       }
 
       return data;
@@ -560,7 +743,6 @@ export default function FinanceiroFranqueadoPage() {
   }
 
   async function checkPaymentOnce(paymentId: string, provider: PixProvider) {
-    // ✅ sempre atualiza lastCheckAt (mesmo se der erro depois)
     setPoll((p) => ({ ...p, lastCheckAt: new Date().toISOString(), provider }));
 
     if (provider === "SANTANDER") {
@@ -631,7 +813,10 @@ export default function FinanceiroFranqueadoPage() {
     }
 
     if (provider === "ASAAS") {
-      const resp = await fetch(`/api/asaas/status?paymentId=${encodeURIComponent(paymentId)}`, { method: "GET" });
+      const resp = await fetch(`/api/asaas/status?paymentId=${encodeURIComponent(paymentId)}`, {
+        method: "GET",
+      });
+
       const text = await resp.text();
       let data: any = null;
       try {
@@ -641,7 +826,12 @@ export default function FinanceiroFranqueadoPage() {
       }
 
       if (!resp.ok) {
-        const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 300);
+        const details = data?.details
+          ? JSON.stringify(data.details)
+          : data?.error
+          ? String(data.error)
+          : text.slice(0, 300);
+
         throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
       }
 
@@ -686,8 +876,10 @@ export default function FinanceiroFranqueadoPage() {
       return;
     }
 
-    // MP
-    const resp = await fetch(`/api/mp/payment-status?paymentId=${encodeURIComponent(paymentId)}`, { method: "GET" });
+    const resp = await fetch(`/api/mp/payment-status?paymentId=${encodeURIComponent(paymentId)}`, {
+      method: "GET",
+    });
+
     const text = await resp.text();
     let data: any = null;
     try {
@@ -697,7 +889,12 @@ export default function FinanceiroFranqueadoPage() {
     }
 
     if (!resp.ok) {
-      const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 300);
+      const details = data?.details
+        ? JSON.stringify(data.details)
+        : data?.error
+        ? String(data.error)
+        : text.slice(0, 300);
+
       throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
     }
 
@@ -755,7 +952,11 @@ export default function FinanceiroFranqueadoPage() {
       setCountdownMs(left);
 
       if (left !== null && left <= 0) {
-        setPoll((p) => (p.state === "approved" ? p : { ...p, state: "expired", message: "QR expirado. Gere um novo PIX." }));
+        setPoll((p) =>
+          p.state === "approved"
+            ? p
+            : { ...p, state: "expired", message: "QR expirado. Gere um novo PIX." }
+        );
         if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
         pollTimerRef.current = null;
       }
@@ -767,7 +968,7 @@ export default function FinanceiroFranqueadoPage() {
 
   async function startPolling(paymentId: string, provider: PixProvider, operationalExpiresAtISO: string | null) {
     stopAllTimers();
-    startLastCheckClock(); // ✅ mantém UI viva
+    startLastCheckClock();
 
     setPoll({ state: "checking", lastCheckAt: new Date().toISOString(), provider });
 
@@ -868,7 +1069,11 @@ export default function FinanceiroFranqueadoPage() {
         }
 
         if (!resp.ok) {
-          const details = data?.error ? String(data.error) : data?.details ? JSON.stringify(data.details) : text.slice(0, 500);
+          const details = data?.error
+            ? String(data.error)
+            : data?.details
+            ? JSON.stringify(data.details)
+            : text.slice(0, 500);
           throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
         }
 
@@ -898,7 +1103,6 @@ export default function FinanceiroFranqueadoPage() {
           rawResponse: data,
         });
 
-        // ✅ Santander: validade operacional SEMPRE 10 min a partir de agora
         const operationalExpiresAt = addMinutesISO(10);
 
         setPixData({
@@ -943,7 +1147,11 @@ export default function FinanceiroFranqueadoPage() {
         }
 
         if (!resp.ok) {
-          const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
+          const details = data?.details
+            ? JSON.stringify(data.details)
+            : data?.error
+            ? String(data.error)
+            : text.slice(0, 400);
           throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
         }
 
@@ -996,7 +1204,6 @@ export default function FinanceiroFranqueadoPage() {
         return;
       }
 
-      // MP
       const resp = await fetch("/api/mp/pix", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1017,7 +1224,11 @@ export default function FinanceiroFranqueadoPage() {
       }
 
       if (!resp.ok) {
-        const details = data?.details ? JSON.stringify(data.details) : data?.error ? String(data.error) : text.slice(0, 400);
+        const details = data?.details
+          ? JSON.stringify(data.details)
+          : data?.error
+          ? String(data.error)
+          : text.slice(0, 400);
         throw new Error(`HTTP ${resp.status} ${resp.statusText} | ${details}`);
       }
 
@@ -1085,68 +1296,6 @@ export default function FinanceiroFranqueadoPage() {
     stopAllTimers();
   }
 
-  const headers = [
-    "Pedido",
-    "Status",
-    "Operação",
-    "Entrega",
-    "Vencimento",
-    "Situação",
-    "Forma pgto",
-    "Mercadoria",
-    "Frete",
-    "Total",
-    "Crédito",
-    "A pagar",
-    "Pago?",
-    "Data pgto",
-    "Saldo crédito",
-    "Ações",
-  ];
-
-  const tableRows = rows.map((r) => {
-    const hasCharges = r.late_days > 0 && (r.late_fee > 0 || r.late_interest > 0) && !r.is_paid && r.due_status === "VENCIDO";
-    const canPayPix = !r.is_paid && (hasCharges ? r.a_pagar_com_encargos : r.a_pagar) > 0;
-
-    return [
-      <span key="id" className="font-mono text-xs">{r.id}</span>,
-      <Badge key="st" tone={statusTone(r.status) as any}>{r.status}</Badge>,
-      <span key="op">{logisticLabel(r.logistic_status)}</span>,
-      <span key="del">{deliveryLabel(r.delivery_mode)}</span>,
-      <span key="due">{r.due_date ?? "-"}</span>,
-      <span key="dueSt">{dueBadge(r.due_status)}</span>,
-      <span key="pm">{r.payment_method ?? "-"}</span>,
-      <span key="m" className="font-semibold">{money(r.mercadoria)}</span>,
-      <span key="f">{r.delivery_mode === "FRETE" ? money(r.frete) : "-"}</span>,
-      <span key="t" className="font-semibold">{money(r.total)}</span>,
-      <span key="c">- {money(r.credit_applied)}</span>,
-      <div key="ap" className="min-w-0">
-        <div className="font-semibold">{money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}</div>
-        {hasCharges ? (
-          <div className="mt-1 text-[11px] text-slate-500">
-            Base {money(r.a_pagar)} + multa {money(r.late_fee)} + juros {money(r.late_interest)} ({r.late_days} dia(s))
-          </div>
-        ) : null}
-      </div>,
-      <span key="p">{r.is_paid ? "Sim" : "Não"}</span>,
-      <span key="dt">{fmtBR(r.paid_at)}</span>,
-      <span key="bal" className="font-semibold">{money(r.credit_balance)}</span>,
-      <div key="act" className="flex gap-2">
-        <Button
-          variant="secondary"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            if (canPayPix) openPixForOrder(r);
-          }}
-          disabled={!canPayPix}
-        >
-          Pagar com PIX
-        </Button>
-      </div>,
-    ];
-  });
-
   if (loading) {
     return (
       <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
@@ -1159,20 +1308,170 @@ export default function FinanceiroFranqueadoPage() {
 
   return (
     <PortalShell title="Financeiro" subtitle="Resumo de pedidos, crédito e pagamentos">
-      <div className="space-y-4">
+      <div className="space-y-6">
         <PageHeader
           title="Financeiro"
-          subtitle={`Resumo de pedidos, crédito e pagamentos. Provedor PIX ativo: ${providerLabel(pixProvider)}`}
+          subtitle={`Painel financeiro da unidade • Provedor PIX ativo: ${providerLabel(pixProvider)}`}
+          right={
+            <div className="flex flex-wrap gap-2">
+              <SecondaryActionButton onClick={onReload}>Recarregar</SecondaryActionButton>
+            </div>
+          }
         />
 
-        <Card title="Filtros" right={<Button variant="secondary" onClick={onReload}>Recarregar</Button>}>
-          {msg ? <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div> : null}
+        {msg ? (
+          <Card>
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {msg}
+            </div>
+          </Card>
+        ) : null}
 
-          <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Visão geral"
+            subtitle="Resumo da posição financeira da loja"
+            right={<Badge tone="blue">{providerLabel(pixProvider)}</Badge>}
+          />
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="A pagar" value={money(resumo.totalApagar)} subtitle="Com encargos quando aplicável" />
+            <StatCard label="Em aberto" value={money(resumo.totalAberto)} subtitle="Ainda não pagos" />
+            <StatCard label="Vencidos" value={money(resumo.totalVencido)} subtitle="Exibidos no filtro atual" />
+            <StatCard label="Saldo de crédito" value={money(creditBalance)} subtitle="Crédito disponível da loja" />
+          </div>
+        </div>
+
+        {(vencidosLista.length > 0 || proximosVencimentos.length > 0) ? (
+          <div className="grid gap-6 xl:grid-cols-2">
+            <div className="rounded-[30px] border border-red-200 bg-[linear-gradient(180deg,#fff8f8_0%,#fff1f1_100%)] p-5 shadow-sm md:p-6">
+              <SectionTitle
+                title="Títulos vencidos"
+                subtitle="Pedidos que exigem atenção imediata"
+                right={<Badge tone="red">{vencidosLista.length}</Badge>}
+              />
+
+              {vencidosLista.length === 0 ? (
+                <div className="mt-5 text-sm text-slate-600">Nenhum vencido no filtro atual.</div>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  {vencidosLista.map((r) => (
+                    <div key={r.id} className="rounded-[22px] border border-red-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-slate-500">{r.id}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <Badge tone="red">Vencido</Badge>
+                            <span className="text-sm text-slate-700">
+                              Venceu em <b>{fmtDateOnly(r.due_date)}</b>
+                            </span>
+                            <span className="text-sm text-slate-500">
+                              • {r.late_days} dia(s) de atraso
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            A pagar
+                          </div>
+                          <div className="text-lg font-semibold text-slate-900">
+                            {money(r.a_pagar_com_encargos)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {(r.late_fee > 0 || r.late_interest > 0) ? (
+                        <div className="mt-3 text-xs text-slate-500">
+                          Multa: {money(r.late_fee)} • Juros: {money(r.late_interest)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-[30px] border border-amber-200 bg-[linear-gradient(180deg,#fffdf7_0%,#fff8eb_100%)] p-5 shadow-sm md:p-6">
+              <SectionTitle
+                title="Próximos do vencimento"
+                subtitle="Pedidos que vencem nos próximos 7 dias"
+                right={<Badge tone="yellow">{proximosVencimentos.length}</Badge>}
+              />
+
+              {proximosVencimentos.length === 0 ? (
+                <div className="mt-5 text-sm text-slate-600">Nenhum título próximo do vencimento.</div>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  {proximosVencimentos.map((r) => (
+                    <div key={r.id} className="rounded-[22px] border border-amber-200 bg-white p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-slate-500">{r.id}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <Badge tone="yellow">A vencer</Badge>
+                            <span className="text-sm text-slate-700">
+                              Vence em <b>{fmtDateOnly(r.due_date)}</b>
+                            </span>
+                            <span className="text-sm text-slate-500">
+                              • faltam {r.days_to_due} dia(s)
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            A pagar
+                          </div>
+                          <div className="text-lg font-semibold text-slate-900">
+                            {money(r.a_pagar)}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <SummaryBox title="Mercadoria" value={money(resumo.totalMercadoria)} />
+          <SummaryBox title="Frete" value={money(resumo.totalFrete)} />
+          <SummaryBox title="Total" value={money(resumo.totalTotal)} />
+          <SummaryBox title="Crédito abatido" value={`- ${money(resumo.totalCredito)}`} />
+          <SummaryBox title="A vencer" value={money(resumo.totalAVencer)} />
+        </div>
+
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Filtros"
+            subtitle="Refine a visualização sem alterar a lógica financeira"
+            right={
+              <div className="flex flex-wrap gap-2">
+                <PrimaryActionButton onClick={onReload}>Aplicar filtros</PrimaryActionButton>
+                <SecondaryActionButton
+                  onClick={() => {
+                    setPaidFilter("all");
+                    setStatusFilter("all");
+                    setDeliveryFilter("all");
+                    setDueFilter("all");
+                    setDateFrom("");
+                    setDateTo("");
+                  }}
+                >
+                  Limpar filtros
+                </SecondaryActionButton>
+              </div>
+            }
+          />
+
+          <div className="mt-6 mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
             Provedor PIX ativo nesta loja: <b>{providerLabel(pixProvider)}</b>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
             <Select
               label="Status"
               value={statusFilter}
@@ -1224,69 +1523,218 @@ export default function FinanceiroFranqueadoPage() {
             <Input label="De" type="date" value={dateFrom} onChange={setDateFrom} />
             <Input label="Até" type="date" value={dateTo} onChange={setDateTo} />
           </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button onClick={onReload}>Aplicar filtros</Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setPaidFilter("all");
-                setStatusFilter("all");
-                setDeliveryFilter("all");
-                setDueFilter("all");
-                setDateFrom("");
-                setDateTo("");
-              }}
-            >
-              Limpar filtros
-            </Button>
-          </div>
-        </Card>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Mercadoria" value={money(resumo.totalMercadoria)} />
-          <StatCard label="Frete" value={money(resumo.totalFrete)} />
-          <StatCard label="Total" value={money(resumo.totalTotal)} />
-          <StatCard label="Crédito abatido" value={`- ${money(resumo.totalCredito)}`} />
-          <StatCard label="A pagar (com encargos)" value={money(resumo.totalApagar)} />
-          <StatCard label="Pago" value={money(resumo.totalPago)} />
-          <StatCard label="Em aberto" value={money(resumo.totalAberto)} />
-          <StatCard label="Saldo de crédito" value={money(creditBalance)} />
-          <StatCard label="Vencidos (no filtro)" value={money(resumo.totalVencido)} />
-          <StatCard label="A vencer (no filtro)" value={money(resumo.totalAVencer)} />
         </div>
 
-        <Card title="Pedidos" subtitle="Clique em uma linha para abrir o pedido" right={<Button variant="secondary" onClick={onReload}>Atualizar</Button>}>
-          <div
-            className="cursor-pointer"
-            onClickCapture={(e) => {
-              const btn = (e.target as HTMLElement).closest("button");
-              if (btn) return;
-              const tr = (e.target as HTMLElement).closest("[data-order-id]") as HTMLElement | null;
-              if (!tr) return;
-              const id = tr.getAttribute("data-order-id");
-              if (id) router.push(`/pedidos/${id}`);
-            }}
-          >
-            <Table
-              headers={headers}
-              rows={
-                rows.length === 0
-                  ? []
-                  : rows.map((r, idx) => {
-                      const row = tableRows[idx];
-                      return row.map((cell, cidx) => (
-                        <div key={`${r.id}-${cidx}`} data-order-id={r.id}>
-                          {cell}
-                        </div>
-                      ));
-                    })
-              }
-            />
-          </div>
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Pedidos financeiros"
+            subtitle="Tabela compacta no desktop e cards no celular"
+            right={<SecondaryActionButton onClick={onReload}>Atualizar</SecondaryActionButton>}
+          />
 
-          {rows.length === 0 ? <div className="mt-3 text-sm text-slate-500">Nenhum dado encontrado.</div> : null}
-        </Card>
+          {rows.length === 0 ? (
+            <div className="mt-6 text-sm text-slate-500">Nenhum dado encontrado.</div>
+          ) : (
+            <>
+              <div className="mt-6 hidden lg:block">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] border-separate border-spacing-0">
+                    <thead>
+                      <tr className="text-left text-xs text-slate-600">
+                        <th className="border-b border-slate-200 bg-slate-50 px-4 py-3">Pedido</th>
+                        <th className="border-b border-slate-200 bg-slate-50 px-4 py-3">Situação</th>
+                        <th className="border-b border-slate-200 bg-slate-50 px-4 py-3">Vencimento</th>
+                        <th className="border-b border-slate-200 bg-slate-50 px-4 py-3">Valores</th>
+                        <th className="border-b border-slate-200 bg-slate-50 px-4 py-3">Pagamento</th>
+                        <th className="border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">Ações</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {rows.map((r) => {
+                        const hasCharges =
+                          r.late_days > 0 &&
+                          (r.late_fee > 0 || r.late_interest > 0) &&
+                          !r.is_paid &&
+                          r.due_status === "VENCIDO";
+
+                        const canPayPix =
+                          !r.is_paid && (hasCharges ? r.a_pagar_com_encargos : r.a_pagar) > 0;
+
+                        return (
+                          <tr
+                            key={r.id}
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => router.push(`/pedidos/${r.id}`)}
+                          >
+                            <td className="border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="font-mono text-xs text-slate-500">{r.id}</div>
+                              <div className="mt-2 text-sm font-semibold text-slate-900">
+                                {fmtBR(r.created_at)}
+                              </div>
+                            </td>
+
+                            <td className="border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="flex flex-wrap gap-2">
+                                <Badge tone={statusTone(r.status) as any}>{r.status}</Badge>
+                                {dueBadge(r.due_status)}
+                              </div>
+                              <div className="mt-2 text-sm text-slate-700">
+                                {logisticLabel(r.logistic_status)} • {deliveryLabel(r.delivery_mode)}
+                              </div>
+                            </td>
+
+                            <td className="border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="text-sm font-semibold text-slate-900">
+                                {r.due_date ? fmtDateOnly(r.due_date) : "-"}
+                              </div>
+                              {r.due_status === "VENCIDO" ? (
+                                <div className="mt-1 text-xs text-red-600">
+                                  {r.late_days} dia(s) de atraso
+                                </div>
+                              ) : null}
+                            </td>
+
+                            <td className="border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="space-y-1 text-sm">
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-slate-500">Mercadoria</span>
+                                  <span className="font-semibold text-slate-900">{money(r.mercadoria)}</span>
+                                </div>
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-slate-500">Frete</span>
+                                  <span className="font-semibold text-slate-900">
+                                    {r.delivery_mode === "FRETE" ? money(r.frete) : "-"}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between gap-3">
+                                  <span className="text-slate-500">Crédito</span>
+                                  <span className="font-semibold text-slate-900">- {money(r.credit_applied)}</span>
+                                </div>
+                                <div className="mt-2 border-t border-slate-200 pt-2 flex justify-between gap-3">
+                                  <span className="text-slate-700 font-semibold">A pagar</span>
+                                  <span className="font-semibold text-slate-900">
+                                    {money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}
+                                  </span>
+                                </div>
+                                {hasCharges ? (
+                                  <div className="text-[11px] text-slate-500">
+                                    multa {money(r.late_fee)} • juros {money(r.late_interest)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            </td>
+
+                            <td className="border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="text-sm font-semibold text-slate-900">
+                                {r.is_paid ? "Pago" : "Não pago"}
+                              </div>
+                              <div className="mt-1 text-sm text-slate-600">
+                                {r.payment_method ?? "-"}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {fmtBR(r.paid_at)}
+                              </div>
+                            </td>
+
+                            <td className="border-b border-slate-100 px-4 py-4 align-top text-right">
+                              <div
+                                className="flex flex-wrap justify-end gap-2"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <SecondaryActionButton
+                                  onClick={() => openPixForOrder(r)}
+                                  disabled={!canPayPix}
+                                >
+                                  Pagar com PIX
+                                </SecondaryActionButton>
+                                <SecondaryActionButton
+                                  onClick={() => router.push(`/pedidos/${r.id}`)}
+                                >
+                                  Abrir
+                                </SecondaryActionButton>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="mt-6 grid gap-4 lg:hidden">
+                {rows.map((r) => {
+                  const hasCharges =
+                    r.late_days > 0 &&
+                    (r.late_fee > 0 || r.late_interest > 0) &&
+                    !r.is_paid &&
+                    r.due_status === "VENCIDO";
+
+                  const canPayPix =
+                    !r.is_paid && (hasCharges ? r.a_pagar_com_encargos : r.a_pagar) > 0;
+
+                  return (
+                    <div
+                      key={r.id}
+                      className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-slate-500">{r.id}</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Badge tone={statusTone(r.status) as any}>{r.status}</Badge>
+                            {dueBadge(r.due_status)}
+                          </div>
+                        </div>
+
+                        <SecondaryActionButton onClick={() => router.push(`/pedidos/${r.id}`)}>
+                          Abrir
+                        </SecondaryActionButton>
+                      </div>
+
+                      <div className="mt-4 grid gap-3">
+                        <InfoPair label="Operação" value={logisticLabel(r.logistic_status)} />
+                        <InfoPair label="Entrega" value={deliveryLabel(r.delivery_mode)} />
+                        <InfoPair label="Vencimento" value={r.due_date ? fmtDateOnly(r.due_date) : "-"} />
+                        <InfoPair label="Forma pgto" value={r.payment_method ?? "-"} />
+                        <InfoPair label="Mercadoria" value={money(r.mercadoria)} />
+                        <InfoPair label="Frete" value={r.delivery_mode === "FRETE" ? money(r.frete) : "-"} />
+                        <InfoPair label="Total" value={money(r.total)} />
+                        <InfoPair label="Crédito" value={`- ${money(r.credit_applied)}`} />
+                        <InfoPair
+                          label="A pagar"
+                          value={money(hasCharges ? r.a_pagar_com_encargos : r.a_pagar)}
+                        />
+                        {hasCharges ? (
+                          <div className="text-xs text-slate-500">
+                            Multa {money(r.late_fee)} • Juros {money(r.late_interest)} • {r.late_days} dia(s)
+                          </div>
+                        ) : null}
+                        <InfoPair label="Pago?" value={r.is_paid ? "Sim" : "Não"} />
+                        <InfoPair label="Data pgto" value={fmtBR(r.paid_at)} />
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <SecondaryActionButton
+                          onClick={() => openPixForOrder(r)}
+                          disabled={!canPayPix}
+                        >
+                          Pagar com PIX
+                        </SecondaryActionButton>
+                        <SecondaryActionButton
+                          onClick={() => router.push(`/pedidos/${r.id}`)}
+                        >
+                          Ver pedido
+                        </SecondaryActionButton>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
 
         {pixOpen ? (
           <div className="fixed inset-0 z-[60] bg-black/40" role="dialog" aria-modal="true">
@@ -1303,9 +1751,9 @@ export default function FinanceiroFranqueadoPage() {
                         Provedor: <span className="font-semibold">{providerLabel(pixData?.gateway || pixProvider)}</span>
                       </div>
                     </div>
-                    <Button variant="secondary" onClick={closePixModal}>
+                    <SecondaryActionButton onClick={closePixModal}>
                       Fechar
-                    </Button>
+                    </SecondaryActionButton>
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-4">
@@ -1355,7 +1803,6 @@ export default function FinanceiroFranqueadoPage() {
                             {poll.provider ? ` • Provedor: ${providerLabel(poll.provider)}` : ""}
                             {poll.providerStatus ? ` • Status: ${poll.providerStatus}` : ""}
                             {poll.providerDetail ? ` (${poll.providerDetail})` : ""}
-                            {/* força re-render do "há X" */}
                             <span className="hidden">{String(lastCheckUiNow)}</span>
                           </div>
 
@@ -1366,8 +1813,7 @@ export default function FinanceiroFranqueadoPage() {
                           ) : null}
 
                           <div className="mt-2 flex flex-wrap gap-2">
-                            <Button
-                              variant="secondary"
+                            <SecondaryActionButton
                               onClick={async () => {
                                 if (!pixData?.paymentId || !pixData?.gateway) return;
                                 try {
@@ -1383,11 +1829,11 @@ export default function FinanceiroFranqueadoPage() {
                               }}
                             >
                               Rechecar agora
-                            </Button>
+                            </SecondaryActionButton>
 
-                            <Button variant="secondary" onClick={onReload}>
+                            <SecondaryActionButton onClick={onReload}>
                               Atualizar financeiro
-                            </Button>
+                            </SecondaryActionButton>
                           </div>
                         </div>
 
@@ -1407,7 +1853,12 @@ export default function FinanceiroFranqueadoPage() {
 
                         <div>
                           <div className="mb-1 text-sm font-semibold">PIX Copia e Cola</div>
-                          <textarea readOnly value={pixData.qrCode || ""} className="w-full rounded-xl border px-3 py-2 text-xs" rows={5} />
+                          <textarea
+                            readOnly
+                            value={pixData.qrCode || ""}
+                            className="w-full rounded-xl border px-3 py-2 text-xs"
+                            rows={5}
+                          />
                         </div>
                       </div>
                     ) : null}
@@ -1415,7 +1866,7 @@ export default function FinanceiroFranqueadoPage() {
 
                   <div className="sticky bottom-0 z-10 border-t bg-white px-4 py-3">
                     <div className="flex flex-wrap gap-2">
-                      <Button
+                      <PrimaryActionButton
                         onClick={async () => {
                           if (!pixData?.qrCode) return;
                           await navigator.clipboard.writeText(pixData.qrCode);
@@ -1423,10 +1874,10 @@ export default function FinanceiroFranqueadoPage() {
                         disabled={!pixData?.qrCode}
                       >
                         Copiar código
-                      </Button>
-                      <Button variant="secondary" onClick={closePixModal}>
+                      </PrimaryActionButton>
+                      <SecondaryActionButton onClick={closePixModal}>
                         Ok
-                      </Button>
+                      </SecondaryActionButton>
                     </div>
                   </div>
                 </div>

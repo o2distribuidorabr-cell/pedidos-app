@@ -5,12 +5,11 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
-
-import { Card, Button, Input, Badge } from "@/app/components/ui";
+import { Card, Badge } from "@/app/components/ui";
 
 type ProfileRow = {
   id: string;
-  role: string | null; // admin | franchisee | pending
+  role: string | null;
   approved: boolean | null;
   store_id: string | null;
 };
@@ -26,6 +25,138 @@ type SignupRequest = {
 
 function onlyDigits(v: string) {
   return (v || "").replace(/\D/g, "");
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+  inputMode,
+  autoCapitalize,
+  maxLength,
+  rightSlot,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  autoCapitalize?: string;
+  maxLength?: number;
+  rightSlot?: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-2">
+      <label className="text-[13px] font-semibold text-slate-700">{label}</label>
+
+      <div className="relative">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          type={type}
+          inputMode={inputMode}
+          autoCapitalize={autoCapitalize}
+          maxLength={maxLength}
+          className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 pr-12 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-cyan-300 focus:ring-4 focus:ring-cyan-100"
+        />
+        {rightSlot ? (
+          <div className="absolute inset-y-0 right-0 flex w-12 items-center justify-center">
+            {rightSlot}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PrimaryButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-12 w-full items-center justify-center rounded-2xl bg-cyan-600 px-4 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(8,145,178,0.28)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-12 w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {children}
+    </button>
+  );
+}
+
+function AccessTabs({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: "franchisee" | "admin";
+  onChange: (value: "franchisee" | "admin") => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-slate-100/90 p-1.5">
+      <div className="grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange("franchisee")}
+          className={[
+            "h-11 rounded-[16px] text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+            value === "franchisee"
+              ? "bg-white text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.08)] ring-1 ring-slate-200"
+              : "text-slate-600 hover:text-slate-900",
+          ].join(" ")}
+        >
+          Cliente
+        </button>
+
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange("admin")}
+          className={[
+            "h-11 rounded-[16px] text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+            value === "admin"
+              ? "bg-white text-slate-900 shadow-[0_8px_20px_rgba(15,23,42,0.08)] ring-1 ring-slate-200"
+              : "text-slate-600 hover:text-slate-900",
+          ].join(" ")}
+        >
+          Administrativo
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function LoginPage() {
@@ -85,6 +216,7 @@ export default function LoginPage() {
     }
 
     const p = (profile ?? null) as ProfileRow | null;
+
     if (!p) {
       setMsg("Perfil não encontrado. Tente sair e entrar novamente.");
       return;
@@ -143,11 +275,13 @@ export default function LoginPage() {
       setMsg("Preencha email e senha.");
       return;
     }
+
     if (!signup.franchisee_name.trim()) {
       setWorking(false);
       setMsg("Preencha seu nome.");
       return;
     }
+
     if (!signup.store_name.trim()) {
       setWorking(false);
       setMsg("Preencha o nome da loja.");
@@ -223,25 +357,25 @@ export default function LoginPage() {
     });
   }
 
-  const headerTitle = useMemo(
+  const title = useMemo(
     () => (isAdmin ? "Acesso administrativo" : "Portal do cliente"),
     [isAdmin]
   );
 
-  const headerSubtitle = useMemo(
+  const subtitle = useMemo(
     () =>
       isAdmin
-        ? "Entre com seu email e senha de administrador."
-        : "Entre com seu email e senha. Se ainda não tiver acesso, solicite cadastro.",
+        ? "Entre com seu email e senha para acessar a área administrativa."
+        : "Entre com seu email e senha para acessar pedidos, financeiro e extrato.",
     [isAdmin]
   );
 
   if (loading) {
     return (
-      <main className="min-h-screen p-4 grid place-items-center bg-[radial-gradient(1200px_600px_at_20%_10%,rgba(0,0,0,0.06),transparent_60%),#f6f7fb]">
-        <div className="w-full max-w-xl">
-          <Card>
-            <div className="text-sm text-slate-700">Carregando...</div>
+      <main className="min-h-screen overflow-hidden bg-[linear-gradient(180deg,#f8fbfd_0%,#eef7fb_100%)]">
+        <div className="mx-auto flex min-h-screen max-w-7xl items-center justify-center px-4 py-10">
+          <Card className="w-full max-w-md rounded-[34px] border border-white/90 bg-white/95 shadow-[0_30px_90px_rgba(15,23,42,0.08)]">
+            <div className="text-sm text-slate-600">Carregando...</div>
           </Card>
         </div>
       </main>
@@ -249,216 +383,88 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen p-4 grid place-items-center bg-[radial-gradient(1200px_600px_at_20%_10%,rgba(0,0,0,0.06),transparent_60%),#f6f7fb]">
-      <div className="w-full max-w-2xl space-y-4">
-        <Card>
-          {/* Header (logo + textos) */}
-          <div className="grid gap-4 md:grid-cols-[140px_1fr] md:items-center">
-            <div className="relative h-16 w-[140px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-              <Image
-                src="/logo.png"
-                alt="Logo"
-                fill
-                sizes="140px"
-                style={{ objectFit: "contain" }}
-                priority
-              />
-            </div>
+    <main className="min-h-screen overflow-hidden bg-[linear-gradient(180deg,#f8fbfd_0%,#eef7fb_100%)]">
+      <div className="relative mx-auto grid min-h-screen max-w-7xl items-center gap-10 px-5 py-8 lg:grid-cols-[1fr_560px] lg:px-10">
+        <div className="pointer-events-none absolute left-[-110px] top-[-110px] h-[260px] w-[260px] rounded-full bg-cyan-200/35 blur-3xl" />
+        <div className="pointer-events-none absolute bottom-[-90px] right-[-70px] h-[240px] w-[240px] rounded-full bg-sky-200/35 blur-3xl" />
 
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-xl font-semibold text-slate-900">{headerTitle}</div>
-                <Badge tone={isAdmin ? "red" : "green"}>{isAdmin ? "ADMIN" : "CLIENTE"}</Badge>
+        <section className="relative flex justify-center lg:justify-start">
+          <div className="w-full max-w-[520px]">
+            <div className="flex flex-col items-center text-center lg:items-start lg:text-left">
+              <div className="relative h-32 w-64 rounded-[34px] border border-white/90 bg-white/95 shadow-[0_24px_60px_rgba(15,23,42,0.08)]">
+                <Image
+                  src="/logo.png"
+                  alt="O2 Distribuidora"
+                  fill
+                  sizes="256px"
+                  style={{ objectFit: "contain", padding: "14px 18px" }}
+                  priority
+                />
               </div>
-              <div className="mt-1 text-sm text-slate-600">{headerSubtitle}</div>
+
+              <div className="mt-10 inline-flex items-center rounded-full border border-cyan-100 bg-white/80 px-3 py-1 text-xs font-semibold text-cyan-700 shadow-sm">
+                Plataforma O2 Distribuidora
+              </div>
+
+              <h1 className="mt-5 max-w-[480px] text-[42px] font-semibold leading-[1.02] tracking-[-0.04em] text-slate-900 md:text-[56px]">
+                Portal O2 Distribuidora
+              </h1>
+
+              <p className="mt-5 max-w-[430px] text-[17px] leading-7 text-slate-600">
+                Acesse pedidos, financeiro e extrato em um ambiente claro, rápido e organizado.
+              </p>
             </div>
           </div>
+        </section>
 
-          {/* Tabs */}
-          <div className="mt-4 flex flex-wrap gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-2">
-            <Button
-              variant={tab === "franchisee" ? "primary" : "secondary"}
-              onClick={() => {
-                setTab("franchisee");
-                setPortalMode("franchisee");
-                setShowSignup(false);
-                setMsg("");
-              }}
-              disabled={working}
-            >
-              Cliente
-            </Button>
+        <section className="relative">
+          <div className="rounded-[36px] border border-white/90 bg-white/96 p-6 shadow-[0_34px_100px_rgba(15,23,42,0.12)] backdrop-blur md:p-8">
+            <div className="space-y-6">
+              <div>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="text-[30px] font-semibold tracking-[-0.02em] text-slate-900">
+                    {title}
+                  </div>
+                  <Badge tone={isAdmin ? "red" : "blue"}>
+                    {isAdmin ? "ADMIN" : "CLIENTE"}
+                  </Badge>
+                </div>
 
-            <Button
-              variant={tab === "admin" ? "primary" : "secondary"}
-              onClick={() => {
-                setTab("admin");
-                setPortalMode("admin");
-                setShowSignup(false);
-                setMsg("");
-              }}
-              disabled={working}
-            >
-              Administrativo
-            </Button>
-          </div>
+                <div className="mt-2.5 text-sm leading-6 text-slate-600">{subtitle}</div>
+              </div>
 
-          {/* Form */}
-          <div className="mt-4 grid gap-3">
-            <Input
-              label="Email"
-              value={email}
-              onChange={setEmail}
-              placeholder="seuemail@..."
-              inputMode="email"
-              autoCapitalize="none"
-            />
+              <AccessTabs
+                value={tab}
+                disabled={working}
+                onChange={(next) => {
+                  setTab(next);
+                  setPortalMode(next === "admin" ? "admin" : "franchisee");
+                  setShowSignup(false);
+                  setMsg("");
+                }}
+              />
 
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Senha</label>
-              <div className="relative">
-                <input
+              <div className="grid gap-4">
+                <Field
+                  label="Email"
+                  value={email}
+                  onChange={setEmail}
+                  placeholder="seuemail@empresa.com"
+                  inputMode="email"
+                  autoCapitalize="none"
+                />
+
+                <Field
+                  label="Senha"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={setPassword}
                   placeholder="********"
                   type={showPassword ? "text" : "password"}
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 pr-12 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-slate-500 hover:text-slate-800"
-                  aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
-                  title={showPassword ? "Ocultar senha" : "Mostrar senha"}
-                >
-                  {showPassword ? (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      className="h-5 w-5"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M3 3l18 18M10.584 10.587a2 2 0 102.829 2.828M9.878 5.092A10.45 10.45 0 0112 4.909c5.25 0 8.727 4.608 9.622 5.967a1.09 1.09 0 010 1.248 16.757 16.757 0 01-4.114 4.417M6.228 6.228C3.943 7.756 2.454 9.733 1.91 10.876a1.09 1.09 0 000 1.248C2.805 13.483 6.282 18.09 11.532 18.09c1.55 0 2.979-.401 4.278-1.02"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      className="h-5 w-5"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                      />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="flex justify-end -mt-1">
-              <Link
-                href="/login/esqueci-senha"
-                className="text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline"
-              >
-                Esqueci minha senha
-              </Link>
-            </div>
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button onClick={onLogin} disabled={working}>
-                {working ? "Aguarde..." : "Entrar"}
-              </Button>
-
-              {!isAdmin ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowSignup((v) => !v)}
-                  disabled={working}
-                >
-                  {showSignup ? "Fechar cadastro" : "Solicitar cadastro"}
-                </Button>
-              ) : null}
-            </div>
-
-            {/* Signup */}
-            {showSignup && !isAdmin ? (
-              <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="text-sm font-semibold text-slate-900">Solicitação de cadastro</div>
-
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <Input
-                    label="Seu nome"
-                    value={signup.franchisee_name}
-                    onChange={(v) => setSignup((p) => ({ ...p, franchisee_name: v }))}
-                    placeholder="Nome do responsável"
-                  />
-                  <Input
-                    label="Telefone (opcional)"
-                    value={signup.phone}
-                    onChange={(v) => setSignup((p) => ({ ...p, phone: v }))}
-                    placeholder="(xx) xxxxx-xxxx"
-                  />
-                </div>
-
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <Input
-                    label="Nome da loja"
-                    value={signup.store_name}
-                    onChange={(v) => setSignup((p) => ({ ...p, store_name: v }))}
-                    placeholder="Ex.: Loja Centerminas"
-                  />
-                  <Input
-                    label="CNPJ (opcional)"
-                    value={signup.cnpj}
-                    onChange={(v) => setSignup((p) => ({ ...p, cnpj: v }))}
-                    placeholder="00.000.000/0000-00"
-                  />
-                </div>
-
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <Input
-                    label="Cidade (opcional)"
-                    value={signup.city}
-                    onChange={(v) => setSignup((p) => ({ ...p, city: v }))}
-                    placeholder="Belo Horizonte"
-                  />
-                  <Input
-                    label="UF (opcional)"
-                    value={signup.state}
-                    onChange={(v) =>
-                      setSignup((p) => ({ ...p, state: (v || "").toUpperCase() }))
-                    }
-                    placeholder="MG"
-                    maxLength={2}
-                  />
-                </div>
-
-                <div className="mt-3">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Senha</label>
-                  <div className="relative">
-                    <input
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="********"
-                      type={showPassword ? "text" : "password"}
-                      className="w-full rounded-2xl border border-slate-200 bg-white px-3 py-2.5 pr-12 text-sm text-slate-900 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
-                    />
+                  rightSlot={
                     <button
                       type="button"
                       onClick={() => setShowPassword((v) => !v)}
-                      className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-slate-500 hover:text-slate-800"
+                      className="text-slate-500 transition hover:text-slate-800"
                       aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                       title={showPassword ? "Ocultar senha" : "Mostrar senha"}
                     >
@@ -495,33 +501,133 @@ export default function LoginPage() {
                         </svg>
                       )}
                     </button>
-                  </div>
-                </div>
+                  }
+                />
 
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-3 pt-1">
                   <div className="text-xs text-slate-500">
-                    Após enviar, o acesso só é liberado quando o administrador aprovar e vincular a loja.
+                    {isAdmin ? "Acesso interno." : "Acesso para clientes aprovados."}
                   </div>
 
-                  <Button onClick={onCreateAccount} disabled={working}>
-                    {working ? "Enviando..." : "Criar conta e enviar solicitação"}
-                  </Button>
+                  <Link
+                    href="/login/esqueci-senha"
+                    className="text-sm font-medium text-cyan-700 transition hover:text-cyan-800 hover:underline"
+                  >
+                    Esqueci minha senha
+                  </Link>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <PrimaryButton onClick={onLogin} disabled={working}>
+                    {working ? "Aguarde..." : "Entrar"}
+                  </PrimaryButton>
+
+                  {!isAdmin ? (
+                    <SecondaryButton
+                      onClick={() => setShowSignup((v) => !v)}
+                      disabled={working}
+                    >
+                      {showSignup ? "Fechar cadastro" : "Solicitar cadastro"}
+                    </SecondaryButton>
+                  ) : (
+                    <div />
+                  )}
                 </div>
               </div>
-            ) : null}
 
-            {/* Msg */}
-            {msg ? (
-              <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="text-sm text-slate-800 whitespace-pre-wrap">{msg}</div>
+              {showSignup && !isAdmin ? (
+                <div className="rounded-[28px] border border-slate-200 bg-slate-50/80 p-4 md:p-5">
+                  <div className="mb-1 text-base font-semibold text-slate-900">
+                    Solicitação de cadastro
+                  </div>
+
+                  <div className="text-sm text-slate-600">
+                    Preencha os dados abaixo para envio da solicitação.
+                  </div>
+
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Seu nome"
+                      value={signup.franchisee_name}
+                      onChange={(v) => setSignup((p) => ({ ...p, franchisee_name: v }))}
+                      placeholder="Nome do responsável"
+                    />
+
+                    <Field
+                      label="Telefone"
+                      value={signup.phone}
+                      onChange={(v) => setSignup((p) => ({ ...p, phone: v }))}
+                      placeholder="(xx) xxxxx-xxxx"
+                      inputMode="tel"
+                    />
+
+                    <Field
+                      label="Nome da loja"
+                      value={signup.store_name}
+                      onChange={(v) => setSignup((p) => ({ ...p, store_name: v }))}
+                      placeholder="Ex.: Loja Centerminas"
+                    />
+
+                    <Field
+                      label="CNPJ"
+                      value={signup.cnpj}
+                      onChange={(v) => setSignup((p) => ({ ...p, cnpj: v }))}
+                      placeholder="00.000.000/0000-00"
+                      inputMode="numeric"
+                    />
+
+                    <Field
+                      label="Cidade"
+                      value={signup.city}
+                      onChange={(v) => setSignup((p) => ({ ...p, city: v }))}
+                      placeholder="Belo Horizonte"
+                    />
+
+                    <Field
+                      label="UF"
+                      value={signup.state}
+                      onChange={(v) =>
+                        setSignup((p) => ({ ...p, state: (v || "").toUpperCase() }))
+                      }
+                      placeholder="MG"
+                      maxLength={2}
+                    />
+                  </div>
+
+                  <div className="mt-4">
+                    <Field
+                      label="Senha"
+                      value={password}
+                      onChange={setPassword}
+                      placeholder="********"
+                      type={showPassword ? "text" : "password"}
+                    />
+                  </div>
+
+                  <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="max-w-xl text-xs leading-5 text-slate-500">
+                      O acesso será liberado após aprovação e vínculo da loja pelo administrador.
+                    </div>
+
+                    <PrimaryButton onClick={onCreateAccount} disabled={working}>
+                      {working ? "Enviando..." : "Criar conta"}
+                    </PrimaryButton>
+                  </div>
+                </div>
+              ) : null}
+
+              {msg ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  <div className="text-sm whitespace-pre-wrap text-amber-900">{msg}</div>
+                </div>
+              ) : null}
+
+              <div className="border-t border-slate-100 pt-4 text-center text-xs text-slate-500">
+                © {new Date().getFullYear()} O2 Distribuidora
               </div>
-            ) : null}
-
-            <div className="pt-2 text-center text-xs text-slate-500">
-              © {new Date().getFullYear()} • Portal do cliente
             </div>
           </div>
-        </Card>
+        </section>
       </div>
     </main>
   );

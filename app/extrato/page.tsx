@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import PortalShell from "@/app/components/PortalShell";
-import { Card, PageHeader, Button, Input, StatCard, Table, Badge } from "@/app/components/ui";
+import { Card, Input, StatCard, Table, Badge } from "@/app/components/ui";
 
 type LedgerRow = {
   id: number;
@@ -15,8 +15,12 @@ type LedgerRow = {
 };
 
 function money(n: number) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
+
 function fmtBR(iso: string | null | undefined) {
   if (!iso) return "-";
   try {
@@ -25,13 +29,91 @@ function fmtBR(iso: string | null | undefined) {
     return iso;
   }
 }
+
 function toISOStart(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 0, 0, 0).toISOString();
 }
+
 function toISOEnd(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 23, 59, 59).toISOString();
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.26)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] px-5 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
 }
 
 export default function ExtratoFranqueadoPage() {
@@ -60,7 +142,12 @@ export default function ExtratoFranqueadoPage() {
         return;
       }
 
-      const { data: profile, error: pErr } = await supabase.from("profiles").select("store_id").eq("id", auth.user.id).maybeSingle();
+      const { data: profile, error: pErr } = await supabase
+        .from("profiles")
+        .select("store_id")
+        .eq("id", auth.user.id)
+        .maybeSingle();
+
       if (pErr) {
         setMsg(pErr.message);
         setLoading(false);
@@ -76,7 +163,12 @@ export default function ExtratoFranqueadoPage() {
         return;
       }
 
-      const { data: store } = await supabase.from("stores").select("id,name").eq("id", sId).maybeSingle();
+      const { data: store } = await supabase
+        .from("stores")
+        .select("id,name")
+        .eq("id", sId)
+        .maybeSingle();
+
       if (store) setStoreName((store as any)?.name ?? "-");
 
       await Promise.all([loadBalance(sId), loadLedger(sId)]);
@@ -86,12 +178,18 @@ export default function ExtratoFranqueadoPage() {
   }, []);
 
   async function loadBalance(sId: string) {
-    const { data, error } = await supabase.from("v_store_credit_balance").select("store_id,balance").eq("store_id", sId).maybeSingle();
+    const { data, error } = await supabase
+      .from("v_store_credit_balance")
+      .select("store_id,balance")
+      .eq("store_id", sId)
+      .maybeSingle();
+
     if (error) {
       console.warn("balance:", error.message);
       setBalance(0);
       return;
     }
+
     setBalance(Number((data as any)?.balance ?? 0) || 0);
   }
 
@@ -137,13 +235,29 @@ export default function ExtratoFranqueadoPage() {
   const tableRows = rows.map((r) => {
     const amt = Number(r.amount ?? 0) || 0;
     const isCredit = amt >= 0;
+
     return [
-      <span key="dt">{fmtBR(r.created_at)}</span>,
-      <span key="v" className={`font-semibold ${isCredit ? "text-slate-900" : "text-red-700"}`}>
+      <div key={`dt-${r.id}`} className="text-sm text-slate-700">
+        {fmtBR(r.created_at)}
+      </div>,
+      <div
+        key={`v-${r.id}`}
+        className={`text-sm font-semibold ${isCredit ? "text-slate-900" : "text-red-700"}`}
+      >
         {isCredit ? money(amt) : `- ${money(Math.abs(amt))}`}
-      </span>,
-      isCredit ? <Badge key="t" tone="green">Crédito</Badge> : <Badge key="t" tone="red">Débito/Ajuste</Badge>,
-      <span key="n">{r.note ?? "-"}</span>,
+      </div>,
+      isCredit ? (
+        <Badge key={`t-${r.id}`} tone="green">
+          Crédito
+        </Badge>
+      ) : (
+        <Badge key={`t-${r.id}`} tone="red">
+          Débito/Ajuste
+        </Badge>
+      ),
+      <div key={`n-${r.id}`} className="text-sm text-slate-700">
+        {r.note ?? "-"}
+      </div>,
     ];
   });
 
@@ -158,39 +272,79 @@ export default function ExtratoFranqueadoPage() {
   }
 
   return (
-    <PortalShell title="Extrato de crédito" subtitle={`Loja: ${storeName} · Saldo atual: ${money(balance)}`}>
-      <div className="space-y-4">
+    <PortalShell
+      title="Extrato de crédito"
+      subtitle={`Loja: ${storeName} · Saldo atual: ${money(balance)}`}
+    >
+      <div className="space-y-6">
         {msg ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{msg}</div>
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {msg}
+          </div>
         ) : null}
 
-        <Card
-          title="Filtros"
-          right={<Button variant="secondary" onClick={onReload} disabled={!storeId}>Recarregar</Button>}
-        >
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Input label="De" type="date" value={dateFrom} onChange={setDateFrom} />
-            <Input label="Até" type="date" value={dateTo} onChange={setDateTo} />
-            <div className="flex items-end gap-2">
-              <Button onClick={() => storeId && loadLedger(storeId)} disabled={!storeId}>
-                Aplicar filtros
-              </Button>
-              <Button variant="secondary" onClick={onReload} disabled={!storeId}>
-                Atualizar
-              </Button>
-            </div>
-          </div>
-        </Card>
+        <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Visão geral do extrato"
+            subtitle="Acompanhe entradas, saídas e saldo líquido do período"
+            right={
+              <SecondaryActionButton onClick={onReload} disabled={!storeId}>
+                Recarregar
+              </SecondaryActionButton>
+            }
+          />
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <StatCard label="Entradas" value={money(resumo.entradas)} />
-          <StatCard label="Saídas" value={`- ${money(resumo.saidas)}`} />
-          <StatCard label="Saldo líquido no período" value={money(resumo.net)} />
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+            <StatCard label="Entradas" value={money(resumo.entradas)} />
+            <StatCard label="Saídas" value={`- ${money(resumo.saidas)}`} />
+            <StatCard label="Saldo líquido no período" value={money(resumo.net)} />
+          </div>
         </div>
 
-        <Card title="Lançamentos" subtitle="Créditos e débitos lançados no seu extrato">
-          <Table headers={headers} rows={tableRows} />
-        </Card>
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Filtros"
+            subtitle="Refine os lançamentos por período"
+            right={
+              <div className="flex flex-wrap gap-2">
+                <PrimaryActionButton onClick={() => storeId && loadLedger(storeId)} disabled={!storeId}>
+                  Aplicar filtros
+                </PrimaryActionButton>
+                <SecondaryActionButton onClick={onReload} disabled={!storeId}>
+                  Atualizar
+                </SecondaryActionButton>
+              </div>
+            }
+          />
+
+          <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <Input label="De" type="date" value={dateFrom} onChange={setDateFrom} />
+            <Input label="Até" type="date" value={dateTo} onChange={setDateTo} />
+            <div className="flex items-end">
+              <div className="w-full rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Saldo atual
+                </div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{money(balance)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Lançamentos"
+            subtitle="Créditos e débitos lançados no seu extrato"
+          />
+
+          <div className="mt-6">
+            {rows.length === 0 ? (
+              <div className="text-sm text-slate-500">Nenhum lançamento encontrado.</div>
+            ) : (
+              <Table headers={headers} rows={tableRows} />
+            )}
+          </div>
+        </div>
       </div>
     </PortalShell>
   );
