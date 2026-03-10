@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
+import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/components/ui";
 
 type StoreRow = {
   id: string;
@@ -16,7 +16,6 @@ type StoreRow = {
   code?: string | null;
   freight_fee?: number | null;
 
-  // cadastro completo
   legal_name: string | null;
   cnpj: string | null;
 
@@ -26,19 +25,20 @@ type StoreRow = {
   address_complement: string | null;
   address_neighborhood: string | null;
 
-  // NFe
   ie?: string | null;
   email_nf?: string | null;
   phone_nf?: string | null;
 
-  // cobrança / Asaas
   billing_email?: string | null;
   billing_phone?: string | null;
   asaas_customer_id?: string | null;
 };
 
 function money(n: number) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function onlyDigits(v: string) {
@@ -53,6 +53,182 @@ function normalizeCEP(v: string) {
   return onlyDigits(v).slice(0, 8);
 }
 
+function formatCNPJ(v: string | null | undefined) {
+  const d = onlyDigits(v || "");
+  if (d.length !== 14) return v || "-";
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+}
+
+function formatCEP(v: string | null | undefined) {
+  const d = onlyDigits(v || "");
+  if (d.length !== 8) return v || "-";
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
+
+function parseAmountBR(v: string) {
+  const raw = String(v ?? "").trim();
+  if (!raw) return NaN;
+
+  let s = raw.replace(/\s/g, "").replace(/[R$\u00A0]/g, "");
+
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+
+  if (hasComma && hasDot) {
+    const lastComma = s.lastIndexOf(",");
+    const lastDot = s.lastIndexOf(".");
+    if (lastComma > lastDot) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  } else if (hasComma) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else {
+    s = s.replace(/,/g, "");
+  }
+
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function formatSbError(prefix: string, err: any) {
+  const parts: string[] = [];
+  parts.push(prefix);
+  if (err?.message) parts.push(`message: ${err.message}`);
+  if (err?.details) parts.push(`details: ${err.details}`);
+  if (err?.hint) parts.push(`hint: ${err.hint}`);
+  if (err?.code) parts.push(`code: ${err.code}`);
+  return parts.join(" | ");
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function WarnActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
+}
+
+function InfoPair({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+      <div className="text-sm text-slate-600">{text}</div>
+    </div>
+  );
+}
+
 export default function AdmLojasPage() {
   const router = useRouter();
 
@@ -64,7 +240,6 @@ export default function AdmLojasPage() {
   const [balancesByStore, setBalancesByStore] = useState<Record<string, number>>({});
   const [q, setQ] = useState("");
 
-  // formulário loja
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
@@ -72,7 +247,6 @@ export default function AdmLojasPage() {
   const [active, setActive] = useState(true);
   const [freightFee, setFreightFee] = useState<string>("");
 
-  // cadastro completo
   const [legalName, setLegalName] = useState("");
   const [cnpj, setCnpj] = useState("");
   const [zip, setZip] = useState("");
@@ -81,17 +255,14 @@ export default function AdmLojasPage() {
   const [complement, setComplement] = useState("");
   const [neighborhood, setNeighborhood] = useState("");
 
-  // NFe
   const [ie, setIe] = useState("");
   const [emailNf, setEmailNf] = useState("");
   const [phoneNf, setPhoneNf] = useState("");
 
-  // cobrança / Asaas
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
   const [asaasCustomerId, setAsaasCustomerId] = useState("");
 
-  // crédito
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
   const [creditAmount, setCreditAmount] = useState<string>("");
   const [creditNote, setCreditNote] = useState<string>("");
@@ -104,16 +275,6 @@ export default function AdmLojasPage() {
       return false;
     }
     return true;
-  }
-
-  function formatSbError(prefix: string, err: any) {
-    const parts: string[] = [];
-    parts.push(prefix);
-    if (err?.message) parts.push(`message: ${err.message}`);
-    if (err?.details) parts.push(`details: ${err.details}`);
-    if (err?.hint) parts.push(`hint: ${err.hint}`);
-    if (err?.code) parts.push(`code: ${err.code}`);
-    return parts.join(" | ");
   }
 
   async function loadBalances(storeIds: string[]) {
@@ -150,18 +311,12 @@ export default function AdmLojasPage() {
 
     let data: any[] | null = null;
 
-    const first = await supabase
-      .from("stores")
-      .select(fullSelect)
-      .order("name", { ascending: true });
+    const first = await supabase.from("stores").select(fullSelect).order("name", { ascending: true });
 
     if (first.error) {
       console.warn("loadStores fullSelect error:", first.error);
 
-      const fallback = await supabase
-        .from("stores")
-        .select(baseSelect)
-        .order("name", { ascending: true });
+      const fallback = await supabase.from("stores").select(baseSelect).order("name", { ascending: true });
 
       if (fallback.error) {
         setMsg(formatSbError("Falha ao carregar stores.", fallback.error));
@@ -212,13 +367,22 @@ export default function AdmLojasPage() {
         s.address_neighborhood ?? ""
       } ${s.address_zip ?? ""} ${s.city ?? ""} ${s.state ?? ""} ${s.code ?? ""} ${s.ie ?? ""} ${
         s.email_nf ?? ""
-      } ${s.phone_nf ?? ""} ${s.billing_email ?? ""} ${s.billing_phone ?? ""} ${s.asaas_customer_id ?? ""} ${
-        s.id
-      }`.toLowerCase();
+      } ${s.phone_nf ?? ""} ${s.billing_email ?? ""} ${s.billing_phone ?? ""} ${
+        s.asaas_customer_id ?? ""
+      } ${s.id}`.toLowerCase();
 
       return blob.includes(qq);
     });
   }, [stores, q]);
+
+  const summary = useMemo(() => {
+    return {
+      total: stores.length,
+      active: stores.filter((s) => s.active ?? true).length,
+      inactive: stores.filter((s) => !(s.active ?? true)).length,
+      totalCredit: Object.values(balancesByStore).reduce((acc, v) => acc + (Number(v) || 0), 0),
+    };
+  }, [stores, balancesByStore]);
 
   function resetForm() {
     setEditingId(null);
@@ -306,35 +470,35 @@ export default function AdmLojasPage() {
     const st = street.trim();
     if (!st) {
       setWorking(false);
-      setMsg("Preencha o Logradouro (rua/avenida).");
+      setMsg("Preencha o Logradouro.");
       return;
     }
 
     const num = numberAddr.trim();
     if (!num) {
       setWorking(false);
-      setMsg("Preencha o Número do endereço.");
+      setMsg("Preencha o número do endereço.");
       return;
     }
 
     const neigh = neighborhood.trim();
     if (!neigh) {
       setWorking(false);
-      setMsg("Preencha o Bairro.");
+      setMsg("Preencha o bairro.");
       return;
     }
 
     const ct = city.trim();
     if (!ct) {
       setWorking(false);
-      setMsg("Preencha a Cidade.");
+      setMsg("Preencha a cidade.");
       return;
     }
 
     const uf = stateUf.trim().toUpperCase();
     if (uf.length !== 2) {
       setWorking(false);
-      setMsg("UF inválida. Use 2 letras (ex.: MG).");
+      setMsg("UF inválida. Use 2 letras.");
       return;
     }
 
@@ -343,7 +507,7 @@ export default function AdmLojasPage() {
       const parsed = parseAmountBR(freightFee);
       if (Number.isNaN(parsed) || parsed < 0) {
         setWorking(false);
-        setMsg("Frete inválido. Use número (ex.: 65 ou 65,00).");
+        setMsg("Frete inválido. Use número válido.");
         return;
       }
       ff = parsed;
@@ -369,9 +533,6 @@ export default function AdmLojasPage() {
 
       billing_email: (billingEmail || "").trim() || null,
       billing_phone: (billingPhone || "").trim() || null,
-
-      // normalmente esse campo é gerado pelo sistema, mas deixei persistindo
-      // se já existir e você quiser manter manualmente
       asaas_customer_id: (asaasCustomerId || "").trim() || null,
     };
 
@@ -430,33 +591,6 @@ export default function AdmLojasPage() {
     setCreditMode("ADD");
   }
 
-  function parseAmountBR(v: string) {
-    const raw = String(v ?? "").trim();
-    if (!raw) return NaN;
-
-    let s = raw.replace(/\s/g, "").replace(/[R$\u00A0]/g, "");
-
-    const hasComma = s.includes(",");
-    const hasDot = s.includes(".");
-
-    if (hasComma && hasDot) {
-      const lastComma = s.lastIndexOf(",");
-      const lastDot = s.lastIndexOf(".");
-      if (lastComma > lastDot) {
-        s = s.replace(/\./g, "").replace(",", ".");
-      } else {
-        s = s.replace(/,/g, "");
-      }
-    } else if (hasComma) {
-      s = s.replace(/\./g, "").replace(",", ".");
-    } else {
-      s = s.replace(/,/g, "");
-    }
-
-    const n = Number(s);
-    return Number.isFinite(n) ? n : NaN;
-  }
-
   async function applyCredit() {
     if (!creditStoreId) return;
 
@@ -466,7 +600,7 @@ export default function AdmLojasPage() {
     const amt = parseAmountBR(creditAmount);
     if (Number.isNaN(amt) || amt <= 0) {
       setWorking(false);
-      setMsg("Informe um valor válido (maior que zero).");
+      setMsg("Informe um valor válido maior que zero.");
       return;
     }
 
@@ -521,15 +655,15 @@ export default function AdmLojasPage() {
     <div className="space-y-6">
       <PageHeader
         title="Lojas"
-        subtitle="Cadastre e edite lojas. Gerencie crédito pré-pago (adicionar/remover) por loja."
+        subtitle="Cadastre, edite e administre os dados comerciais, fiscais e financeiros das unidades."
         right={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => router.push("/adm/financeiro")}>
+            <SecondaryActionButton onClick={() => router.push("/adm/financeiro")}>
               Financeiro
-            </Button>
-            <Button variant="secondary" onClick={loadStores} disabled={working}>
+            </SecondaryActionButton>
+            <SecondaryActionButton onClick={loadStores} disabled={working}>
               Atualizar
-            </Button>
+            </SecondaryActionButton>
           </div>
         }
       />
@@ -540,221 +674,395 @@ export default function AdmLojasPage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card title={editingId ? "Editar loja" : "Nova loja"}>
-          <div className="grid gap-3">
-            <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Loja Shopping Cidade" />
+      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Visão geral"
+          subtitle="Resumo das lojas e do crédito pré-pago"
+        />
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="Razão social" value={legalName} onChange={setLegalName} placeholder="Ex.: Minha Empresa LTDA" />
-              <Input label="CNPJ" value={cnpj} onChange={(v) => setCnpj(v)} placeholder="Somente números (14 dígitos)" />
-            </div>
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Total de lojas" value={summary.total} />
+          <StatCard label="Lojas ativas" value={summary.active} />
+          <StatCard label="Lojas inativas" value={summary.inactive} />
+          <StatCard label="Crédito total" value={money(summary.totalCredit)} />
+        </div>
+      </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="CEP" value={zip} onChange={(v) => setZip(v)} placeholder="Somente números (8 dígitos)" />
-              <Input label="Bairro" value={neighborhood} onChange={setNeighborhood} placeholder="Ex.: Centro" />
-            </div>
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.35fr]">
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title={editingId ? "Editar loja" : "Nova loja"}
+            subtitle={editingId ? "Atualize os dados da unidade selecionada" : "Preencha os dados para cadastrar uma nova unidade"}
+          />
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="sm:col-span-2">
-                <Input label="Logradouro" value={street} onChange={setStreet} placeholder="Rua / Av / etc." />
-              </div>
-              <Input label="Número" value={numberAddr} onChange={setNumberAddr} placeholder="Ex.: 123" />
-            </div>
+          <div className="mt-6 grid gap-4">
+            <Input
+              label="Nome da loja"
+              value={name}
+              onChange={setName}
+              placeholder="Ex.: Loja Shopping Cidade"
+            />
 
-            <Input label="Complemento (opcional)" value={complement} onChange={setComplement} placeholder="Ex.: Sala 12" />
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="Cidade" value={city} onChange={setCity} placeholder="Belo Horizonte" />
-              <Input label="UF" value={stateUf} onChange={(v) => setStateUf(v.toUpperCase())} placeholder="MG" maxLength={2} />
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="IE (opcional)" value={ie} onChange={setIe} placeholder="Inscrição Estadual" />
-              <Input label="Email NFe (opcional)" value={emailNf} onChange={setEmailNf} placeholder="financeiro@loja.com" inputMode="email" />
-            </div>
-
-            <Input label="Telefone NFe (opcional)" value={phoneNf} onChange={setPhoneNf} placeholder="(xx) xxxxx-xxxx" />
-
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2">
               <Input
-                label="Email cobrança / Asaas"
-                value={billingEmail}
-                onChange={setBillingEmail}
-                placeholder="financeiro@loja.com"
-                inputMode="email"
+                label="Razão social"
+                value={legalName}
+                onChange={setLegalName}
+                placeholder="Ex.: Minha Empresa LTDA"
               />
               <Input
-                label="Telefone cobrança / Asaas"
-                value={billingPhone}
-                onChange={setBillingPhone}
-                placeholder="(xx) xxxxx-xxxx"
+                label="CNPJ"
+                value={cnpj}
+                onChange={setCnpj}
+                placeholder="Somente números"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input
+                label="CEP"
+                value={zip}
+                onChange={setZip}
+                placeholder="Somente números"
+              />
+              <Input
+                label="Bairro"
+                value={neighborhood}
+                onChange={setNeighborhood}
+                placeholder="Ex.: Centro"
+              />
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="md:col-span-2">
+                <Input
+                  label="Logradouro"
+                  value={street}
+                  onChange={setStreet}
+                  placeholder="Rua / Avenida / etc."
+                />
+              </div>
+              <Input
+                label="Número"
+                value={numberAddr}
+                onChange={setNumberAddr}
+                placeholder="Ex.: 123"
               />
             </div>
 
             <Input
-              label="Asaas customer id"
-              value={asaasCustomerId}
-              onChange={setAsaasCustomerId}
-              placeholder="Será preenchido pelo sistema quando existir"
+              label="Complemento"
+              value={complement}
+              onChange={setComplement}
+              placeholder="Opcional"
             />
 
-            <Input label="Frete padrão (opcional)" value={freightFee} onChange={setFreightFee} placeholder="Ex.: 65,00" />
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input
+                label="Cidade"
+                value={city}
+                onChange={setCity}
+                placeholder="Belo Horizonte"
+              />
+              <Input
+                label="UF"
+                value={stateUf}
+                onChange={(v) => setStateUf(v.toUpperCase())}
+                placeholder="MG"
+                maxLength={2}
+              />
+            </div>
 
-            <Select
-              label="Ativa?"
-              value={active ? "true" : "false"}
-              onChange={(v) => setActive(v === "true")}
-              options={[
-                { value: "true", label: "Sim" },
-                { value: "false", label: "Não" },
-              ]}
-            />
+            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Dados fiscais</div>
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button onClick={saveStore} disabled={working}>
-                {working ? "Salvando..." : "Salvar"}
-              </Button>
-              <Button variant="secondary" onClick={resetForm} disabled={working}>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Input
+                  label="IE"
+                  value={ie}
+                  onChange={setIe}
+                  placeholder="Inscrição Estadual"
+                />
+                <Input
+                  label="Email NFe"
+                  value={emailNf}
+                  onChange={setEmailNf}
+                  placeholder="financeiro@loja.com"
+                  inputMode="email"
+                />
+              </div>
+
+              <div className="mt-4">
+                <Input
+                  label="Telefone NFe"
+                  value={phoneNf}
+                  onChange={setPhoneNf}
+                  placeholder="(xx) xxxxx-xxxx"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Cobrança / Asaas</div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Input
+                  label="Email cobrança"
+                  value={billingEmail}
+                  onChange={setBillingEmail}
+                  placeholder="financeiro@loja.com"
+                  inputMode="email"
+                />
+                <Input
+                  label="Telefone cobrança"
+                  value={billingPhone}
+                  onChange={setBillingPhone}
+                  placeholder="(xx) xxxxx-xxxx"
+                />
+              </div>
+
+              <div className="mt-4">
+                <Input
+                  label="Asaas customer id"
+                  value={asaasCustomerId}
+                  onChange={setAsaasCustomerId}
+                  placeholder="Será preenchido pelo sistema quando existir"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input
+                label="Frete padrão"
+                value={freightFee}
+                onChange={setFreightFee}
+                placeholder="Ex.: 65,00"
+              />
+              <Select
+                label="Ativa?"
+                value={active ? "true" : "false"}
+                onChange={(v) => setActive(v === "true")}
+                options={[
+                  { value: "true", label: "Sim" },
+                  { value: "false", label: "Não" },
+                ]}
+              />
+            </div>
+
+            <div className="grid gap-2 pt-2 sm:grid-cols-2">
+              <SecondaryActionButton onClick={resetForm} disabled={working} fullWidth>
                 Limpar
-              </Button>
+              </SecondaryActionButton>
+
+              <PrimaryActionButton onClick={saveStore} disabled={working} fullWidth>
+                {working ? "Salvando..." : editingId ? "Salvar alterações" : "Cadastrar loja"}
+              </PrimaryActionButton>
             </div>
 
             {editingId ? (
-              <div className="pt-2 text-xs text-slate-500">
-                ID: <span className="font-mono">{editingId}</span>
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                ID da loja: <span className="font-mono">{editingId}</span>
               </div>
             ) : null}
           </div>
-        </Card>
+        </div>
 
-        <Card title="Lista">
-          <div className="grid gap-3">
-            <Input value={q} onChange={setQ} placeholder="Buscar por nome, cidade, UF..." />
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Lista de lojas"
+            subtitle="Busque, edite, ative/desative e gerencie crédito por unidade"
+          />
 
-            {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
+          <div className="mt-6">
+            <Input
+              label="Buscar"
+              value={q}
+              onChange={setQ}
+              placeholder="Nome, razão social, CNPJ, cidade, UF, endereço..."
+            />
+          </div>
 
-            {!loading && filtered.length === 0 ? <div className="text-sm text-slate-600">Nenhuma loja encontrada.</div> : null}
+          <div className="mt-6 space-y-4">
+            {loading ? <EmptyState text="Carregando lojas..." /> : null}
 
-            {!loading && filtered.length > 0 ? (
-              <div className="grid gap-2">
-                {filtered.map((s) => {
+            {!loading && filtered.length === 0 ? (
+              <EmptyState text="Nenhuma loja encontrada." />
+            ) : null}
+
+            {!loading && filtered.length > 0
+              ? filtered.map((s) => {
                   const bal = balancesByStore[s.id] ?? 0;
+
                   return (
                     <div
                       key={s.id}
-                      className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between"
+                      className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5"
                     >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="truncate font-semibold text-slate-900">{s.name}</div>
-                          <Badge tone={s.active ? "green" : "red"}>{s.active ? "Ativa" : "Inativa"}</Badge>
-                        </div>
-
-                        <div className="mt-1 text-sm text-slate-600">
-                          {s.city ?? "-"}
-                          {s.state ? `/${s.state}` : ""} {s.freight_fee != null ? `· Frete: ${money(Number(s.freight_fee))}` : ""}
-                        </div>
-
-                        <div className="mt-1 text-xs text-slate-500">
-                          {s.billing_email ? `Cobrança: ${s.billing_email}` : "Cobrança: —"}
-                          {s.billing_phone ? ` · ${s.billing_phone}` : ""}
-                        </div>
-
-                        {s.asaas_customer_id ? (
-                          <div className="mt-1 text-xs text-slate-500">
-                            Asaas customer: <span className="font-mono">{s.asaas_customer_id}</span>
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="truncate text-base font-semibold text-slate-900">
+                              {s.name}
+                            </div>
+                            <Badge tone={s.active ? "green" : "red"}>
+                              {s.active ? "Ativa" : "Inativa"}
+                            </Badge>
+                            {bal > 0 ? <Badge tone="blue">Com crédito</Badge> : null}
                           </div>
-                        ) : null}
 
-                        <div className="mt-2 text-sm">
-                          <span className="font-semibold text-slate-900">Crédito:</span>{" "}
-                          <span className="font-semibold text-slate-900">{money(bal)}</span>
+                          <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                            <div className="space-y-3">
+                              <InfoPair label="Razão social" value={s.legal_name ?? "-"} />
+                              <InfoPair label="CNPJ" value={formatCNPJ(s.cnpj)} />
+                              <InfoPair
+                                label="Cidade / UF"
+                                value={`${s.city ?? "-"}${s.state ? ` / ${s.state}` : ""}`}
+                              />
+                              <InfoPair
+                                label="Endereço"
+                                value={`${s.address_street ?? "-"}${s.address_number ? `, ${s.address_number}` : ""}`}
+                              />
+                              <InfoPair label="Bairro" value={s.address_neighborhood ?? "-"} />
+                              <InfoPair label="CEP" value={formatCEP(s.address_zip)} />
+                              <InfoPair
+                                label="Frete padrão"
+                                value={s.freight_fee != null ? money(Number(s.freight_fee)) : "-"}
+                              />
+                              <InfoPair label="Email cobrança" value={s.billing_email ?? "-"} />
+                              <InfoPair label="Telefone cobrança" value={s.billing_phone ?? "-"} />
+                              <InfoPair
+                                label="Asaas customer"
+                                value={
+                                  s.asaas_customer_id ? (
+                                    <span className="break-all font-mono text-xs">
+                                      {s.asaas_customer_id}
+                                    </span>
+                                  ) : (
+                                    "-"
+                                  )
+                                }
+                              />
+                              <InfoPair label="Crédito" value={money(bal)} />
+                              <InfoPair
+                                label="ID"
+                                value={
+                                  <span className="break-all font-mono text-xs">{s.id}</span>
+                                }
+                              />
+                            </div>
+                          </div>
                         </div>
 
-                        <div className="mt-2 truncate font-mono text-xs text-slate-500">{s.id}</div>
-                      </div>
+                        <div className="grid gap-2 sm:grid-cols-3 xl:w-[320px] xl:grid-cols-1">
+                          <SecondaryActionButton
+                            onClick={() => startEdit(s)}
+                            disabled={working}
+                            fullWidth
+                          >
+                            Editar
+                          </SecondaryActionButton>
 
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="secondary" onClick={() => startEdit(s)} disabled={working}>
-                          Editar
-                        </Button>
-                        <Button variant="secondary" onClick={() => openCredit(s)} disabled={working}>
-                          Crédito
-                        </Button>
-                        <Button
-                          variant="warn"
-                          onClick={() => toggleActive(s)}
-                          disabled={working}
-                          title={s.active ? "Desativar loja" : "Ativar loja"}
-                        >
-                          {s.active ? "Desativar" : "Ativar"}
-                        </Button>
+                          <PrimaryActionButton
+                            onClick={() => openCredit(s)}
+                            disabled={working}
+                            fullWidth
+                          >
+                            Crédito
+                          </PrimaryActionButton>
+
+                          <WarnActionButton
+                            onClick={() => toggleActive(s)}
+                            disabled={working}
+                            fullWidth
+                          >
+                            {s.active ? "Desativar" : "Ativar"}
+                          </WarnActionButton>
+                        </div>
                       </div>
                     </div>
                   );
-                })}
-              </div>
-            ) : null}
+                })
+              : null}
           </div>
-        </Card>
+        </div>
       </div>
 
       {creditStoreId ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCredit}>
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+          onClick={closeCredit}
+        >
           <div
-            className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl"
+            className="w-full max-w-xl rounded-[30px] border border-slate-200 bg-white p-5 shadow-2xl md:p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-base font-semibold text-slate-900">Crédito pré-pago</div>
-                <div className="mt-1 text-xs text-slate-600">
-                  Loja: <b>{creditStore?.name ?? creditStoreId}</b> · Saldo atual: <b>{money(creditBalance)}</b> · Após:{" "}
-                  <b>{money(previewAfter)}</b>
-                </div>
-              </div>
+            <SectionTitle
+              title="Crédito pré-pago"
+              subtitle={`Loja: ${creditStore?.name ?? creditStoreId}`}
+              right={
+                <SecondaryActionButton onClick={closeCredit} disabled={working}>
+                  Fechar
+                </SecondaryActionButton>
+              }
+            />
 
-              <Button variant="secondary" onClick={closeCredit} disabled={working}>
-                Fechar
-              </Button>
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              <StatCard label="Saldo atual" value={money(creditBalance)} />
+              <StatCard
+                label="Operação"
+                value={creditMode === "ADD" ? "Adicionar" : "Remover"}
+              />
+              <StatCard label="Saldo após" value={money(previewAfter)} />
             </div>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button
-                variant={creditMode === "ADD" ? "primary" : "secondary"}
+            <div className="mt-6 flex flex-wrap gap-2">
+              <PrimaryActionButton
                 onClick={() => setCreditMode("ADD")}
-                disabled={working}
+                disabled={working || creditMode === "ADD"}
               >
                 Adicionar
-              </Button>
-              <Button
-                variant={creditMode === "REMOVE" ? "primary" : "secondary"}
+              </PrimaryActionButton>
+
+              <SecondaryActionButton
                 onClick={() => setCreditMode("REMOVE")}
-                disabled={working}
+                disabled={working || creditMode === "REMOVE"}
               >
                 Remover
-              </Button>
+              </SecondaryActionButton>
             </div>
 
-            <div className="mt-4 grid gap-3">
-              <Input label="Valor (R$)" value={creditAmount} onChange={setCreditAmount} placeholder="Ex.: 1.000,00" />
+            <div className="mt-6 grid gap-4">
               <Input
-                label="Observação (opcional)"
-                value={creditNote}
-                onChange={setCreditNote}
-                placeholder={creditMode === "ADD" ? "Ex.: Crédito antecipado do mês" : "Ex.: Ajuste / Estorno"}
+                label="Valor (R$)"
+                value={creditAmount}
+                onChange={setCreditAmount}
+                placeholder="Ex.: 1.000,00"
               />
 
-              <div className="flex justify-end pt-1">
-                <Button onClick={applyCredit} disabled={working}>
-                  {working ? "Salvando..." : creditMode === "ADD" ? "Adicionar" : "Remover"}
-                </Button>
-              </div>
+              <Input
+                label="Observação"
+                value={creditNote}
+                onChange={setCreditNote}
+                placeholder={
+                  creditMode === "ADD"
+                    ? "Ex.: Crédito antecipado do mês"
+                    : "Ex.: Ajuste / Estorno"
+                }
+              />
+            </div>
 
-              <div className="text-xs text-slate-500">
-                Se <b>ADD</b> falhar e <b>REMOVE</b> funcionar, normalmente é função inexistente / sem permissão / RLS.
-              </div>
+            <div className="mt-6 grid gap-2 sm:grid-cols-2">
+              <SecondaryActionButton onClick={closeCredit} disabled={working} fullWidth>
+                Cancelar
+              </SecondaryActionButton>
+
+              <PrimaryActionButton onClick={applyCredit} disabled={working} fullWidth>
+                {working ? "Salvando..." : creditMode === "ADD" ? "Adicionar crédito" : "Remover crédito"}
+              </PrimaryActionButton>
+            </div>
+
+            <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+              Se <b>ADD</b> falhar e <b>REMOVE</b> funcionar, normalmente é função inexistente, sem permissão ou bloqueio por RLS.
             </div>
           </div>
         </div>

@@ -7,10 +7,10 @@ import { supabase } from "@/lib/supabaseClient";
 import {
   PageHeader,
   Card,
-  Button,
   Select,
   Badge,
   Table,
+  StatCard,
 } from "@/app/components/ui";
 
 type StoreRow = { id: string; name: string | null };
@@ -31,23 +31,113 @@ type CreditBalanceRow = {
 };
 
 function money(n: number) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
+
 function fmtBR(iso: string | null | undefined) {
   if (!iso) return "-";
   try {
     return new Date(iso).toLocaleString("pt-BR");
   } catch {
-    return iso;
+    return String(iso);
   }
 }
+
 function toISOStart(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 0, 0, 0).toISOString();
 }
+
 function toISOEnd(dateStr: string) {
   const [y, m, d] = dateStr.split("-").map(Number);
   return new Date(y, m - 1, d, 23, 59, 59).toISOString();
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+      <div className="text-sm text-slate-600">{text}</div>
+    </div>
+  );
 }
 
 export default function AdmCreditoExtratoPage() {
@@ -153,9 +243,16 @@ export default function AdmCreditoExtratoPage() {
   }
 
   const resumo = useMemo(() => {
-    const entradas = rows.reduce((a, r) => a + (Number(r.amount) > 0 ? Number(r.amount) : 0), 0);
-    const saidas = rows.reduce((a, r) => a + (Number(r.amount) < 0 ? Math.abs(Number(r.amount)) : 0), 0);
+    const entradas = rows.reduce(
+      (a, r) => a + (Number(r.amount) > 0 ? Number(r.amount) : 0),
+      0
+    );
+    const saidas = rows.reduce(
+      (a, r) => a + (Number(r.amount) < 0 ? Math.abs(Number(r.amount)) : 0),
+      0
+    );
     const net = rows.reduce((a, r) => a + (Number(r.amount) || 0), 0);
+
     return { entradas, saidas, net };
   }, [rows]);
 
@@ -164,6 +261,11 @@ export default function AdmCreditoExtratoPage() {
     return balances[storeFilter] ?? 0;
   }, [balances, storeFilter]);
 
+  const storeNameSelected = useMemo(() => {
+    if (storeFilter === "all") return null;
+    return stores.find((s) => s.id === storeFilter)?.name ?? "Loja";
+  }, [stores, storeFilter]);
+
   const tableRows = useMemo(() => {
     return rows.map((r) => {
       const amt = Number(r.amount ?? 0) || 0;
@@ -171,8 +273,12 @@ export default function AdmCreditoExtratoPage() {
       const tipo = isCredit ? "Crédito" : "Débito/Ajuste";
 
       return [
-        <span key="dt" className="text-slate-700">{fmtBR(r.created_at)}</span>,
-        <span key="store" className="font-semibold text-slate-900">{r.store_name}</span>,
+        <span key="dt" className="text-slate-700">
+          {fmtBR(r.created_at)}
+        </span>,
+        <span key="store" className="font-semibold text-slate-900">
+          {r.store_name}
+        </span>,
         <span
           key="amt"
           className={isCredit ? "font-semibold text-slate-900" : "font-semibold text-red-600"}
@@ -182,8 +288,12 @@ export default function AdmCreditoExtratoPage() {
         <Badge key="tipo" tone={isCredit ? "green" : "red"}>
           {tipo}
         </Badge>,
-        <span key="note" className="text-slate-700">{r.note ?? "-"}</span>,
-        <span key="by" className="font-mono text-xs text-slate-600">{r.created_by ?? "-"}</span>,
+        <span key="note" className="text-slate-700">
+          {r.note ?? "-"}
+        </span>,
+        <span key="by" className="font-mono text-xs text-slate-600">
+          {r.created_by ?? "-"}
+        </span>,
       ];
     });
   }, [rows]);
@@ -192,27 +302,44 @@ export default function AdmCreditoExtratoPage() {
     <div className="space-y-6">
       <PageHeader
         title="Extrato de crédito"
-        subtitle="Histórico de lançamentos (crédito pré-pago). Valores negativos = remoção/ajuste."
+        subtitle="Histórico de lançamentos de crédito pré-pago"
         right={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => router.push("/adm/lojas")}>
+            <SecondaryActionButton onClick={() => router.push("/adm/lojas")}>
               Lojas
-            </Button>
-            <Button variant="secondary" onClick={onReload} disabled={loading}>
+            </SecondaryActionButton>
+            <SecondaryActionButton onClick={onReload} disabled={loading}>
               Recarregar
-            </Button>
+            </SecondaryActionButton>
           </div>
         }
       />
 
-      {msg ? (
-        <Card>
-          <div className="text-sm text-red-600">{msg}</div>
-        </Card>
-      ) : null}
+      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Visão geral"
+          subtitle="Acompanhe entradas, saídas e saldo do período filtrado"
+        />
 
-      <Card title="Filtros">
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Entradas" value={money(resumo.entradas)} />
+          <StatCard label="Saídas" value={`- ${money(resumo.saidas)}`} />
+          <StatCard label="Saldo líquido" value={money(resumo.net)} />
+          <StatCard
+            label="Saldo atual da loja"
+            value={saldoLojaSelecionada != null ? money(saldoLojaSelecionada) : "-"}
+            subtitle={storeNameSelected ?? "Selecione uma loja"}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Filtros"
+          subtitle="Refine rapidamente os lançamentos"
+        />
+
+        <div className="mt-6 grid gap-4 lg:grid-cols-5">
           <Select
             label="Loja"
             value={storeFilter}
@@ -224,76 +351,87 @@ export default function AdmCreditoExtratoPage() {
           />
 
           <div>
-            <div className="text-xs font-semibold text-slate-600 mb-1">De</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              De
+            </div>
             <input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-300"
             />
           </div>
 
           <div>
-            <div className="text-xs font-semibold text-slate-600 mb-1">Até</div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Até
+            </div>
             <input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-slate-300"
             />
           </div>
 
           <div className="flex items-end">
-            <Button onClick={loadLedger} disabled={loading}>
+            <PrimaryActionButton onClick={loadLedger} disabled={loading} fullWidth>
               Aplicar filtros
-            </Button>
+            </PrimaryActionButton>
           </div>
 
           <div className="flex items-end">
-            <div className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
-              {saldoLojaSelecionada != null ? (
-                <>
-                  Saldo atual: <b className="ml-1">{money(saldoLojaSelecionada)}</b>
-                </>
-              ) : (
-                "Selecione uma loja para ver o saldo atual"
-              )}
-            </div>
+            <SecondaryActionButton
+              onClick={() => {
+                setStoreFilter("all");
+                setDateFrom("");
+                setDateTo("");
+              }}
+              disabled={loading}
+              fullWidth
+            >
+              Limpar
+            </SecondaryActionButton>
           </div>
         </div>
-      </Card>
 
-      <Card title="Resumo do período">
-        <div className="grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Entradas</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.entradas)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Saídas</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">- {money(resumo.saidas)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold text-slate-500">Saldo líquido no período</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.net)}</div>
-          </div>
+        <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+          {saldoLojaSelecionada != null ? (
+            <>
+              Saldo atual de <b>{storeNameSelected}</b>:{" "}
+              <b className="ml-1 text-slate-900">{money(saldoLojaSelecionada)}</b>
+            </>
+          ) : (
+            "Selecione uma loja para visualizar o saldo atual específico."
+          )}
         </div>
-      </Card>
+      </div>
 
-      <Card title="Lançamentos" subtitle={`${rows.length} registro(s)`}>
-        {loading ? (
-          <div>Carregando...</div>
-        ) : rows.length === 0 ? (
-          <div className="text-sm text-slate-600">Nenhum lançamento encontrado.</div>
-        ) : (
-          <Table
-            headers={["Data", "Loja", "Valor", "Tipo", "Observação", "Criado por"]}
-            rows={tableRows}
-          />
-        )}
-      </Card>
+      {msg ? (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      ) : null}
+
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Lançamentos"
+          subtitle={`${rows.length} registro(s) no período filtrado`}
+        />
+
+        <div className="mt-6">
+          {loading ? (
+            <div className="text-sm text-slate-600">Carregando...</div>
+          ) : rows.length === 0 ? (
+            <EmptyState text="Nenhum lançamento encontrado." />
+          ) : (
+            <Table
+              headers={["Data", "Loja", "Valor", "Tipo", "Observação", "Criado por"]}
+              rows={tableRows}
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

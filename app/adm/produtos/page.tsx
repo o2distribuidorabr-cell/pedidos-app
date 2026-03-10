@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
+import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/components/ui";
 
 type ProductRow = {
   id: string;
@@ -16,14 +16,13 @@ type ProductRow = {
   pack_qty: number | null;
   active: boolean | null;
 
-  // ✅ NOVOS CAMPOS (pronto para NF-e)
-  ncm?: string | null; // 8 dígitos
-  cest?: string | null; // 7 dígitos (opcional)
-  cfop?: string | null; // 4 dígitos (opcional)
-  ean?: string | null; // GTIN/EAN (8/12/13/14) opcional
-  origin?: string | null; // "0".."8" (opcional)
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: string | null;
+  ean?: string | null;
+  origin?: string | null;
 
-  icms_cst?: string | null; // CST/CSOSN (texto)
+  icms_cst?: string | null;
   pis_cst?: string | null;
   cofins_cst?: string | null;
 };
@@ -39,7 +38,10 @@ function toNumber(v: string) {
 }
 
 function moneyBR(n: number) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (Number(n) || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function onlyDigits(v: string) {
@@ -56,12 +58,138 @@ function normCFOP(v: string) {
   return onlyDigits(v).slice(0, 4);
 }
 function normEAN(v: string) {
-  // EAN/GTIN pode ser 8, 12, 13, 14 (mantém só dígitos)
   return onlyDigits(v).slice(0, 14);
 }
 function isValidEAN(digits: string) {
-  if (!digits) return true; // vazio = ok
+  if (!digits) return true;
   return [8, 12, 13, 14].includes(digits.length);
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function WarnActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
+}
+
+function InfoPair({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+      <div className="text-sm text-slate-600">{text}</div>
+    </div>
+  );
 }
 
 export default function AdmProdutosPage() {
@@ -74,7 +202,6 @@ export default function AdmProdutosPage() {
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [q, setQ] = useState("");
 
-  // form produto
   const [editingId, setEditingId] = useState<string | null>(null);
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
@@ -84,22 +211,20 @@ export default function AdmProdutosPage() {
   const [packQty, setPackQty] = useState("1");
   const [active, setActive] = useState(true);
 
-  // ✅ NOVO: campos NF-e (produto)
   const [ncm, setNcm] = useState("");
   const [cest, setCest] = useState("");
   const [cfop, setCfop] = useState("");
   const [ean, setEan] = useState("");
-  const [origin, setOrigin] = useState<string>(""); // "" | "0".."8"
+  const [origin, setOrigin] = useState<string>("");
   const [icmsCst, setIcmsCst] = useState("");
   const [pisCst, setPisCst] = useState("");
   const [cofinsCst, setCofinsCst] = useState("");
 
-  // ======= PREÇO POR LOJA (override) =======
   const [stores, setStores] = useState<StoreRow[]>([]);
-  const [storeFilterId, setStoreFilterId] = useState<string>(""); // loja selecionada
-  const [storePricesMap, setStorePricesMap] = useState<Record<string, number>>({}); // product_id -> price
-  const [dirtyMap, setDirtyMap] = useState<Record<string, string>>({}); // product_id -> input string (pendente)
-  const [priceQ, setPriceQ] = useState<string>(""); // busca dentro da tabela de preços
+  const [storeFilterId, setStoreFilterId] = useState<string>("");
+  const [storePricesMap, setStorePricesMap] = useState<Record<string, number>>({});
+  const [dirtyMap, setDirtyMap] = useState<Record<string, string>>({});
+  const [priceQ, setPriceQ] = useState<string>("");
   const [priceWorking, setPriceWorking] = useState<boolean>(false);
 
   async function requireAuth() {
@@ -116,22 +241,16 @@ export default function AdmProdutosPage() {
     const ok = await requireAuth();
     if (!ok) return;
 
-    // ✅ tenta com colunas novas; se falhar por coluna inexistente, faz fallback
     const baseSelect = "id,sku,name,unit,unit_price,step_qty,pack_qty,active";
-    const fullSelect = "id,sku,name,unit,unit_price,step_qty,pack_qty,active,ncm,cest,cfop,ean,origin,icms_cst,pis_cst,cofins_cst";
+    const fullSelect =
+      "id,sku,name,unit,unit_price,step_qty,pack_qty,active,ncm,cest,cfop,ean,origin,icms_cst,pis_cst,cofins_cst";
 
-    const first = await supabase
-      .from("products")
-      .select(fullSelect)
-      .order("name", { ascending: true });
+    const first = await supabase.from("products").select(fullSelect).order("name", { ascending: true });
 
     if (first.error) {
       console.warn("loadProducts fullSelect error:", first.error);
 
-      const fallback = await supabase
-        .from("products")
-        .select(baseSelect)
-        .order("name", { ascending: true });
+      const fallback = await supabase.from("products").select(baseSelect).order("name", { ascending: true });
 
       if (fallback.error) {
         setMsg(fallback.error.message);
@@ -170,7 +289,6 @@ export default function AdmProdutosPage() {
     const list = (data ?? []) as StoreRow[];
     setStores(list);
 
-    // se não tem loja selecionada ainda, seleciona a primeira
     if (!storeFilterId && list.length > 0) {
       setStoreFilterId(list[0].id);
     }
@@ -227,7 +345,6 @@ export default function AdmProdutosPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // quando trocar a loja, recarrega preços dela
   useEffect(() => {
     (async () => {
       if (!storeFilterId) return;
@@ -239,8 +356,10 @@ export default function AdmProdutosPage() {
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
     if (!qq) return products;
+
     return products.filter((p) => {
-      const blob = `${p.sku ?? ""} ${p.name ?? ""} ${p.unit ?? ""} ${p.ncm ?? ""} ${p.cest ?? ""} ${p.cfop ?? ""} ${p.ean ?? ""} ${p.id}`.toLowerCase();
+      const blob =
+        `${p.sku ?? ""} ${p.name ?? ""} ${p.unit ?? ""} ${p.ncm ?? ""} ${p.cest ?? ""} ${p.cfop ?? ""} ${p.ean ?? ""} ${p.id}`.toLowerCase();
       return blob.includes(qq);
     });
   }, [products, q]);
@@ -248,11 +367,21 @@ export default function AdmProdutosPage() {
   const filteredForPrices = useMemo(() => {
     const qq = priceQ.trim().toLowerCase();
     if (!qq) return products;
+
     return products.filter((p) => {
       const blob = `${p.sku ?? ""} ${p.name ?? ""} ${p.unit ?? ""}`.toLowerCase();
       return blob.includes(qq);
     });
   }, [products, priceQ]);
+
+  const summary = useMemo(() => {
+    return {
+      total: products.length,
+      active: products.filter((p) => p.active ?? true).length,
+      inactive: products.filter((p) => !(p.active ?? true)).length,
+      withOverride: Object.keys(storePricesMap).length,
+    };
+  }, [products, storePricesMap]);
 
   function resetForm() {
     setEditingId(null);
@@ -264,7 +393,6 @@ export default function AdmProdutosPage() {
     setPackQty("1");
     setActive(true);
 
-    // ✅ NOVO (NF-e)
     setNcm("");
     setCest("");
     setCfop("");
@@ -286,7 +414,6 @@ export default function AdmProdutosPage() {
     setActive(p.active ?? true);
     setMsg("");
 
-    // ✅ NOVO (NF-e)
     setNcm(p.ncm ?? "");
     setCest(p.cest ?? "");
     setCfop(p.cfop ?? "");
@@ -315,25 +442,24 @@ export default function AdmProdutosPage() {
       return;
     }
 
-    // ✅ NOVO: validações leves (só quando preenchido)
     const ncmNorm = normNCM(ncm);
     if (ncm.trim() && ncmNorm.length !== 8) {
       setWorking(false);
-      setMsg("NCM inválido. Informe 8 dígitos (apenas números).");
+      setMsg("NCM inválido. Informe 8 dígitos.");
       return;
     }
 
     const cestNorm = normCEST(cest);
     if (cest.trim() && cestNorm.length !== 7) {
       setWorking(false);
-      setMsg("CEST inválido. Informe 7 dígitos (apenas números).");
+      setMsg("CEST inválido. Informe 7 dígitos.");
       return;
     }
 
     const cfopNorm = normCFOP(cfop);
     if (cfop.trim() && cfopNorm.length !== 4) {
       setWorking(false);
-      setMsg("CFOP inválido. Informe 4 dígitos (apenas números).");
+      setMsg("CFOP inválido. Informe 4 dígitos.");
       return;
     }
 
@@ -353,7 +479,6 @@ export default function AdmProdutosPage() {
       pack_qty: Math.max(1, Math.floor(toNumber(packQty))),
       active: !!active,
 
-      // ✅ NOVO (NF-e)
       ncm: ncmNorm || null,
       cest: cestNorm || null,
       cfop: cfopNorm || null,
@@ -401,12 +526,6 @@ export default function AdmProdutosPage() {
     await loadProducts();
   }
 
-  // ======= PREÇOS POR LOJA actions =======
-  function getOverridePrice(pid: string): number | null {
-    const v = storePricesMap[pid];
-    return v == null ? null : Number(v);
-  }
-
   function getDirtyInput(pid: string): string {
     return dirtyMap[pid] ?? "";
   }
@@ -427,7 +546,7 @@ export default function AdmProdutosPage() {
     const raw = getDirtyInput(productId).trim();
     if (!raw) {
       setPriceWorking(false);
-      setMsg("Informe um preço para salvar (ou use Remover override).");
+      setMsg("Informe um preço para salvar ou use remover override.");
       return;
     }
 
@@ -520,7 +639,7 @@ export default function AdmProdutosPage() {
       const p = toNumber(e.val);
       if (!(p > 0)) {
         setPriceWorking(false);
-        setMsg("Existe preço inválido (<=0). Corrija antes de salvar.");
+        setMsg("Existe preço inválido. Corrija antes de salvar.");
         return;
       }
       payload.push({ store_id: storeFilterId, product_id: e.product_id, unit_price: p });
@@ -555,18 +674,18 @@ export default function AdmProdutosPage() {
     <div className="space-y-6">
       <PageHeader
         title="Produtos"
-        subtitle="Cadastro de produtos + preço padrão + preço por loja (override)."
+        subtitle="Cadastro de produtos, regras fiscais e preço específico por loja."
         right={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => router.push("/adm/lojas")}>
+            <SecondaryActionButton onClick={() => router.push("/adm/lojas")}>
               Lojas
-            </Button>
-            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>
+            </SecondaryActionButton>
+            <SecondaryActionButton onClick={() => router.push("/adm/pedidos")}>
               Pedidos
-            </Button>
-            <Button variant="secondary" onClick={refreshAll} disabled={working || priceWorking}>
+            </SecondaryActionButton>
+            <SecondaryActionButton onClick={refreshAll} disabled={working || priceWorking}>
               Atualizar
-            </Button>
+            </SecondaryActionButton>
           </div>
         }
       />
@@ -577,58 +696,89 @@ export default function AdmProdutosPage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Form */}
-        <Card title={editingId ? "Editar produto" : "Novo produto"}>
-          <div className="grid gap-3">
+      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Visão geral"
+          subtitle="Resumo do catálogo e dos overrides de preço"
+        />
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Total de produtos" value={summary.total} />
+          <StatCard label="Produtos ativos" value={summary.active} />
+          <StatCard label="Produtos inativos" value={summary.inactive} />
+          <StatCard label="Overrides nesta loja" value={summary.withOverride} />
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.35fr]">
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title={editingId ? "Editar produto" : "Novo produto"}
+            subtitle={editingId ? "Atualize os dados do produto selecionado" : "Preencha os dados para cadastrar um novo produto"}
+          />
+
+          <div className="mt-6 grid gap-4">
             <Input label="SKU" value={sku} onChange={setSku} placeholder="Ex.: AB-001" />
             <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Pão Brioche" />
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="Unidade" value={unit} onChange={setUnit} placeholder="un / cx / kg ..." />
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input label="Unidade" value={unit} onChange={setUnit} placeholder="un / cx / kg" />
               <Input label="Preço padrão" value={unitPrice} onChange={setUnitPrice} placeholder="0,00" />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-2">
               <Input label="Passo (step_qty)" value={stepQty} onChange={setStepQty} placeholder="1" />
-              <Input label="Lote/caixa (pack_qty)" value={packQty} onChange={setPackQty} placeholder="1" />
+              <Input label="Lote / caixa (pack_qty)" value={packQty} onChange={setPackQty} placeholder="1" />
             </div>
 
-            {/* ✅ NOVO: campos NF-e (mantendo o layout) */}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="NCM (opcional)" value={ncm} onChange={(v) => setNcm(v)} placeholder="8 dígitos" />
-              <Input label="CEST (opcional)" value={cest} onChange={(v) => setCest(v)} placeholder="7 dígitos" />
-            </div>
+            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm font-semibold text-slate-900">Dados fiscais</div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="CFOP (opcional)" value={cfop} onChange={(v) => setCfop(v)} placeholder="4 dígitos" />
-              <Input label="EAN/GTIN (opcional)" value={ean} onChange={(v) => setEan(v)} placeholder="8/12/13/14 dígitos" />
-            </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Input label="NCM" value={ncm} onChange={setNcm} placeholder="8 dígitos" />
+                <Input label="CEST" value={cest} onChange={setCest} placeholder="7 dígitos" />
+              </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Select
-                label="Origem (opcional)"
-                value={origin}
-                onChange={(v) => setOrigin(v)}
-                options={[
-                  { value: "", label: "—" },
-                  { value: "0", label: "0 - Nacional" },
-                  { value: "1", label: "1 - Estrangeira (importação direta)" },
-                  { value: "2", label: "2 - Estrangeira (adquirida no mercado interno)" },
-                  { value: "3", label: "3 - Nacional (conteúdo importação > 40%)" },
-                  { value: "4", label: "4 - Nacional (produção conforme processos)" },
-                  { value: "5", label: "5 - Nacional (conteúdo importação <= 40%)" },
-                  { value: "6", label: "6 - Estrangeira (sem similar nacional)" },
-                  { value: "7", label: "7 - Estrangeira (adquirida no mercado interno, sem similar)" },
-                  { value: "8", label: "8 - Nacional (conteúdo importação > 70%)" },
-                ]}
-              />
-              <Input label="ICMS CST/CSOSN (opcional)" value={icmsCst} onChange={setIcmsCst} placeholder="Ex.: 00 / 102 / 60" />
-            </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Input label="CFOP" value={cfop} onChange={setCfop} placeholder="4 dígitos" />
+                <Input label="EAN / GTIN" value={ean} onChange={setEan} placeholder="8/12/13/14 dígitos" />
+              </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Input label="PIS CST (opcional)" value={pisCst} onChange={setPisCst} placeholder="Ex.: 01 / 99" />
-              <Input label="COFINS CST (opcional)" value={cofinsCst} onChange={setCofinsCst} placeholder="Ex.: 01 / 99" />
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Select
+                  label="Origem"
+                  value={origin}
+                  onChange={(v) => setOrigin(v)}
+                  options={[
+                    { value: "", label: "—" },
+                    { value: "0", label: "0 - Nacional" },
+                    { value: "1", label: "1 - Estrangeira (importação direta)" },
+                    { value: "2", label: "2 - Estrangeira (adquirida no mercado interno)" },
+                    { value: "3", label: "3 - Nacional (conteúdo importação > 40%)" },
+                    { value: "4", label: "4 - Nacional (produção conforme processos)" },
+                    { value: "5", label: "5 - Nacional (conteúdo importação <= 40%)" },
+                    { value: "6", label: "6 - Estrangeira (sem similar nacional)" },
+                    { value: "7", label: "7 - Estrangeira (mercado interno sem similar)" },
+                    { value: "8", label: "8 - Nacional (conteúdo importação > 70%)" },
+                  ]}
+                />
+                <Input
+                  label="ICMS CST / CSOSN"
+                  value={icmsCst}
+                  onChange={setIcmsCst}
+                  placeholder="Ex.: 00 / 102 / 60"
+                />
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <Input label="PIS CST" value={pisCst} onChange={setPisCst} placeholder="Ex.: 01 / 99" />
+                <Input
+                  label="COFINS CST"
+                  value={cofinsCst}
+                  onChange={setCofinsCst}
+                  placeholder="Ex.: 01 / 99"
+                />
+              </div>
             </div>
 
             <Select
@@ -641,124 +791,159 @@ export default function AdmProdutosPage() {
               ]}
             />
 
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button onClick={saveProduct} disabled={working}>
-                {working ? "Salvando..." : "Salvar"}
-              </Button>
-              <Button variant="secondary" onClick={resetForm} disabled={working}>
+            <div className="grid gap-2 pt-2 sm:grid-cols-2">
+              <SecondaryActionButton onClick={resetForm} disabled={working} fullWidth>
                 Limpar
-              </Button>
+              </SecondaryActionButton>
+
+              <PrimaryActionButton onClick={saveProduct} disabled={working} fullWidth>
+                {working ? "Salvando..." : editingId ? "Salvar alterações" : "Cadastrar produto"}
+              </PrimaryActionButton>
             </div>
 
             {editingId ? (
-              <div className="pt-2 text-xs text-slate-500">
-                ID: <span className="font-mono">{editingId}</span>
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                ID do produto: <span className="font-mono">{editingId}</span>
               </div>
             ) : null}
           </div>
-        </Card>
+        </div>
 
-        {/* Lista */}
-        <Card title="Lista">
-          <div className="grid gap-3">
-            <Input value={q} onChange={setQ} placeholder="Buscar por SKU, nome..." />
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Lista de produtos"
+            subtitle="Busque, edite e ative/desative produtos"
+          />
 
-            {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
+          <div className="mt-6">
+            <Input value={q} onChange={setQ} placeholder="Buscar por SKU, nome, NCM, CFOP..." />
+          </div>
 
-            {!loading && filtered.length === 0 ? <div className="text-sm text-slate-600">Nenhum produto encontrado.</div> : null}
+          <div className="mt-6 space-y-4">
+            {loading ? <EmptyState text="Carregando produtos..." /> : null}
 
-            {!loading && filtered.length > 0 ? (
-              <div className="grid gap-2">
-                {filtered.map((p) => (
+            {!loading && filtered.length === 0 ? (
+              <EmptyState text="Nenhum produto encontrado." />
+            ) : null}
+
+            {!loading && filtered.length > 0
+              ? filtered.map((p) => (
                   <div
                     key={p.id}
-                    className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:flex-row md:items-center md:justify-between"
+                    className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5"
                   >
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="truncate font-semibold text-slate-900">
-                          {p.name ?? "-"} {p.sku ? `(${p.sku})` : ""}
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="truncate text-base font-semibold text-slate-900">
+                            {p.name ?? "-"} {p.sku ? `(${p.sku})` : ""}
+                          </div>
+                          <Badge tone={p.active ? "green" : "red"}>
+                            {p.active ? "Ativo" : "Inativo"}
+                          </Badge>
                         </div>
-                        <Badge tone={p.active ? "green" : "red"}>{p.active ? "Ativo" : "Inativo"}</Badge>
+
+                        <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                          <div className="space-y-3">
+                            <InfoPair label="Unidade" value={p.unit ?? "un"} />
+                            <InfoPair label="Preço padrão" value={moneyBR(Number(p.unit_price ?? 0))} />
+                            <InfoPair label="Passo" value={p.step_qty ?? 1} />
+                            <InfoPair label="Lote / caixa" value={p.pack_qty ?? 1} />
+                            <InfoPair label="NCM" value={p.ncm ?? "-"} />
+                            <InfoPair label="CEST" value={p.cest ?? "-"} />
+                            <InfoPair label="CFOP" value={p.cfop ?? "-"} />
+                            <InfoPair label="EAN / GTIN" value={p.ean ?? "-"} />
+                            <InfoPair label="Origem" value={p.origin ?? "-"} />
+                            <InfoPair label="ICMS CST / CSOSN" value={p.icms_cst ?? "-"} />
+                            <InfoPair label="PIS CST" value={p.pis_cst ?? "-"} />
+                            <InfoPair label="COFINS CST" value={p.cofins_cst ?? "-"} />
+                            <InfoPair
+                              label="ID"
+                              value={<span className="break-all font-mono text-xs">{p.id}</span>}
+                            />
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="mt-1 text-sm text-slate-600">
-                        {p.unit ?? "un"} · {moneyBR(Number(p.unit_price ?? 0))} · passo {p.step_qty ?? 1} · lote {p.pack_qty ?? 1}
+                      <div className="grid gap-2 sm:grid-cols-2 xl:w-[260px] xl:grid-cols-1">
+                        <SecondaryActionButton
+                          onClick={() => startEdit(p)}
+                          disabled={working}
+                          fullWidth
+                        >
+                          Editar
+                        </SecondaryActionButton>
+
+                        <WarnActionButton
+                          onClick={() => toggleActive(p)}
+                          disabled={working}
+                          fullWidth
+                        >
+                          {p.active ? "Desativar" : "Ativar"}
+                        </WarnActionButton>
                       </div>
-
-                      <div className="mt-2 truncate font-mono text-xs text-slate-500">{p.id}</div>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="secondary" onClick={() => startEdit(p)} disabled={working}>
-                        Editar
-                      </Button>
-                      <Button
-                        variant="warn"
-                        onClick={() => toggleActive(p)}
-                        disabled={working}
-                        title={p.active ? "Desativar produto" : "Ativar produto"}
-                      >
-                        {p.active ? "Desativar" : "Ativar"}
-                      </Button>
                     </div>
                   </div>
-                ))}
-              </div>
-            ) : null}
+                ))
+              : null}
           </div>
-        </Card>
+        </div>
       </div>
 
-      {/* Preços por loja */}
-      <Card
-        title="Preços por loja"
-        subtitle="Defina um preço específico para uma loja. Se não existir override, vale o preço padrão do produto."
-        right={
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={storeFilterId}
-              onChange={(v) => setStoreFilterId(v)}
-              options={
-                stores.length === 0
-                  ? [{ value: "", label: "(Sem lojas)" }]
-                  : stores.map((s) => ({ value: s.id, label: s.name ?? s.id }))
-              }
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Preços por loja"
+          subtitle="Defina preço específico para a loja selecionada. Sem override, o sistema usa o preço padrão."
+          right={
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-[220px]">
+                <Select
+                  value={storeFilterId}
+                  onChange={(v) => setStoreFilterId(v)}
+                  options={
+                    stores.length === 0
+                      ? [{ value: "", label: "(Sem lojas)" }]
+                      : stores.map((s) => ({ value: s.id, label: s.name ?? s.id }))
+                  }
+                />
+              </div>
+
+              <SecondaryActionButton
+                onClick={() => storeFilterId && loadStorePrices(storeFilterId)}
+                disabled={!storeFilterId || priceWorking || loading}
+              >
+                Recarregar preços
+              </SecondaryActionButton>
+
+              <PrimaryActionButton
+                onClick={saveAllDirty}
+                disabled={!storeFilterId || priceWorking || pendingCount === 0}
+              >
+                {priceWorking ? "Salvando..." : `Salvar alterações (${pendingCount})`}
+              </PrimaryActionButton>
+            </div>
+          }
+        />
+
+        <div className="mt-6 grid gap-4">
+          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+            <Input
+              label="Buscar produto"
+              value={priceQ}
+              onChange={setPriceQ}
+              placeholder="Buscar por SKU, nome ou unidade..."
             />
 
-            <Button
-              variant="secondary"
-              onClick={() => storeFilterId && loadStorePrices(storeFilterId)}
-              disabled={!storeFilterId || priceWorking || loading}
-            >
-              Recarregar preços
-            </Button>
-
-            <Button
-              onClick={saveAllDirty}
-              disabled={!storeFilterId || priceWorking || pendingCount === 0}
-              title={pendingCount === 0 ? "Nenhuma alteração pendente" : "Salvar alterações"}
-            >
-              {priceWorking ? "Salvando..." : `Salvar alterações (${pendingCount})`}
-            </Button>
-          </div>
-        }
-      >
-        <div className="grid gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="w-full max-w-md">
-              <Input value={priceQ} onChange={setPriceQ} placeholder="Buscar produto por SKU/nome..." />
-            </div>
-            <div className="text-xs text-slate-600">
+            <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
               Loja selecionada: <b>{selectedStoreName}</b>
             </div>
           </div>
 
-          {loading ? <div className="text-sm text-slate-600">Carregando...</div> : null}
-
-          {!loading ? (
-            <div className="overflow-x-auto rounded-2xl border border-slate-200">
-              <table className="min-w-[900px] w-full border-collapse">
+          {loading ? (
+            <EmptyState text="Carregando tabela de preços..." />
+          ) : (
+            <div className="overflow-x-auto rounded-[24px] border border-slate-200">
+              <table className="min-w-[980px] w-full border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-left text-xs text-slate-600">
                     <th className="px-4 py-3 font-semibold">SKU</th>
@@ -793,31 +978,42 @@ export default function AdmProdutosPage() {
 
                         <td className="px-4 py-3 text-sm text-slate-700">{p.unit ?? "un"}</td>
 
-                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">{moneyBR(base)}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">
+                          {moneyBR(base)}
+                        </td>
 
                         <td className="px-4 py-3">
                           <div className="w-[160px]">
-                            <Input value={shownValue} onChange={(v) => setDirty(pid, v)} placeholder="Ex.: 12.50" />
+                            <Input
+                              value={shownValue}
+                              onChange={(v) => setDirty(pid, v)}
+                              placeholder="Ex.: 12,50"
+                            />
                           </div>
-                          <div className="mt-1 text-xs text-slate-500">{hasOverride ? "override cadastrado" : "sem override"}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {hasOverride ? "override cadastrado" : "sem override"}
+                          </div>
                         </td>
 
-                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">{moneyBR(effective)}</td>
+                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">
+                          {moneyBR(effective)}
+                        </td>
 
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-2">
-                            <Button variant="secondary" onClick={() => saveStorePrice(pid)} disabled={!storeFilterId || priceWorking}>
+                            <SecondaryActionButton
+                              onClick={() => saveStorePrice(pid)}
+                              disabled={!storeFilterId || priceWorking}
+                            >
                               Salvar
-                            </Button>
+                            </SecondaryActionButton>
 
-                            <Button
-                              variant="warn"
+                            <WarnActionButton
                               onClick={() => removeOverride(pid)}
                               disabled={!storeFilterId || priceWorking || !hasOverride}
-                              title={!hasOverride ? "Não existe override para remover" : "Remover override"}
                             >
                               Remover override
-                            </Button>
+                            </WarnActionButton>
                           </div>
                         </td>
                       </tr>
@@ -826,21 +1022,21 @@ export default function AdmProdutosPage() {
 
                   {filteredForPrices.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-4 text-sm text-slate-600">
+                      <td colSpan={7} className="px-4 py-6 text-sm text-slate-600">
                         Nenhum produto encontrado.
                       </td>
                     </tr>
                   ) : null}
                 </tbody>
               </table>
-
-              <div className="px-4 py-3 text-xs text-slate-500">
-                * Override: preço específico da loja. Se remover, volta a valer o “Preço padrão”.
-              </div>
             </div>
-          ) : null}
+          )}
+
+          <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+            Override é o preço específico da loja. Ao remover, volta a valer o preço padrão do produto.
+          </div>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

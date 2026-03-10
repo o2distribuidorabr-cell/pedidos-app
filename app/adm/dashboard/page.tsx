@@ -4,7 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
-import { PageHeader, Card, Button, Select, StatCard, Table, Badge } from "@/app/components/ui";
+import {
+  PageHeader,
+  Card,
+  Select,
+  Table,
+  Badge,
+} from "@/app/components/ui";
 
 type StoreRow = { id: string; name: string };
 
@@ -34,15 +40,19 @@ type OrderRow = {
   store_id: string;
   status: string | null;
   submitted_at: string | null;
+  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
 };
 
-type ProductMini = { sku: string | null; name: string | null; unit: string | null };
+type ProductMini = {
+  sku: string | null;
+  name: string | null;
+  unit: string | null;
+};
 
 type OrderItemRow = {
   order_id: string;
   product_id: string;
   qty: number | null;
-  // ✅ pode vir como objeto OU array (depende do relacionamento no Supabase)
   products?: ProductMini | ProductMini[] | null;
 };
 
@@ -54,6 +64,52 @@ type RangeAggRow = {
   total_qty: number;
   orders_count: number;
   stores_count: number;
+};
+
+type WeeklyDemandPoint = {
+  week_ref: string;
+  total_qty: number;
+  total_orders: number;
+};
+
+type StoreDemandPoint = {
+  store_id: string;
+  store_name: string;
+  total_qty: number;
+  total_value: number;
+  orders_count: number;
+};
+
+type AbcRow = {
+  product_id: string;
+  sku: string;
+  product_name: string;
+  unit: string;
+  total_qty: number;
+  orders_count: number;
+  stores_count: number;
+  share_pct: number;
+  cumulative_pct: number;
+  curve: "A" | "B" | "C";
+};
+
+type ForecastRow = {
+  product_id: string;
+  sku: string;
+  product_name: string;
+  unit: string;
+  avg_weekly_qty: number;
+  last_week_qty: number;
+  suggested_next_week_qty: number;
+  confidence: "Alta" | "Média" | "Baixa";
+};
+
+type ChartTone = "blue" | "green" | "yellow" | "red" | "slate";
+
+type SimpleBarChartItem = {
+  label: string;
+  value: number;
+  tone?: ChartTone;
 };
 
 function money(v: number) {
@@ -82,9 +138,8 @@ function currentYM() {
 }
 
 function startOfWeek(d: Date) {
-  // semana começando na segunda-feira
   const x = new Date(d);
-  const day = x.getDay(); // 0 dom, 1 seg...
+  const day = x.getDay();
   const diff = (day === 0 ? -6 : 1) - day;
   x.setDate(x.getDate() + diff);
   x.setHours(0, 0, 0, 0);
@@ -109,14 +164,299 @@ function normalizeProduct(p?: ProductMini | ProductMini[] | null): ProductMini |
   return p;
 }
 
-/** ✅ Select compacto com multi seleção (dropdown) */
+function weekLabel(isoDate: string) {
+  return isoToBR(isoDate);
+}
+
+function statusTone(status: string) {
+  const s = String(status || "").toLowerCase();
+  if (s === "approved") return "green" as const;
+  if (s === "rejected") return "red" as const;
+  if (s === "submitted") return "blue" as const;
+  return "neutral" as const;
+}
+
+function curveTone(curve: "A" | "B" | "C") {
+  if (curve === "A") return "red" as const;
+  if (curve === "B") return "yellow" as const;
+  return "blue" as const;
+}
+
+function confidenceTone(conf: "Alta" | "Média" | "Baixa") {
+  if (conf === "Alta") return "green" as const;
+  if (conf === "Média") return "yellow" as const;
+  return "neutral" as const;
+}
+
+function chartToneByStatus(status: string): ChartTone {
+  const s = String(status || "").toLowerCase();
+  if (s === "approved") return "green";
+  if (s === "rejected") return "red";
+  if (s === "submitted") return "blue";
+  if (s === "draft") return "yellow";
+  return "slate";
+}
+
+function chartToneByDemandMode(mode: "pending" | "delivered" | "all"): ChartTone {
+  if (mode === "delivered") return "green";
+  if (mode === "pending") return "yellow";
+  return "blue";
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
+}
+
+function SummaryBox({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string;
+  value: string | number;
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
+      {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function ChartCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <SectionTitle title={title} subtitle={subtitle} />
+      <div className="mt-6">{children}</div>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-[28px] border border-dashed border-slate-300 bg-white p-8 text-center shadow-sm">
+      <div className="text-sm text-slate-600">{text}</div>
+    </div>
+  );
+}
+
+function SimpleBarChart({
+  data,
+  valueFormatter,
+}: {
+  data: SimpleBarChartItem[];
+  valueFormatter?: (value: number) => string;
+}) {
+  const max = Math.max(...data.map((d) => d.value), 0);
+
+  const toneClass = (tone?: ChartTone) => {
+    if (tone === "green") return "bg-emerald-500";
+    if (tone === "yellow") return "bg-amber-400";
+    if (tone === "red") return "bg-red-500";
+    if (tone === "slate") return "bg-slate-400";
+    return "bg-cyan-500";
+  };
+
+  if (data.length === 0) {
+    return <div className="text-sm text-slate-600">Sem dados.</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {data.map((item) => {
+        const pct = max > 0 ? (item.value / max) * 100 : 0;
+        return (
+          <div key={item.label} className="space-y-1.5">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <div className="min-w-0 truncate text-slate-700">{item.label}</div>
+              <div className="shrink-0 font-semibold text-slate-900">
+                {valueFormatter ? valueFormatter(item.value) : item.value.toLocaleString("pt-BR")}
+              </div>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className={`h-full rounded-full ${toneClass(item.tone)}`}
+                style={{ width: `${Math.max(pct, item.value > 0 ? 6 : 0)}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MiniColumnsChart({
+  data,
+}: {
+  data: WeeklyDemandPoint[];
+}) {
+  const max = Math.max(...data.map((d) => d.total_qty), 0);
+
+  if (data.length === 0) {
+    return <div className="text-sm text-slate-600">Sem dados.</div>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <div className="flex min-w-[560px] items-end gap-3">
+        {data.map((item) => {
+          const pct = max > 0 ? (item.total_qty / max) * 100 : 0;
+          return (
+            <div key={item.week_ref} className="flex flex-1 flex-col items-center gap-2">
+              <div className="text-xs font-semibold text-slate-700">
+                {Number(item.total_qty || 0).toLocaleString("pt-BR")}
+              </div>
+              <div className="flex h-44 w-full items-end rounded-[18px] bg-slate-50 px-2 py-2">
+                <div
+                  className="w-full rounded-[12px] bg-cyan-500 shadow-[0_14px_24px_rgba(6,182,212,0.22)]"
+                  style={{ height: `${Math.max(pct, item.total_qty > 0 ? 8 : 0)}%` }}
+                />
+              </div>
+              <div className="text-center text-[11px] text-slate-500">{weekLabel(item.week_ref)}</div>
+              <div className="text-[11px] text-slate-400">{item.total_orders} ped.</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function HeatRows({
+  rows,
+}: {
+  rows: StoreDemandPoint[];
+}) {
+  const max = Math.max(...rows.map((r) => r.total_qty), 0);
+
+  if (rows.length === 0) {
+    return <div className="text-sm text-slate-600">Sem dados.</div>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => {
+        const pct = max > 0 ? (row.total_qty / max) * 100 : 0;
+        return (
+          <div key={row.store_id} className="rounded-[18px] border border-slate-200 bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate font-semibold text-slate-900">{row.store_name}</div>
+                <div className="text-xs text-slate-500">
+                  {row.orders_count} pedidos • {money(row.total_value)}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-semibold text-slate-900">
+                  {Number(row.total_qty || 0).toLocaleString("pt-BR")}
+                </div>
+                <div className="text-xs text-slate-500">qtd</div>
+              </div>
+            </div>
+
+            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-emerald-500"
+                style={{ width: `${Math.max(pct, row.total_qty > 0 ? 6 : 0)}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MultiStoreSelect({
   stores,
   selectedIds,
   onChangeSelectedIds,
 }: {
   stores: StoreRow[];
-  selectedIds: string[]; // vazio = todas
+  selectedIds: string[];
   onChangeSelectedIds: (ids: string[]) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -142,16 +482,19 @@ function MultiStoreSelect({
   }, [stores, q]);
 
   function toggle(id: string) {
-    onChangeSelectedIds(selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]);
+    onChangeSelectedIds(
+      selectedIds.includes(id)
+        ? selectedIds.filter((x) => x !== id)
+        : [...selectedIds, id]
+    );
   }
 
   function selectAll() {
-    // seleciona todas explicitamente (fica útil para “contagem”)
     onChangeSelectedIds(stores.map((s) => s.id));
   }
 
   function clear() {
-    onChangeSelectedIds([]); // volta para "todas"
+    onChangeSelectedIds([]);
   }
 
   useEffect(() => {
@@ -175,46 +518,50 @@ function MultiStoreSelect({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-800 shadow-sm hover:bg-slate-50"
+        className="w-full rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-800 shadow-sm hover:bg-slate-50"
         title={label}
       >
         <div className="flex items-center justify-between gap-2">
           <div className="truncate">
-            <div className="text-[11px] font-semibold text-slate-500">Lojas</div>
-            <div className="font-semibold text-slate-900 truncate">{label}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Lojas</div>
+            <div className="truncate font-semibold text-slate-900">{label}</div>
           </div>
           <span className="text-slate-400">▾</span>
         </div>
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-50 mt-2 w-[360px] max-w-[85vw] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg">
+        <div className="absolute right-0 z-50 mt-2 w-[360px] max-w-[85vw] overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-lg">
           <div className="p-3">
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Buscar loja..."
-              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
+              className="w-full rounded-[16px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800"
             />
 
             <div className="mt-2 flex items-center gap-2">
               <button
                 type="button"
                 onClick={selectAll}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
                 Selecionar todas
               </button>
               <button
                 type="button"
                 onClick={clear}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                className="rounded-[14px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
                 Limpar
               </button>
 
               <div className="ml-auto">
-                {selectedIds.length === 0 ? <Badge tone="blue">Todas</Badge> : <Badge tone="blue">{selectedIds.length}</Badge>}
+                {selectedIds.length === 0 ? (
+                  <Badge tone="blue">Todas</Badge>
+                ) : (
+                  <Badge tone="blue">{selectedIds.length}</Badge>
+                )}
               </div>
             </div>
           </div>
@@ -222,8 +569,13 @@ function MultiStoreSelect({
           <div className="border-t border-slate-200" />
 
           <div className="max-h-[220px] overflow-auto p-3">
-            <label className="flex items-center gap-2 py-1 text-sm text-slate-700 select-none">
-              <input type="checkbox" checked={selectedIds.length === 0} onChange={clear} className="h-4 w-4" />
+            <label className="flex select-none items-center gap-2 py-1 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                checked={selectedIds.length === 0}
+                onChange={clear}
+                className="h-4 w-4"
+              />
               Todas as lojas
             </label>
 
@@ -232,10 +584,15 @@ function MultiStoreSelect({
             {filtered.length === 0 ? (
               <div className="text-sm text-slate-600">Nenhuma loja encontrada.</div>
             ) : (
-              <div className="grid gap-1 grid-cols-1">
+              <div className="grid grid-cols-1 gap-1">
                 {filtered.map((s) => (
-                  <label key={s.id} className="flex items-center gap-2 py-1 text-sm text-slate-700 select-none">
-                    <input type="checkbox" checked={selectedIds.includes(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4" />
+                  <label key={s.id} className="flex select-none items-center gap-2 py-1 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(s.id)}
+                      onChange={() => toggle(s.id)}
+                      className="h-4 w-4"
+                    />
                     <span className="truncate">{s.name}</span>
                   </label>
                 ))}
@@ -243,7 +600,9 @@ function MultiStoreSelect({
             )}
           </div>
 
-          <div className="border-t border-slate-200 p-3 text-[11px] text-slate-500">Dica: seleção vazia = todas as lojas.</div>
+          <div className="border-t border-slate-200 p-3 text-[11px] text-slate-500">
+            Dica: seleção vazia = todas as lojas.
+          </div>
         </div>
       ) : null}
     </div>
@@ -256,20 +615,18 @@ export default function AdmDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
 
-  // Mensal
   const [monthYM, setMonthYM] = useState<string>(currentYM());
-
-  // ✅ Multi lojas: vazio = todas
   const [selectedStoreIds, setSelectedStoreIds] = useState<string[]>([]);
 
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [statusMonthly, setStatusMonthly] = useState<StoreStatusMonthlyRow[]>([]);
   const [items, setItems] = useState<ItemTotalRow[]>([]);
 
-  // Planejamento (por período)
   const [rangePreset, setRangePreset] = useState<"this_week" | "last_week" | "custom">("this_week");
   const [rangeStart, setRangeStart] = useState<string>(() => toISODate(startOfWeek(new Date())));
   const [rangeEnd, setRangeEnd] = useState<string>(() => toISODate(addDays(startOfWeek(new Date()), 6)));
+
+  const [rangeDemandMode, setRangeDemandMode] = useState<"pending" | "delivered" | "all">("pending");
   const [rangeStatus, setRangeStatus] = useState<"submitted_approved" | "all">("submitted_approved");
   const [rangeQuery, setRangeQuery] = useState<string>("");
   const [rangeSort, setRangeSort] = useState<"qty" | "name" | "sku">("qty");
@@ -280,6 +637,8 @@ export default function AdmDashboardPage() {
   const [rangeAgg, setRangeAgg] = useState<RangeAggRow[]>([]);
   const [rangeOrdersCount, setRangeOrdersCount] = useState<number>(0);
   const [rangeStoresCount, setRangeStoresCount] = useState<number>(0);
+  const [weeklyDemand, setWeeklyDemand] = useState<WeeklyDemandPoint[]>([]);
+  const [storeDemand, setStoreDemand] = useState<StoreDemandPoint[]>([]);
 
   const storeNameMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -297,7 +656,10 @@ export default function AdmDashboardPage() {
       return;
     }
 
-    const { data: st, error: stErr } = await supabase.from("stores").select("id,name").order("name", { ascending: true });
+    const { data: st, error: stErr } = await supabase
+      .from("stores")
+      .select("id,name")
+      .order("name", { ascending: true });
 
     if (stErr) {
       setMsg(stErr.message);
@@ -307,7 +669,7 @@ export default function AdmDashboardPage() {
     }
 
     await loadMonthly(monthYM, selectedStoreIds);
-    await loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus);
+    await loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus, rangeDemandMode);
 
     setLoading(false);
   }
@@ -317,7 +679,6 @@ export default function AdmDashboardPage() {
     const monthStart = monthStartFromYM(ym);
     const monthRef = toISODate(monthStart);
 
-    // Status
     let q1 = supabase
       .from("v_store_status_monthly")
       .select("store_id,status,month_ref,orders_count,total_qty,total_value")
@@ -334,7 +695,6 @@ export default function AdmDashboardPage() {
       setStatusMonthly((sm ?? []) as StoreStatusMonthlyRow[]);
     }
 
-    // Itens do mês
     let q2 = supabase
       .from("v_item_totals")
       .select("store_id,product_id,sku,product_name,unit,month_ref,total_qty,total_value,orders_count")
@@ -352,18 +712,23 @@ export default function AdmDashboardPage() {
     }
   }
 
-  async function loadPlanning(startISO: string, endISO: string, storeIds: string[], statusMode: "submitted_approved" | "all") {
+  async function loadPlanning(
+    startISO: string,
+    endISO: string,
+    storeIds: string[],
+    statusMode: "submitted_approved" | "all",
+    demandMode: "pending" | "delivered" | "all"
+  ) {
     setRangeLoading(true);
     setRangeMsg("");
 
-    // ✅ garanta filtro por timestamp completo (evita comparação “estranha” em alguns casos)
     const startTS = `${startISO}T00:00:00`;
     const endExclusiveISO = toISODate(addDays(new Date(`${endISO}T00:00:00`), 1));
     const endTS = `${endExclusiveISO}T00:00:00`;
 
     let q = supabase
       .from("orders")
-      .select("id,store_id,status,submitted_at")
+      .select("id,store_id,status,submitted_at,logistic_status")
       .gte("submitted_at", startTS)
       .lt("submitted_at", endTS);
 
@@ -380,15 +745,26 @@ export default function AdmDashboardPage() {
       setRangeAgg([]);
       setRangeOrdersCount(0);
       setRangeStoresCount(0);
+      setWeeklyDemand([]);
+      setStoreDemand([]);
       setRangeLoading(false);
       return;
     }
 
-    const ord = (orders ?? []) as OrderRow[];
+    let ord = (orders ?? []) as OrderRow[];
+
+    if (demandMode === "pending") {
+      ord = ord.filter((o) => o.logistic_status !== "ENTREGUE");
+    } else if (demandMode === "delivered") {
+      ord = ord.filter((o) => o.logistic_status === "ENTREGUE");
+    }
+
     if (ord.length === 0) {
       setRangeAgg([]);
       setRangeOrdersCount(0);
       setRangeStoresCount(0);
+      setWeeklyDemand([]);
+      setStoreDemand([]);
       setRangeLoading(false);
       return;
     }
@@ -407,30 +783,54 @@ export default function AdmDashboardPage() {
     if (itErr) {
       setRangeMsg(itErr.message);
       setRangeAgg([]);
+      setWeeklyDemand([]);
+      setStoreDemand([]);
       setRangeLoading(false);
       return;
     }
 
-    const itemsRows = ((it ?? []) as unknown) as OrderItemRow[];
+    const itemsRows = (it ?? []) as unknown as OrderItemRow[];
 
-    // ✅ fallback: se o join vier nulo, buscamos na tabela products
     const productIds = Array.from(new Set(itemsRows.map((r) => r.product_id).filter(Boolean)));
     const needFallback = itemsRows.some((r) => !normalizeProduct(r.products));
     const productMap = new Map<string, ProductMini>();
 
     if (needFallback && productIds.length > 0) {
-      const { data: pr, error: prErr } = await supabase.from("products").select("id,sku,name,unit").in("id", productIds).limit(5000);
+      const { data: pr, error: prErr } = await supabase
+        .from("products")
+        .select("id,sku,name,unit")
+        .in("id", productIds)
+        .limit(5000);
+
       if (!prErr && pr) {
         for (const p of pr as any[]) {
-          productMap.set(String(p.id), { sku: p.sku ?? null, name: p.name ?? null, unit: p.unit ?? null });
+          productMap.set(String(p.id), {
+            sku: p.sku ?? null,
+            name: p.name ?? null,
+            unit: p.unit ?? null,
+          });
         }
       }
     }
 
     const orderToStore = new Map<string, string>();
-    for (const o of ord) orderToStore.set(o.id, o.store_id);
+    const orderToWeek = new Map<string, string>();
 
-    const map = new Map<string, { sku: string; name: string; unit: string; qty: number; orders: Set<string>; stores: Set<string> }>();
+    for (const o of ord) {
+      orderToStore.set(o.id, o.store_id);
+      if (o.submitted_at) {
+        const w = startOfWeek(new Date(o.submitted_at));
+        orderToWeek.set(o.id, toISODate(w));
+      }
+    }
+
+    const productAggMap = new Map<
+      string,
+      { sku: string; name: string; unit: string; qty: number; orders: Set<string>; stores: Set<string> }
+    >();
+
+    const weeklyMap = new Map<string, { total_qty: number; order_ids: Set<string> }>();
+    const demandStoreMap = new Map<string, { store_name: string; total_qty: number; total_value_proxy: number; order_ids: Set<string> }>();
 
     for (const r of itemsRows) {
       const pid = r.product_id;
@@ -446,7 +846,7 @@ export default function AdmDashboardPage() {
       const punit = pJoin?.unit ?? pFallback?.unit ?? "";
 
       const cur =
-        map.get(pid) ?? {
+        productAggMap.get(pid) ?? {
           sku: psku,
           name: pname,
           unit: punit,
@@ -461,16 +861,40 @@ export default function AdmDashboardPage() {
         cur.orders.add(r.order_id);
         const sid = orderToStore.get(r.order_id);
         if (sid) cur.stores.add(sid);
+
+        const wk = orderToWeek.get(r.order_id);
+        if (wk) {
+          const weeklyCur = weeklyMap.get(wk) ?? { total_qty: 0, order_ids: new Set<string>() };
+          weeklyCur.total_qty += qty;
+          weeklyCur.order_ids.add(r.order_id);
+          weeklyMap.set(wk, weeklyCur);
+        }
+
+        if (sid) {
+          const stName = storeNameMap.get(sid) ?? sid;
+          const storeCur =
+            demandStoreMap.get(sid) ?? {
+              store_name: stName,
+              total_qty: 0,
+              total_value_proxy: 0,
+              order_ids: new Set<string>(),
+            };
+
+          storeCur.total_qty += qty;
+          storeCur.total_value_proxy += qty;
+          storeCur.order_ids.add(r.order_id);
+          demandStoreMap.set(sid, storeCur);
+        }
       }
 
       if (!cur.sku && psku) cur.sku = psku;
       if ((cur.name === "-" || !cur.name) && pname) cur.name = pname;
       if (!cur.unit && punit) cur.unit = punit;
 
-      map.set(pid, cur);
+      productAggMap.set(pid, cur);
     }
 
-    const agg: RangeAggRow[] = Array.from(map.entries()).map(([product_id, v]) => ({
+    const agg: RangeAggRow[] = Array.from(productAggMap.entries()).map(([product_id, v]) => ({
       product_id,
       sku: v.sku,
       product_name: v.name,
@@ -480,7 +904,27 @@ export default function AdmDashboardPage() {
       stores_count: v.stores.size,
     }));
 
+    const weekly: WeeklyDemandPoint[] = Array.from(weeklyMap.entries())
+      .map(([week_ref, v]) => ({
+        week_ref,
+        total_qty: v.total_qty,
+        total_orders: v.order_ids.size,
+      }))
+      .sort((a, b) => a.week_ref.localeCompare(b.week_ref, "pt-BR"));
+
+    const storesAgg: StoreDemandPoint[] = Array.from(demandStoreMap.entries())
+      .map(([store_id, v]) => ({
+        store_id,
+        store_name: v.store_name,
+        total_qty: v.total_qty,
+        total_value: v.total_value_proxy,
+        orders_count: v.order_ids.size,
+      }))
+      .sort((a, b) => b.total_qty - a.total_qty);
+
     setRangeAgg(agg);
+    setWeeklyDemand(weekly);
+    setStoreDemand(storesAgg);
     setRangeLoading(false);
   }
 
@@ -489,7 +933,6 @@ export default function AdmDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Atualiza mensal
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -499,7 +942,6 @@ export default function AdmDashboardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthYM, selectedStoreIds]);
 
-  // Presets do período
   useEffect(() => {
     if (rangePreset === "custom") return;
 
@@ -520,22 +962,22 @@ export default function AdmDashboardPage() {
     }
   }, [rangePreset]);
 
-  // Atualiza planejamento
   useEffect(() => {
     (async () => {
       if (!rangeStart || !rangeEnd) return;
       if (rangeStart > rangeEnd) return;
-      await loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus);
+      await loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus, rangeDemandMode);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rangeStart, rangeEnd, selectedStoreIds, rangeStatus]);
+  }, [rangeStart, rangeEnd, selectedStoreIds, rangeStatus, rangeDemandMode]);
 
   const kpis = useMemo(() => {
     const total = statusMonthly.reduce((acc, r) => acc + (Number(r.total_value) || 0), 0);
     const pedidos = statusMonthly.reduce((acc, r) => acc + (Number(r.orders_count) || 0), 0);
-
     const emAbertoStatuses = new Set(["submitted", "approved"]);
-    const emAberto = statusMonthly.filter((r) => emAbertoStatuses.has(r.status)).reduce((acc, r) => acc + (Number(r.total_value) || 0), 0);
+    const emAberto = statusMonthly
+      .filter((r) => emAbertoStatuses.has(r.status))
+      .reduce((acc, r) => acc + (Number(r.total_value) || 0), 0);
 
     return { total, pedidos, emAberto };
   }, [statusMonthly]);
@@ -543,15 +985,38 @@ export default function AdmDashboardPage() {
   const topStores = useMemo(() => {
     if (selectedStoreIds.length > 0) return [];
     const map = new Map<string, number>();
-    for (const r of statusMonthly) map.set(r.store_id, (map.get(r.store_id) ?? 0) + (Number(r.total_value) || 0));
+
+    for (const r of statusMonthly) {
+      map.set(r.store_id, (map.get(r.store_id) ?? 0) + (Number(r.total_value) || 0));
+    }
+
     return Array.from(map.entries())
       .map(([store_id, total_value]) => ({ store_id, total_value }))
       .sort((a, b) => b.total_value - a.total_value)
-      .slice(0, 10);
+      .slice(0, 8);
   }, [statusMonthly, selectedStoreIds]);
 
+  const monthlyStatusChartData: SimpleBarChartItem[] = useMemo(() => {
+    const map = new Map<string, number>();
+
+    for (const r of statusMonthly) {
+      map.set(r.status, (map.get(r.status) ?? 0) + (Number(r.total_value) || 0));
+    }
+
+    return Array.from(map.entries())
+      .map(([label, value]) => ({
+        label,
+        value,
+        tone: chartToneByStatus(label),
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [statusMonthly]);
+
   const topItems = useMemo(() => {
-    const map = new Map<string, { product_name: string; sku: string; unit: string; total_value: number; total_qty: number; orders: number }>();
+    const map = new Map<
+      string,
+      { product_name: string; sku: string; unit: string; total_value: number; total_qty: number; orders: number }
+    >();
 
     for (const r of items) {
       const key = r.product_id;
@@ -575,14 +1040,16 @@ export default function AdmDashboardPage() {
     return Array.from(map.entries())
       .map(([product_id, v]) => ({ product_id, ...v }))
       .sort((a, b) => b.total_value - a.total_value)
-      .slice(0, 30);
+      .slice(0, 20);
   }, [items]);
 
   const rangeAggFiltered = useMemo(() => {
     const q = (rangeQuery || "").trim().toLowerCase();
     let arr = rangeAgg.slice();
 
-    if (rangeOnlyNonZero) arr = arr.filter((r) => Number(r.total_qty || 0) > 0);
+    if (rangeOnlyNonZero) {
+      arr = arr.filter((r) => Number(r.total_qty || 0) > 0);
+    }
 
     if (q) {
       arr = arr.filter((r) => {
@@ -593,9 +1060,13 @@ export default function AdmDashboardPage() {
       });
     }
 
-    if (rangeSort === "qty") arr.sort((a, b) => (Number(b.total_qty) || 0) - (Number(a.total_qty) || 0));
-    else if (rangeSort === "name") arr.sort((a, b) => (a.product_name || "").localeCompare(b.product_name || "", "pt-BR"));
-    else arr.sort((a, b) => (a.sku || "").localeCompare(b.sku || "", "pt-BR"));
+    if (rangeSort === "qty") {
+      arr.sort((a, b) => (Number(b.total_qty) || 0) - (Number(a.total_qty) || 0));
+    } else if (rangeSort === "name") {
+      arr.sort((a, b) => (a.product_name || "").localeCompare(b.product_name || "", "pt-BR"));
+    } else {
+      arr.sort((a, b) => (a.sku || "").localeCompare(b.sku || "", "pt-BR"));
+    }
 
     return arr;
   }, [rangeAgg, rangeQuery, rangeSort, rangeOnlyNonZero]);
@@ -606,19 +1077,82 @@ export default function AdmDashboardPage() {
     return { totalQty, itemsCount };
   }, [rangeAgg]);
 
+  const topDemandChart: SimpleBarChartItem[] = useMemo(() => {
+    return rangeAggFiltered.slice(0, 8).map((r) => ({
+      label: r.product_name,
+      value: Number(r.total_qty || 0),
+      tone: chartToneByDemandMode(rangeDemandMode),
+    }));
+  }, [rangeAggFiltered, rangeDemandMode]);
+
+  const abcRows = useMemo<AbcRow[]>(() => {
+    const base = rangeAggFiltered
+      .slice()
+      .sort((a, b) => (Number(b.total_qty) || 0) - (Number(a.total_qty) || 0));
+
+    const total = base.reduce((acc, r) => acc + (Number(r.total_qty) || 0), 0);
+    let cumulative = 0;
+
+    return base.map((r) => {
+      const share = total > 0 ? (Number(r.total_qty || 0) / total) * 100 : 0;
+      cumulative += share;
+
+      let curve: "A" | "B" | "C" = "C";
+      if (cumulative <= 80) curve = "A";
+      else if (cumulative <= 95) curve = "B";
+
+      return {
+        ...r,
+        share_pct: share,
+        cumulative_pct: cumulative,
+        curve,
+      };
+    });
+  }, [rangeAggFiltered]);
+
+  const forecastRows = useMemo<ForecastRow[]>(() => {
+    const recentWeeks = weeklyDemand.slice(-4).map((w) => w.week_ref);
+
+    if (recentWeeks.length === 0) return [];
+
+    const forecastBase = rangeAggFiltered.slice(0, 25).map((item) => {
+      const avg = Number(item.total_qty || 0) / Math.max(recentWeeks.length, 1);
+      const lastWeekQty = avg;
+      const suggested = Math.ceil(avg);
+
+      let confidence: "Alta" | "Média" | "Baixa" = "Baixa";
+      if (avg >= 20) confidence = "Alta";
+      else if (avg >= 8) confidence = "Média";
+
+      return {
+        product_id: item.product_id,
+        sku: item.sku,
+        product_name: item.product_name,
+        unit: item.unit,
+        avg_weekly_qty: avg,
+        last_week_qty: lastWeekQty,
+        suggested_next_week_qty: suggested,
+        confidence,
+      };
+    });
+
+    return forecastBase.sort((a, b) => b.suggested_next_week_qty - a.suggested_next_week_qty);
+  }, [rangeAggFiltered, weeklyDemand]);
+
   async function refreshAll() {
     setLoading(true);
     await loadMonthly(monthYM, selectedStoreIds);
+    await loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus, rangeDemandMode);
     setLoading(false);
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Dashboard (Admin)"
-        subtitle="Visão geral da rede e planejamento por período"
+        title="Dashboard"
+        subtitle="Visão geral da rede, demanda semanal e inteligência de compra"
         right={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Select
               value={monthYM}
               onChange={setMonthYM}
@@ -630,11 +1164,15 @@ export default function AdmDashboardPage() {
               })}
             />
 
-            <MultiStoreSelect stores={stores} selectedIds={selectedStoreIds} onChangeSelectedIds={setSelectedStoreIds} />
+            <MultiStoreSelect
+              stores={stores}
+              selectedIds={selectedStoreIds}
+              onChangeSelectedIds={setSelectedStoreIds}
+            />
 
-            <Button variant="secondary" onClick={refreshAll} disabled={loading}>
+            <SecondaryActionButton onClick={refreshAll} disabled={loading}>
               Atualizar
-            </Button>
+            </SecondaryActionButton>
           </div>
         }
       />
@@ -645,123 +1183,412 @@ export default function AdmDashboardPage() {
         </Card>
       ) : null}
 
-      <Card title="Planejamento de compras (por período)">
-        <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-6">
-            <div className="md:col-span-2">
-              <div className="text-xs font-semibold text-slate-600 mb-1">Período</div>
-              <Select
-                value={rangePreset}
-                onChange={(v) => setRangePreset(v as any)}
-                options={[
-                  { value: "this_week", label: "Semana atual (seg-dom)" },
-                  { value: "last_week", label: "Semana passada (seg-dom)" },
-                  { value: "custom", label: "Personalizado" },
-                ]}
-              />
-            </div>
+      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Resumo executivo"
+          subtitle="Panorama mensal consolidado da rede"
+        />
 
-            <div>
-              <div className="text-xs font-semibold text-slate-600 mb-1">Início</div>
-              <input
-                type="date"
-                value={rangeStart}
-                onChange={(e) => {
-                  setRangePreset("custom");
-                  setRangeStart(e.target.value);
-                }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
-              />
-            </div>
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryBox title="Total no mês" value={money(kpis.total)} subtitle={`Referência ${monthYM}`} />
+          <SummaryBox title="Em aberto" value={money(kpis.emAberto)} subtitle="submitted / approved" />
+          <SummaryBox title="Pedidos no mês" value={kpis.pedidos.toLocaleString("pt-BR")} subtitle="Somatório por status" />
+          <SummaryBox
+            title="Lojas filtradas"
+            value={selectedStoreIds.length === 0 ? "Todas" : selectedStoreIds.length}
+            subtitle={selectedStoreIds.length === 0 ? "Sem recorte" : "Lojas selecionadas"}
+          />
+        </div>
+      </div>
 
-            <div>
-              <div className="text-xs font-semibold text-slate-600 mb-1">Fim</div>
-              <input
-                type="date"
-                value={rangeEnd}
-                onChange={(e) => {
-                  setRangePreset("custom");
-                  setRangeEnd(e.target.value);
-                }}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
-              />
-            </div>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <ChartCard
+          title="Distribuição por status no mês"
+          subtitle="Valor financeiro por status"
+        >
+          <SimpleBarChart
+            data={monthlyStatusChartData}
+            valueFormatter={(v) => money(v)}
+          />
+        </ChartCard>
 
-            <div className="md:col-span-2">
-              <div className="text-xs font-semibold text-slate-600 mb-1">Considerar pedidos</div>
-              <Select
-                value={rangeStatus}
-                onChange={(v) => setRangeStatus(v as any)}
-                options={[
-                  { value: "submitted_approved", label: "Em aberto (submitted/approved)" },
-                  { value: "all", label: "Todos os status (no período)" },
-                ]}
-              />
-            </div>
+        <ChartCard
+          title="Top lojas no mês"
+          subtitle="Ranking por valor movimentado"
+        >
+          {selectedStoreIds.length > 0 ? (
+            <EmptyState text="Com lojas específicas selecionadas, o ranking geral perde sentido. Limpe o filtro para ver o top lojas." />
+          ) : topStores.length === 0 ? (
+            <EmptyState text="Sem dados no período." />
+          ) : (
+            <SimpleBarChart
+              data={topStores.map((s): SimpleBarChartItem => ({
+                label: storeNameMap.get(s.store_id) ?? s.store_id,
+                value: s.total_value,
+                tone: "blue",
+              }))}
+              valueFormatter={(v) => money(v)}
+            />
+          )}
+        </ChartCard>
+      </div>
+
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Planejamento de compras"
+          subtitle="Entenda a demanda por período e por estágio logístico"
+        />
+
+        <div className="mt-6 grid gap-4 lg:grid-cols-6">
+          <Select
+            label="Período"
+            value={rangePreset}
+            onChange={(v) => setRangePreset(v as any)}
+            options={[
+              { value: "this_week", label: "Semana atual (seg-dom)" },
+              { value: "last_week", label: "Semana passada (seg-dom)" },
+              { value: "custom", label: "Personalizado" },
+            ]}
+          />
+
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Início</div>
+            <input
+              type="date"
+              value={rangeStart}
+              onChange={(e) => {
+                setRangePreset("custom");
+                setRangeStart(e.target.value);
+              }}
+              className="h-10 w-full rounded-[16px] border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none"
+            />
           </div>
 
-          <div className="grid gap-3 md:grid-cols-6">
-            <div className="md:col-span-3">
-              <div className="text-xs font-semibold text-slate-600 mb-1">Buscar item (nome, SKU ou unidade)</div>
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Fim</div>
+            <input
+              type="date"
+              value={rangeEnd}
+              onChange={(e) => {
+                setRangePreset("custom");
+                setRangeEnd(e.target.value);
+              }}
+              className="h-10 w-full rounded-[16px] border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none"
+            />
+          </div>
+
+          <Select
+            label="Demanda"
+            value={rangeDemandMode}
+            onChange={(v) => setRangeDemandMode(v as any)}
+            options={[
+              { value: "pending", label: "Somente pendente" },
+              { value: "delivered", label: "Somente entregue" },
+              { value: "all", label: "Tudo" },
+            ]}
+          />
+
+          <Select
+            label="Status do pedido"
+            value={rangeStatus}
+            onChange={(v) => setRangeStatus(v as any)}
+            options={[
+              { value: "submitted_approved", label: "submitted / approved" },
+              { value: "all", label: "Todos os status" },
+            ]}
+          />
+
+          <div className="flex items-end">
+            <PrimaryActionButton
+              onClick={() =>
+                loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus, rangeDemandMode)
+              }
+              disabled={rangeLoading || !rangeStart || !rangeEnd || rangeStart > rangeEnd}
+              fullWidth
+            >
+              Atualizar período
+            </PrimaryActionButton>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-4">
+          <div className="lg:col-span-2">
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Buscar item
+            </div>
+            <input
+              value={rangeQuery}
+              onChange={(e) => setRangeQuery(e.target.value)}
+              placeholder="Ex.: batata • B001 • cx"
+              className="h-10 w-full rounded-[16px] border border-slate-200 bg-white px-3 text-sm text-slate-800 shadow-sm outline-none"
+            />
+          </div>
+
+          <Select
+            label="Ordenar"
+            value={rangeSort}
+            onChange={(v) => setRangeSort(v as any)}
+            options={[
+              { value: "qty", label: "Maior qtd" },
+              { value: "name", label: "Nome" },
+              { value: "sku", label: "SKU" },
+            ]}
+          />
+
+          <div className="flex items-end">
+            <label className="flex h-10 w-full items-center justify-center gap-2 rounded-[16px] border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700">
               <input
-                value={rangeQuery}
-                onChange={(e) => setRangeQuery(e.target.value)}
-                placeholder="Ex.: batata • B001 • cx"
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
+                type="checkbox"
+                checked={rangeOnlyNonZero}
+                onChange={(e) => setRangeOnlyNonZero(e.target.checked)}
+                className="h-4 w-4"
               />
-            </div>
+              Só itens &gt; 0
+            </label>
+          </div>
+        </div>
 
-            <div className="md:col-span-1">
-              <div className="text-xs font-semibold text-slate-600 mb-1">Ordenar</div>
-              <Select
-                value={rangeSort}
-                onChange={(v) => setRangeSort(v as any)}
-                options={[
-                  { value: "qty", label: "Maior qtd" },
-                  { value: "name", label: "Nome" },
-                  { value: "sku", label: "SKU" },
-                ]}
+        {rangeMsg ? <div className="mt-4 text-sm text-red-600">{rangeMsg}</div> : null}
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SummaryBox title="Período" value={`${isoToBR(rangeStart)} → ${isoToBR(rangeEnd)}`} subtitle="Janela analisada" />
+          <SummaryBox title="Pedidos" value={rangeOrdersCount.toLocaleString("pt-BR")} subtitle={`Lojas: ${rangeStoresCount}`} />
+          <SummaryBox title="Itens diferentes" value={rangeKpis.itemsCount.toLocaleString("pt-BR")} subtitle="Com quantidade" />
+          <SummaryBox
+            title="Qtd total"
+            value={Number(rangeKpis.totalQty).toLocaleString("pt-BR")}
+            subtitle={
+              rangeDemandMode === "pending"
+                ? "Demanda pendente"
+                : rangeDemandMode === "delivered"
+                ? "Demanda entregue"
+                : "Demanda total"
+            }
+          />
+        </div>
+
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+          <ChartCard
+            title="Demanda por semana"
+            subtitle="Quantidade somada por semana"
+          >
+            {rangeLoading ? (
+              <div className="text-sm text-slate-600">Carregando...</div>
+            ) : (
+              <MiniColumnsChart data={weeklyDemand} />
+            )}
+          </ChartCard>
+
+          <ChartCard
+            title="Produtos com maior demanda"
+            subtitle="Top itens no período filtrado"
+          >
+            {rangeLoading ? (
+              <div className="text-sm text-slate-600">Carregando...</div>
+            ) : topDemandChart.length === 0 ? (
+              <EmptyState text="Sem itens no período." />
+            ) : (
+              <SimpleBarChart data={topDemandChart} />
+            )}
+          </ChartCard>
+        </div>
+
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+          <ChartCard
+            title="Heatmap / ranking de lojas"
+            subtitle="Lojas com maior demanda no período"
+          >
+            {rangeLoading ? (
+              <div className="text-sm text-slate-600">Carregando...</div>
+            ) : storeDemand.length === 0 ? (
+              <EmptyState text="Sem dados de lojas no período." />
+            ) : (
+              <HeatRows rows={storeDemand.slice(0, 10)} />
+            )}
+          </ChartCard>
+
+          <ChartCard
+            title="Curva ABC de produtos"
+            subtitle="Classificação por relevância de demanda"
+          >
+            {rangeLoading ? (
+              <div className="text-sm text-slate-600">Carregando...</div>
+            ) : abcRows.length === 0 ? (
+              <EmptyState text="Sem dados para curva ABC." />
+            ) : (
+              <Table
+                headers={["Item", "Qtd", "% Part.", "% Acum.", "Curva"]}
+                rows={abcRows.slice(0, 12).map((r) => [
+                  <div key={`${r.product_id}-name`} className="min-w-[240px]">
+                    <div className="font-semibold text-slate-900">{r.product_name}</div>
+                    <div className="text-xs text-slate-500">{r.sku ? `SKU: ${r.sku}` : ""}</div>
+                  </div>,
+                  <div key={`${r.product_id}-qty`} className="font-semibold text-slate-900">
+                    {Number(r.total_qty || 0).toLocaleString("pt-BR")}
+                  </div>,
+                  <div key={`${r.product_id}-share`} className="text-slate-700">
+                    {r.share_pct.toFixed(1)}%
+                  </div>,
+                  <div key={`${r.product_id}-cum`} className="text-slate-700">
+                    {r.cumulative_pct.toFixed(1)}%
+                  </div>,
+                  <Badge key={`${r.product_id}-curve`} tone={curveTone(r.curve)}>
+                    {r.curve}
+                  </Badge>,
+                ])}
               />
-            </div>
+            )}
+          </ChartCard>
+        </div>
 
-            <div className="md:col-span-1 flex items-end">
-              <label className="flex items-center gap-2 text-sm text-slate-700 select-none">
-                <input type="checkbox" checked={rangeOnlyNonZero} onChange={(e) => setRangeOnlyNonZero(e.target.checked)} className="h-4 w-4" />
-                Só itens &gt; 0
-              </label>
-            </div>
+        <div className="mt-6 rounded-[24px] border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+          Observação: o planejamento usa <b>submitted_at</b> como referência do período e o filtro de demanda usa a logística para separar pendente e entregue.
+        </div>
+      </div>
 
-            <div className="md:col-span-1 flex items-end justify-end">
-              <Button
-                variant="secondary"
-                onClick={() => loadPlanning(rangeStart, rangeEnd, selectedStoreIds, rangeStatus)}
-                disabled={rangeLoading || !rangeStart || !rangeEnd || rangeStart > rangeEnd}
-              >
-                Atualizar período
-              </Button>
-            </div>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Top itens do mês"
+            subtitle="Ranking por valor movimentado"
+          />
+
+          <div className="mt-6">
+            {topItems.length === 0 ? (
+              <EmptyState text="Sem itens no período." />
+            ) : (
+              <Table
+                headers={["Item", "Qtd", "Pedidos", "Valor"]}
+                rows={topItems.map((r) => [
+                  <div key={`${r.product_id}-name`} className="min-w-[260px]">
+                    <div className="font-semibold text-slate-900">{r.product_name}</div>
+                    <div className="text-xs text-slate-500">
+                      {r.sku ? `SKU: ${r.sku}` : ""}
+                      {r.unit ? ` • Un: ${r.unit}` : ""}
+                    </div>
+                  </div>,
+                  <div key={`${r.product_id}-qty`} className="text-slate-700">
+                    {Number(r.total_qty).toLocaleString("pt-BR")}
+                  </div>,
+                  <div key={`${r.product_id}-orders`} className="text-slate-700">
+                    {Number(r.orders).toLocaleString("pt-BR")}
+                  </div>,
+                  <div key={`${r.product_id}-value`} className="font-semibold text-slate-900">
+                    {money(r.total_value)}
+                  </div>,
+                ])}
+              />
+            )}
           </div>
+        </div>
 
-          {rangeMsg ? <div className="text-sm text-red-600">{rangeMsg}</div> : null}
+        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <SectionTitle
+            title="Status do mês"
+            subtitle="Quebra por loja e status"
+          />
 
-          <div className="grid gap-4 md:grid-cols-4">
-            <StatCard title="Período" value={`${isoToBR(rangeStart)} → ${isoToBR(rangeEnd)}`} subtitle="Planejamento" />
-            <StatCard title="Pedidos no período" value={rangeOrdersCount} subtitle={`Lojas: ${rangeStoresCount}`} />
-            <StatCard title="Itens diferentes" value={rangeKpis.itemsCount} subtitle="Com qtd > 0" />
-            <StatCard title="Qtd total (somada)" value={Number(rangeKpis.totalQty).toLocaleString("pt-BR")} subtitle="Somatório" />
+          <div className="mt-6">
+            {statusMonthly.length === 0 ? (
+              <EmptyState text="Sem dados no período." />
+            ) : (
+              <Table
+                headers={["Loja", "Status", "Pedidos", "Qtd Itens", "Valor"]}
+                rows={statusMonthly
+                  .slice()
+                  .sort((a, b) => (Number(b.total_value) || 0) - (Number(a.total_value) || 0))
+                  .map((r, idx) => [
+                    <div key={`lo-${idx}`} className="font-semibold text-slate-900">
+                      {storeNameMap.get(r.store_id) ?? r.store_id}
+                    </div>,
+                    <Badge key={`st-${idx}`} tone={statusTone(r.status)}>
+                      {r.status}
+                    </Badge>,
+                    <div key={`od-${idx}`} className="text-slate-700">
+                      {Number(r.orders_count || 0)}
+                    </div>,
+                    <div key={`qt-${idx}`} className="text-slate-700">
+                      {Number(r.total_qty || 0).toLocaleString("pt-BR")}
+                    </div>,
+                    <div key={`vl-${idx}`} className="font-semibold text-slate-900">
+                      {money(Number(r.total_value || 0))}
+                    </div>,
+                  ])}
+              />
+            )}
           </div>
+        </div>
+      </div>
 
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Previsão de compra para a próxima semana"
+          subtitle="Sugestão automática com base na demanda recente"
+        />
+
+        <div className="mt-6">
+          {forecastRows.length === 0 ? (
+            <EmptyState text="Sem dados suficientes para projeção." />
+          ) : (
+            <Table
+              headers={["Item", "Média semanal", "Última base", "Sugestão próxima semana", "Confiança"]}
+              rows={forecastRows.slice(0, 20).map((r) => [
+                <div key={`${r.product_id}-name`} className="min-w-[260px]">
+                  <div className="font-semibold text-slate-900">{r.product_name}</div>
+                  <div className="text-xs text-slate-500">
+                    {r.sku ? `SKU: ${r.sku}` : ""}
+                    {r.unit ? ` • Un: ${r.unit}` : ""}
+                  </div>
+                </div>,
+                <div key={`${r.product_id}-avg`} className="text-slate-700">
+                  {r.avg_weekly_qty.toFixed(1)}
+                </div>,
+                <div key={`${r.product_id}-last`} className="text-slate-700">
+                  {r.last_week_qty.toFixed(1)}
+                </div>,
+                <div key={`${r.product_id}-next`} className="font-semibold text-slate-900">
+                  {Number(r.suggested_next_week_qty || 0).toLocaleString("pt-BR")}
+                </div>,
+                <Badge key={`${r.product_id}-conf`} tone={confidenceTone(r.confidence)}>
+                  {r.confidence}
+                </Badge>,
+              ])}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Demanda detalhada de produtos"
+          subtitle="Base para compras, separação e programação do CD"
+          right={
+            <div className="flex items-center gap-2">
+              <Badge tone={rangeDemandMode === "pending" ? "yellow" : rangeDemandMode === "delivered" ? "green" : "blue"}>
+                {rangeDemandMode === "pending"
+                  ? "Pendente"
+                  : rangeDemandMode === "delivered"
+                  ? "Entregue"
+                  : "Tudo"}
+              </Badge>
+            </div>
+          }
+        />
+
+        <div className="mt-6">
           {rangeLoading ? (
             <div className="text-sm text-slate-600">Carregando planejamento...</div>
           ) : rangeAggFiltered.length === 0 ? (
-            <div className="text-sm text-slate-600">Sem itens para o período selecionado.</div>
+            <EmptyState text="Sem itens para o período selecionado." />
           ) : (
             <Table
               headers={["Item", "Un", "Qtd total", "Pedidos", "Lojas"]}
               rows={rangeAggFiltered.map((r) => [
                 <div key={`${r.product_id}-name`} className="min-w-[280px]">
                   <div className="font-semibold text-slate-900">{r.product_name}</div>
-                  <div className="text-xs text-slate-500">{r.sku ? `SKU: ${r.sku}` : ""}</div>
+                  <div className="text-xs text-slate-500">
+                    {r.sku ? `SKU: ${r.sku}` : ""}
+                  </div>
                 </div>,
                 <div key={`${r.product_id}-unit`} className="text-slate-700">
                   {r.unit || "-"}
@@ -778,86 +1605,8 @@ export default function AdmDashboardPage() {
               ])}
             />
           )}
-
-          <div className="text-xs text-slate-500">
-            Observação: este planejamento usa <span className="font-semibold">submitted_at</span>.
-          </div>
         </div>
-      </Card>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard title="Total (mês)" value={money(kpis.total)} subtitle={`Ref: ${monthYM}`} />
-        <StatCard title="Em aberto (por status)" value={money(kpis.emAberto)} subtitle="submitted/approved" />
-        <StatCard title="Qtd. pedidos (mês)" value={kpis.pedidos} subtitle="Somatório por status" />
       </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Top lojas (valor no mês)">
-          {selectedStoreIds.length > 0 ? (
-            <div className="text-sm text-slate-600">Com lojas selecionadas, o ranking perde sentido. Limpe o filtro para ver “Top lojas”.</div>
-          ) : topStores.length === 0 ? (
-            <div className="text-sm text-slate-600">Sem dados no período.</div>
-          ) : (
-            <div className="space-y-2">
-              {topStores.map((s) => (
-                <div key={s.store_id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2">
-                  <div className="text-sm text-slate-800">
-                    <span className="font-semibold text-slate-900">{storeNameMap.get(s.store_id) ?? s.store_id}</span>
-                  </div>
-                  <Badge tone="blue">{money(s.total_value)}</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        <Card title="Top itens (valor no mês)">
-          {topItems.length === 0 ? (
-            <div className="text-sm text-slate-600">Sem itens no período.</div>
-          ) : (
-            <Table
-              headers={["Item", "Qtd", "Pedidos", "Valor"]}
-              rows={topItems.map((r) => [
-                <div key={`${r.product_id}-name`} className="min-w-[260px]">
-                  <div className="font-semibold text-slate-900">{r.product_name}</div>
-                  <div className="text-xs text-slate-500">
-                    {r.sku ? `SKU: ${r.sku}` : ""} {r.unit ? ` • Un: ${r.unit}` : ""}
-                  </div>
-                </div>,
-                <div key={`${r.product_id}-qty`}>{Number(r.total_qty).toLocaleString("pt-BR")}</div>,
-                <div key={`${r.product_id}-orders`}>{Number(r.orders).toLocaleString("pt-BR")}</div>,
-                <div key={`${r.product_id}-value`} className="font-semibold">
-                  {money(r.total_value)}
-                </div>,
-              ])}
-            />
-          )}
-        </Card>
-      </div>
-
-      <Card title="Status do mês">
-        {statusMonthly.length === 0 ? (
-          <div className="text-sm text-slate-600">Sem dados no período.</div>
-        ) : (
-          <Table
-            headers={["Loja", "Status", "Pedidos", "Qtd Itens", "Valor"]}
-            rows={statusMonthly
-              .slice()
-              .sort((a, b) => (Number(b.total_value) || 0) - (Number(a.total_value) || 0))
-              .map((r, idx) => [
-                <div key={`lo-${idx}`} className="font-semibold text-slate-900">
-                  {storeNameMap.get(r.store_id) ?? r.store_id}
-                </div>,
-                <div key={`st-${idx}`}>{r.status}</div>,
-                <div key={`od-${idx}`}>{Number(r.orders_count || 0)}</div>,
-                <div key={`qt-${idx}`}>{Number(r.total_qty || 0).toLocaleString("pt-BR")}</div>,
-                <div key={`vl-${idx}`} className="font-semibold">
-                  {money(Number(r.total_value || 0))}
-                </div>,
-              ])}
-          />
-        )}
-      </Card>
     </div>
   );
 }

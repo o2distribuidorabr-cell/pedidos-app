@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import { PageHeader, Card, Button, Select, Badge, Table, Input } from "@/app/components/ui";
+import { PageHeader, Card, Button, Select, Badge, Table, Input, StatCard } from "@/app/components/ui";
 
 type StoreRow = { id: string; name: string | null };
 
@@ -237,6 +237,142 @@ function activeFilterCount(params: {
   if (params.withCreditFilter !== "all") n++;
   if (params.sortBy !== "created_desc") n++;
   return n;
+}
+
+function SectionBlock({
+  title,
+  subtitle,
+  right,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-900">{title}</div>
+          {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+        </div>
+        {right ? <div className="flex flex-wrap gap-2">{right}</div> : null}
+      </div>
+      <div className="mt-6">{children}</div>
+    </div>
+  );
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FilterChip({
+  children,
+  onClick,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-10 items-center justify-center rounded-[16px] border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
+    >
+      {children}
+    </button>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-[24px] border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-600">
+      {text}
+    </div>
+  );
+}
+
+function AlertPanel({
+  tone,
+  title,
+  value,
+  subtitle,
+}: {
+  tone: "red" | "yellow" | "green" | "blue";
+  title: string;
+  value: React.ReactNode;
+  subtitle?: string;
+}) {
+  const styles =
+    tone === "red"
+      ? "border-red-200 bg-red-50"
+      : tone === "yellow"
+      ? "border-amber-200 bg-amber-50"
+      : tone === "green"
+      ? "border-emerald-200 bg-emerald-50"
+      : "border-cyan-200 bg-cyan-50";
+
+  return (
+    <div className={`rounded-[24px] border p-4 ${styles}`}>
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+      <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
+      {subtitle ? <div className="mt-1 text-xs text-slate-600">{subtitle}</div> : null}
+    </div>
+  );
 }
 
 export default function AdmFinanceiroPage() {
@@ -577,6 +713,7 @@ export default function AdmFinanceiroPage() {
 
       return {
         id: o.id,
+
         store_id: o.store_id,
         store_name: storeMap.get(o.store_id) ?? o.store_id,
 
@@ -682,7 +819,22 @@ export default function AdmFinanceiroPage() {
     const qtdVencidos = rows.filter((r) => r.is_overdue).length;
     const qtdAVencer = rows.filter((r) => r.is_due_soon).length;
 
-    return { totalMercadoria, totalFrete, totalTotal, totalCredito, totalApagar, totalPago, totalAberto, qtdVencidos, qtdAVencer };
+    const valorVencido = rows.filter((r) => r.is_overdue).reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
+    const valorAVencer = rows.filter((r) => r.is_due_soon).reduce((a, r) => a + (!r.is_paid ? r.a_pagar_exib : 0), 0);
+
+    return {
+      totalMercadoria,
+      totalFrete,
+      totalTotal,
+      totalCredito,
+      totalApagar,
+      totalPago,
+      totalAberto,
+      qtdVencidos,
+      qtdAVencer,
+      valorVencido,
+      valorAVencer,
+    };
   }, [rows]);
 
   const storeFilteredList = useMemo(() => {
@@ -694,7 +846,22 @@ export default function AdmFinanceiroPage() {
 
   const columns = useMemo(() => {
     const baseCompact = ["Pedido", "Loja", "Operação", "Vencimento", "Forma", "Total", "A pagar", "Pago?"];
-    const baseFull = ["Pedido", "Loja", "Operação", "Entrega", "Vencimento", "Forma", "Mercadoria", "Frete", "Total", "Crédito", "A pagar", "Pago?", "Data pagamento", "Saldo crédito"];
+    const baseFull = [
+      "Pedido",
+      "Loja",
+      "Operação",
+      "Entrega",
+      "Vencimento",
+      "Forma",
+      "Mercadoria",
+      "Frete",
+      "Total",
+      "Crédito",
+      "A pagar",
+      "Pago?",
+      "Data pagamento",
+      "Saldo crédito",
+    ];
     return viewMode === "compact" ? baseCompact : baseFull;
   }, [viewMode]);
 
@@ -799,32 +966,61 @@ export default function AdmFinanceiroPage() {
     <div className="space-y-6">
       <PageHeader
         title="Financeiro"
-        subtitle="Resumo de pedidos, crédito e pagamentos."
+        subtitle="Visão administrativa de cobranças, pagamentos, vencimentos e crédito."
         right={
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => router.push("/adm/pedidos")}>Pedidos</Button>
-            <Button variant="secondary" onClick={onApply} disabled={loading}>Recarregar</Button>
+            <SecondaryActionButton onClick={() => router.push("/adm/pedidos")}>
+              Pedidos
+            </SecondaryActionButton>
+            <SecondaryActionButton onClick={onApply} disabled={loading}>
+              Recarregar
+            </SecondaryActionButton>
           </div>
         }
       />
 
-      {msg ? <Card><div className="text-sm text-red-600">{msg}</div></Card> : null}
+      {msg ? (
+        <Card>
+          <div className="text-sm text-red-600">{msg}</div>
+        </Card>
+      ) : null}
 
-      <Card
+      <div className="grid gap-4 xl:grid-cols-3">
+        <AlertPanel
+          tone="red"
+          title="Vencidos"
+          value={resumo.qtdVencidos}
+          subtitle={`${money(resumo.valorVencido)} em aberto`}
+        />
+        <AlertPanel
+          tone="yellow"
+          title="A vencer"
+          value={resumo.qtdAVencer}
+          subtitle={`${money(resumo.valorAVencer)} próximos 3 dias`}
+        />
+        <AlertPanel
+          tone="blue"
+          title="Em aberto"
+          value={money(resumo.totalAberto)}
+          subtitle="Total exibido no filtro"
+        />
+      </div>
+
+      <SectionBlock
         title="Configurações de cobrança"
-        subtitle="Define os encargos automáticos após o vencimento."
+        subtitle="Essas regras afetam o valor exibido após vencimento e o provedor PIX ativo."
         right={
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={loadFinanceSettings} disabled={settingsLoading || settingsSaving}>
+          <>
+            <SecondaryActionButton onClick={loadFinanceSettings} disabled={settingsLoading || settingsSaving}>
               {settingsLoading ? "Carregando..." : "Recarregar"}
-            </Button>
-            <Button onClick={saveFinanceSettings} disabled={settingsLoading || settingsSaving}>
+            </SecondaryActionButton>
+            <PrimaryActionButton onClick={saveFinanceSettings} disabled={settingsLoading || settingsSaving}>
               {settingsSaving ? "Salvando..." : "Salvar"}
-            </Button>
-          </div>
+            </PrimaryActionButton>
+          </>
         }
       >
-        <div className="grid gap-3 md:grid-cols-6">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Select
             label="Provedor PIX ativo"
             value={pixProvider}
@@ -837,7 +1033,7 @@ export default function AdmFinanceiroPage() {
           />
 
           <Select
-            label="Aplicar multa/juros após vencimento?"
+            label="Aplicar multa/juros?"
             value={applyLateCharges ? "true" : "false"}
             onChange={(v) => setApplyLateCharges(v === "true")}
             options={[
@@ -845,47 +1041,73 @@ export default function AdmFinanceiroPage() {
               { value: "false", label: "Não" },
             ]}
           />
-          <Input label="Multa (% uma vez)" value={lateFeePercent} onChange={setLateFeePercent} placeholder="Ex.: 2" />
-          <Input label="Juros (% ao dia)" value={dailyInterestPercent} onChange={setDailyInterestPercent} placeholder="Ex.: 0,033" />
 
-          <div className="md:col-span-6 text-xs text-slate-500">
-            <b>Provedor PIX ativo:</b> define qual API vai gerar os próximos QR Codes quando o franqueado clicar em “Pagar com PIX”.
-            <br />
-            Cálculo (somente pedidos <b>em aberto</b> e <b>vencidos</b>): multa = A pagar × (%/100) (uma vez) • juros = A pagar × (%/100) × dias em atraso.
-            <br />
-            <b>Pago:</b> o sistema mostra o valor real pago (campo <code>orders.paid_amount</code> vindo do Mercado Pago).
+          <Input
+            label="Multa (% uma vez)"
+            value={lateFeePercent}
+            onChange={setLateFeePercent}
+            placeholder="Ex.: 2"
+          />
+
+          <Input
+            label="Juros (% ao dia)"
+            value={dailyInterestPercent}
+            onChange={setDailyInterestPercent}
+            placeholder="Ex.: 0,033"
+          />
+        </div>
+
+        <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-600">
+          <div>
+            <b>Provedor PIX ativo:</b> define qual integração será usada nos próximos QR Codes gerados pelo portal do franqueado.
+          </div>
+          <div>
+            <b>Cálculo:</b> multa = A pagar × (%/100) uma vez • juros = A pagar × (%/100) × dias em atraso.
+          </div>
+          <div>
+            <b>Pago:</b> quando existir <code>orders.paid_amount</code>, o sistema mostra o valor efetivamente pago.
+          </div>
+          <div>
+            <b>Chave PIX:</b> o campo segue preservado na tabela, mas esta tela continua sem alterar a lógica operacional de geração.
           </div>
         </div>
-      </Card>
+      </SectionBlock>
 
-      <Card
+      <SectionBlock
         title="Filtros"
         subtitle={filtrosAtivos === 0 ? "Nenhum filtro ativo." : `${filtrosAtivos} filtro(s) ativo(s).`}
         right={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" onClick={resetAllFilters} disabled={loading}>
+          <>
+            <SecondaryActionButton onClick={resetAllFilters} disabled={loading}>
               Limpar filtros
-            </Button>
-            <Button onClick={onApply} disabled={loading}>
+            </SecondaryActionButton>
+            <PrimaryActionButton onClick={onApply} disabled={loading}>
               {loading ? "Aplicando..." : "Aplicar filtros"}
-            </Button>
-          </div>
+            </PrimaryActionButton>
+          </>
         }
       >
         <div className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-6">
-            <div className="relative md:col-span-2" ref={popRef}>
-              <div className="text-xs font-semibold text-slate-600 mb-1">Loja</div>
-              <Button variant="secondary" onClick={() => setStorePopoverOpen((v) => !v)} disabled={loading} className="w-full justify-between">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="relative" ref={popRef}>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Lojas</div>
+              <button
+                type="button"
+                onClick={() => setStorePopoverOpen((v) => !v)}
+                disabled={loading}
+                className="flex h-10 w-full items-center justify-between rounded-[16px] border border-slate-200 bg-white px-3 text-left text-sm text-slate-800 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              >
                 <span className="truncate">{storeButtonLabel()}</span>
                 <span className="ml-2 text-slate-500">{storePopoverOpen ? "▲" : "▼"}</span>
-              </Button>
+              </button>
 
               {storePopoverOpen ? (
-                <div className="absolute z-50 mt-2 w-[360px] max-w-[90vw] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+                <div className="absolute z-50 mt-2 w-[360px] max-w-[90vw] rounded-[24px] border border-slate-200 bg-white p-3 shadow-xl">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-sm font-semibold text-slate-900">Selecionar lojas</div>
-                    <Button variant="secondary" onClick={() => setStorePopoverOpen(false)}>Fechar</Button>
+                    <SecondaryActionButton onClick={() => setStorePopoverOpen(false)}>
+                      Fechar
+                    </SecondaryActionButton>
                   </div>
 
                   <div className="mt-3">
@@ -893,13 +1115,18 @@ export default function AdmFinanceiroPage() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button variant="secondary" onClick={clearStores} disabled={loading}>Todas</Button>
-                    <Button variant="secondary" onClick={() => selectOnlyVisible(storeFilteredList)} disabled={loading || storeFilteredList.length === 0}>
+                    <SecondaryActionButton onClick={clearStores} disabled={loading}>
+                      Todas
+                    </SecondaryActionButton>
+                    <SecondaryActionButton
+                      onClick={() => selectOnlyVisible(storeFilteredList)}
+                      disabled={loading || storeFilteredList.length === 0}
+                    >
                       Selecionar filtradas
-                    </Button>
+                    </SecondaryActionButton>
                   </div>
 
-                  <div className="mt-3 max-h-64 overflow-auto rounded-xl border border-slate-200">
+                  <div className="mt-3 max-h-64 overflow-auto rounded-[18px] border border-slate-200">
                     {storeFilteredList.length === 0 ? (
                       <div className="p-3 text-sm text-slate-500">Nenhuma loja encontrada.</div>
                     ) : (
@@ -910,8 +1137,8 @@ export default function AdmFinanceiroPage() {
                             <label key={s.id} className="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-slate-50">
                               <input type="checkbox" checked={checked} onChange={() => toggleStore(s.id)} />
                               <div className="min-w-0">
-                                <div className="text-sm font-semibold text-slate-900 truncate">{s.name ?? s.id}</div>
-                                <div className="text-xs font-mono text-slate-500 truncate">{s.id}</div>
+                                <div className="truncate text-sm font-semibold text-slate-900">{s.name ?? s.id}</div>
+                                <div className="truncate font-mono text-xs text-slate-500">{s.id}</div>
                               </div>
                             </label>
                           );
@@ -923,14 +1150,12 @@ export default function AdmFinanceiroPage() {
               ) : null}
             </div>
 
-            <div className="md:col-span-2">
-              <Input
-                label="Buscar pedido ou loja"
-                value={searchTerm}
-                onChange={setSearchTerm}
-                placeholder="Ex.: ID do pedido ou nome da unidade"
-              />
-            </div>
+            <Input
+              label="Buscar pedido ou loja"
+              value={searchTerm}
+              onChange={setSearchTerm}
+              placeholder="Ex.: ID do pedido ou nome da unidade"
+            />
 
             <Select
               label="Situação financeira"
@@ -956,7 +1181,7 @@ export default function AdmFinanceiroPage() {
             />
           </div>
 
-          <div className="grid gap-3 md:grid-cols-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
             <Select
               label="Status do pedido"
               value={statusFilter}
@@ -1035,7 +1260,7 @@ export default function AdmFinanceiroPage() {
             />
           </div>
 
-          <div className="grid gap-3 md:grid-cols-6">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
             <Input label="Criado de" type="date" value={dateFrom} onChange={setDateFrom} />
             <Input label="Criado até" type="date" value={dateTo} onChange={setDateTo} />
             <Input label="Vencimento de" type="date" value={dueFrom} onChange={setDueFrom} />
@@ -1045,8 +1270,7 @@ export default function AdmFinanceiroPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 const hoje = ymdToday();
                 setDateFrom(hoje);
@@ -1054,135 +1278,106 @@ export default function AdmFinanceiroPage() {
               }}
             >
               Criados hoje
-            </Button>
+            </FilterChip>
 
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 setDateFrom(addDaysYMD(-7));
                 setDateTo(ymdToday());
               }}
             >
               Últimos 7 dias
-            </Button>
+            </FilterChip>
 
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 setDateFrom(addDaysYMD(-30));
                 setDateTo(ymdToday());
               }}
             >
               Últimos 30 dias
-            </Button>
+            </FilterChip>
 
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 setDueFilter("overdue");
                 setPaidFilter("unpaid");
               }}
             >
               Em aberto vencidos
-            </Button>
+            </FilterChip>
 
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 setDueFilter("due_soon");
                 setPaidFilter("unpaid");
               }}
             >
               A vencer
-            </Button>
+            </FilterChip>
 
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 setPaidFilter("paid");
               }}
             >
               Somente pagos
-            </Button>
+            </FilterChip>
 
-            <Button
-              variant="secondary"
+            <FilterChip
               onClick={() => {
                 setPaidFilter("unpaid");
               }}
             >
               Somente em aberto
-            </Button>
+            </FilterChip>
           </div>
         </div>
-      </Card>
+      </SectionBlock>
 
-      <Card title="Resumo">
-        <div className="grid gap-3 md:grid-cols-4">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Mercadoria</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalMercadoria)}</div>
+      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <div className="text-sm font-semibold text-slate-900">Resumo financeiro</div>
+            <div className="mt-1 text-sm text-slate-600">Valores consolidados considerando os filtros aplicados.</div>
           </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Frete</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalFrete)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold text-slate-500">Total</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.totalTotal)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold text-slate-500">Crédito abatido</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">- {money(resumo.totalCredito)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold text-slate-500">A pagar (exibido)</div>
-            <div className="mt-1 text-xl font-semibold text-slate-900">{money(resumo.totalApagar)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Pago</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalPago)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Em aberto</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{money(resumo.totalAberto)}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Qtd. vencidos</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{resumo.qtdVencidos}</div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold text-slate-500">Qtd. a vencer</div>
-            <div className="mt-1 text-lg font-semibold text-slate-900">{resumo.qtdAVencer}</div>
+          <div className="flex flex-wrap gap-2">
+            <SecondaryActionButton onClick={() => setViewMode((v) => (v === "compact" ? "full" : "compact"))}>
+              {viewMode === "compact" ? "Ver completo" : "Ver compacto"}
+            </SecondaryActionButton>
           </div>
         </div>
-      </Card>
 
-      <Card
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <StatCard label="Mercadoria" value={money(resumo.totalMercadoria)} />
+          <StatCard label="Frete" value={money(resumo.totalFrete)} />
+          <StatCard label="Total" value={money(resumo.totalTotal)} />
+          <StatCard label="Crédito abatido" value={`- ${money(resumo.totalCredito)}`} />
+          <StatCard label="A pagar (exibido)" value={money(resumo.totalApagar)} />
+          <StatCard label="Pago" value={money(resumo.totalPago)} />
+          <StatCard label="Em aberto" value={money(resumo.totalAberto)} />
+          <StatCard label="Qtd. vencidos" value={resumo.qtdVencidos} />
+          <StatCard label="Qtd. a vencer" value={resumo.qtdAVencer} />
+          <StatCard label="Valor vencido" value={money(resumo.valorVencido)} />
+        </div>
+      </div>
+
+      <SectionBlock
         title="Pedidos no financeiro"
         subtitle={`${rows.length} registro(s) • ${viewMode === "compact" ? "visualização compacta" : "visualização completa"}`}
-        right={
-          <Button variant="secondary" onClick={() => setViewMode((v) => (v === "compact" ? "full" : "compact"))}>
-            {viewMode === "compact" ? "Ver completo" : "Ver compacto"}
-          </Button>
-        }
       >
         {loading ? (
-          <div>Carregando...</div>
+          <div className="text-sm text-slate-600">Carregando...</div>
         ) : rows.length === 0 ? (
-          <div className="text-sm text-slate-600">Nenhum dado encontrado.</div>
+          <EmptyState text="Nenhum dado encontrado com os filtros atuais." />
         ) : (
-          <Table headers={columns} rows={tableRows} onRowClick={(idx) => router.push(`/adm/pedidos/${rows[idx].id}`)} />
+          <Table
+            headers={columns}
+            rows={tableRows}
+            onRowClick={(idx) => router.push(`/adm/pedidos/${rows[idx].id}`)}
+          />
         )}
-      </Card>
+      </SectionBlock>
     </div>
   );
 }

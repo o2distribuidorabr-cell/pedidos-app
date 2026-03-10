@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 
-import { PageHeader, Card, Button, Input, Select, Badge } from "@/app/components/ui";
+import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/components/ui";
 
 type StoreRow = { id: string; name: string };
 
@@ -40,6 +40,101 @@ function toneByStatus(s: SignupRow["status"]) {
   if (s === "approved") return "green" as const;
   if (s === "rejected") return "red" as const;
   return "yellow" as const;
+}
+
+function PrimaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
+        "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+  danger,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        danger
+          ? "border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+          : "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SectionTitle({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      </div>
+      {right ? <div>{right}</div> : null}
+    </div>
+  );
+}
+
+function InfoPair({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-sm text-slate-500">{label}</span>
+      <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+    </div>
+  );
 }
 
 export default function AdmCadastrosPage() {
@@ -81,7 +176,6 @@ export default function AdmCadastrosPage() {
   }
 
   async function bootstrap() {
-    // loading já começa como true no useState, então não precisamos setar aqui (evita lint react-hooks/set-state-in-effect)
     const ok = await requireAdminOrRedirect(router);
     if (!ok) return;
 
@@ -114,7 +208,15 @@ export default function AdmCadastrosPage() {
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
 
       if (qq) {
-        const blob = [r.email, r.franchisee_name, r.store_name, r.cnpj ?? "", r.city ?? "", r.state ?? "", r.user_id]
+        const blob = [
+          r.email,
+          r.franchisee_name,
+          r.store_name,
+          r.cnpj ?? "",
+          r.city ?? "",
+          r.state ?? "",
+          r.user_id,
+        ]
           .join(" ")
           .toLowerCase();
 
@@ -124,6 +226,15 @@ export default function AdmCadastrosPage() {
       return true;
     });
   }, [requests, q, statusFilter]);
+
+  const summary = useMemo(() => {
+    return {
+      pending: requests.filter((r) => r.status === "pending").length,
+      approved: requests.filter((r) => r.status === "approved").length,
+      rejected: requests.filter((r) => r.status === "rejected").length,
+      total: requests.length,
+    };
+  }, [requests]);
 
   async function approveRequest(r: SignupRow) {
     setMsg("");
@@ -138,7 +249,6 @@ export default function AdmCadastrosPage() {
     const adminId = auth?.user?.id;
     if (!adminId) return router.push("/login");
 
-    // 1) aprova no profiles
     const { error: pErr } = await supabase
       .from("profiles")
       .update({
@@ -153,7 +263,6 @@ export default function AdmCadastrosPage() {
       return;
     }
 
-    // 2) marca request como approved
     const { error: rErr } = await supabase
       .from("signup_requests")
       .update({
@@ -192,8 +301,10 @@ export default function AdmCadastrosPage() {
       return;
     }
 
-    // opcional: manter approved=false no profile
-    await supabase.from("profiles").update({ approved: false, role: "pending", store_id: null }).eq("id", r.user_id);
+    await supabase
+      .from("profiles")
+      .update({ approved: false, role: "pending", store_id: null })
+      .eq("id", r.user_id);
 
     await loadRequests();
   }
@@ -203,16 +314,36 @@ export default function AdmCadastrosPage() {
       <PageHeader
         title="Cadastros"
         subtitle="Aprovar ou rejeitar solicitações de franqueados"
-        right={
-          <Button variant="secondary" onClick={loadRequests}>
-            Atualizar
-          </Button>
-        }
+        right={<SecondaryActionButton onClick={loadRequests}>Atualizar</SecondaryActionButton>}
       />
 
-      <Card>
-        <div className="grid gap-3 md:grid-cols-2">
-          <Input label="Buscar" placeholder="Email, nome, loja ou CNPJ" value={q} onChange={setQ} />
+      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Visão geral"
+          subtitle="Resumo das solicitações recebidas"
+        />
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard label="Pendentes" value={summary.pending} />
+          <StatCard label="Aprovados" value={summary.approved} />
+          <StatCard label="Rejeitados" value={summary.rejected} />
+          <StatCard label="Total" value={summary.total} />
+        </div>
+      </div>
+
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="Filtros"
+          subtitle="Refine rapidamente as solicitações"
+        />
+
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <Input
+            label="Buscar"
+            placeholder="Email, nome, loja ou CNPJ"
+            value={q}
+            onChange={setQ}
+          />
 
           <Select
             label="Status"
@@ -226,86 +357,105 @@ export default function AdmCadastrosPage() {
             ]}
           />
         </div>
-      </Card>
+      </div>
 
-      {msg && (
+      {msg ? (
         <Card>
           <div className="text-sm text-red-600">{msg}</div>
         </Card>
-      )}
+      ) : null}
 
-      <div className="space-y-4">
-        {loading && <Card>Carregando...</Card>}
+      {loading ? (
+        <Card>
+          <div className="text-sm text-slate-600">Carregando...</div>
+        </Card>
+      ) : null}
 
-        {!loading && filtered.length === 0 && <Card>Nenhuma solicitação encontrada.</Card>}
+      {!loading && filtered.length === 0 ? (
+        <Card>
+          <div className="text-sm text-slate-600">Nenhuma solicitação encontrada.</div>
+        </Card>
+      ) : null}
 
-        {filtered.map((r) => {
-          const isPending = r.status === "pending";
+      {!loading && filtered.length > 0 ? (
+        <div className="grid gap-4 2xl:grid-cols-2">
+          {filtered.map((r) => {
+            const isPending = r.status === "pending";
 
-          return (
-            <Card key={r.id} className="p-0">
-              {/* Header (título + badge) */}
-              <div className="border-b border-slate-200 px-4 py-3 md:px-6">
+            return (
+              <div
+                key={r.id}
+                className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900">
-                      {r.franchisee_name} — {r.email}
+                    <div className="truncate text-base font-semibold text-slate-900">
+                      {r.franchisee_name}
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-600">Criado em {fmtDT(r.created_at)}</div>
+                    <div className="mt-1 text-sm text-slate-600 break-all">{r.email}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Badge tone={toneByStatus(r.status)}>{r.status}</Badge>
+                    </div>
                   </div>
 
-                  <Badge tone={toneByStatus(r.status)}>{r.status}</Badge>
-                </div>
-              </div>
-
-              {/* Body */}
-              <div className="p-4 md:p-6">
-                <div className="grid gap-4 md:grid-cols-[1fr_320px]">
-                  <div className="space-y-1 text-sm text-slate-700">
-                    <div>
-                      <b>Loja solicitada:</b> {r.store_name}
+                  <div className="shrink-0 text-right">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Criado em
                     </div>
-                    <div>
-                      <b>Cidade:</b> {r.city ?? "-"} {r.state ?? ""}
-                    </div>
-                    <div>
-                      <b>CNPJ:</b> {r.cnpj ?? "-"}
-                    </div>
-                    <div>
-                      <b>Telefone:</b> {r.phone ?? "-"}
-                    </div>
-                    <div className="text-xs text-slate-500">user_id: {r.user_id}</div>
-
-                    {r.decided_at ? <div className="text-xs text-slate-500">Decidido em: {fmtDT(r.decided_at)}</div> : null}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Select
-                      label="Vincular loja"
-                      value={storePick[r.id] ?? ""}
-                      onChange={(v) => setStorePick((p) => ({ ...p, [r.id]: v }))}
-                      options={[
-                        { value: "", label: "Selecione..." },
-                        ...stores.map((s) => ({ value: s.id, label: s.name })),
-                      ]}
-                    />
-
-                    <div className="flex justify-end gap-2">
-                      <Button variant="danger" disabled={!isPending} onClick={() => rejectRequest(r)}>
-                        Rejeitar
-                      </Button>
-
-                      <Button disabled={!isPending} onClick={() => approveRequest(r)}>
-                        Aprovar
-                      </Button>
+                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                      {fmtDT(r.created_at)}
                     </div>
                   </div>
                 </div>
+
+                <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                  <div className="space-y-3">
+                    <InfoPair label="Loja solicitada" value={r.store_name} />
+                    <InfoPair label="Cidade / UF" value={`${r.city ?? "-"} ${r.state ?? ""}`.trim()} />
+                    <InfoPair label="CNPJ" value={r.cnpj ?? "-"} />
+                    <InfoPair label="Telefone" value={r.phone ?? "-"} />
+                    <InfoPair label="User ID" value={<span className="break-all font-mono text-xs">{r.user_id}</span>} />
+                    {r.decided_at ? (
+                      <InfoPair label="Decidido em" value={fmtDT(r.decided_at)} />
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3">
+                  <Select
+                    label="Vincular loja"
+                    value={storePick[r.id] ?? ""}
+                    onChange={(v) => setStorePick((p) => ({ ...p, [r.id]: v }))}
+                    options={[
+                      { value: "", label: "Selecione..." },
+                      ...stores.map((s) => ({ value: s.id, label: s.name })),
+                    ]}
+                  />
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <SecondaryActionButton
+                      danger
+                      disabled={!isPending}
+                      onClick={() => rejectRequest(r)}
+                      fullWidth
+                    >
+                      Rejeitar
+                    </SecondaryActionButton>
+
+                    <PrimaryActionButton
+                      disabled={!isPending}
+                      onClick={() => approveRequest(r)}
+                      fullWidth
+                    >
+                      Aprovar
+                    </PrimaryActionButton>
+                  </div>
+                </div>
               </div>
-            </Card>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
