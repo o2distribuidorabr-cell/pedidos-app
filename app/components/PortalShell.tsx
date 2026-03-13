@@ -353,6 +353,22 @@ export default function PortalShell({
     }
   }, [permissionReady, pathname, mode, isVerifiedAdmin, adminPermissions, router]);
 
+  useEffect(() => {
+    if (!mobileMenuOpen) {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+      return;
+    }
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = "";
+      document.documentElement.style.overflow = "";
+    };
+  }, [mobileMenuOpen]);
+
   const isAdminMode = mode === "admin";
   const badge = useMemo(() => initialsFrom(userEmail === "-" ? "U" : userEmail), [userEmail]);
 
@@ -409,9 +425,12 @@ export default function PortalShell({
   const collapsed = sidebarState === "collapsed";
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-slate-50 overflow-x-hidden">
       {mobileMenuOpen ? (
-        <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={() => setMobileMenuOpen(false)} />
+        <div
+          className="fixed inset-0 z-40 bg-black/30 md:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
       ) : null}
 
       <div className="flex">
@@ -477,39 +496,47 @@ export default function PortalShell({
 
         <aside
           className={[
-            "fixed left-0 top-0 z-50 h-full w-80 bg-white border-r border-slate-200 p-6 md:hidden transition-transform duration-200",
-            mobileMenuOpen ? "translate-x-0" : "-translate-x-full",
+            "fixed inset-y-0 left-0 z-50 w-80 max-w-[88vw] border-r border-slate-200 bg-white md:hidden transition-transform duration-200",
+            mobileMenuOpen ? "translate-x-0 pointer-events-auto" : "-translate-x-full pointer-events-none",
           ].join(" ")}
+          aria-hidden={!mobileMenuOpen}
         >
-          <div className="flex items-center justify-between">
-            <BrandMark isAdmin={isAdminMode} />
-            <TopButton onClick={() => setMobileMenuOpen(false)} title="Fechar">
-              <CloseIcon />
-            </TopButton>
-          </div>
-
-          <div className="mt-8">
-            <div className="px-1 pb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-              Menu
+          <div className="flex h-full min-h-0 flex-col overflow-y-auto overscroll-contain px-6 py-6 [-webkit-overflow-scrolling:touch] touch-pan-y">
+            <div className="flex items-center justify-between">
+              <BrandMark isAdmin={isAdminMode} />
+              <TopButton onClick={() => setMobileMenuOpen(false)} title="Fechar">
+                <CloseIcon />
+              </TopButton>
             </div>
-            <div className="space-y-2">
-              {items.map((it) => (
-                <NavItem key={it.href} href={it.href} label={it.label} onNavigate={() => setMobileMenuOpen(false)} />
-              ))}
-            </div>
-          </div>
 
-          <div className="mt-auto pt-6">
-            <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portal</div>
-              <div className="mt-2 text-sm font-semibold text-slate-900">
-                {isAdminMode ? "Administrador" : "Franqueado"}
+            <div className="mt-8 shrink-0">
+              <div className="px-1 pb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Menu
               </div>
-              {!isAdminMode ? (
-                <div className="mt-1 text-xs text-slate-500 truncate">{loading ? "..." : storeName}</div>
-              ) : (
-                <div className="mt-1 text-xs text-slate-500">Área administrativa</div>
-              )}
+              <div className="space-y-2">
+                {items.map((it) => (
+                  <NavItem
+                    key={it.href}
+                    href={it.href}
+                    label={it.label}
+                    onNavigate={() => setMobileMenuOpen(false)}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-auto pt-6 shrink-0">
+              <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portal</div>
+                <div className="mt-2 text-sm font-semibold text-slate-900">
+                  {isAdminMode ? "Administrador" : "Franqueado"}
+                </div>
+                {!isAdminMode ? (
+                  <div className="mt-1 text-xs text-slate-500 truncate">{loading ? "..." : storeName}</div>
+                ) : (
+                  <div className="mt-1 text-xs text-slate-500">Área administrativa</div>
+                )}
+              </div>
             </div>
           </div>
         </aside>
@@ -519,12 +546,7 @@ export default function PortalShell({
             <div className="flex items-center justify-between gap-3 px-4 py-4 md:px-8">
               <div className="flex min-w-0 items-center gap-3">
                 <TopButton onClick={() => setMobileMenuOpen(true)} title="Abrir menu">
-                  <div className="md:hidden">
-                    <MenuIcon />
-                  </div>
-                  <div className="hidden md:block">
-                    <MenuIcon />
-                  </div>
+                  <MenuIcon />
                 </TopButton>
 
                 <div className="md:hidden">
@@ -612,7 +634,7 @@ export default function PortalShell({
           </header>
 
           <main className="px-4 py-6 md:px-8 md:py-8">
-            <div className="rounded-[30px] border border-slate-200 bg-white shadow-sm">
+            <div className="rounded-[30px] border border-slate-200 bg-white shadow-sm overflow-hidden">
               <div className="p-4 md:p-6">{children}</div>
             </div>
           </main>
