@@ -5,9 +5,26 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import BrandMark from "./BrandMark";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  clonePermissions,
+  EMPTY_ADMIN_PERMISSIONS,
+  FULL_ADMIN_PERMISSIONS,
+  type AdminPermissions,
+} from "@/lib/adminPermissions";
 
 type Mode = "franchisee" | "admin" | null;
 type SidebarState = "expanded" | "collapsed";
+
+type AdminMenuItem = {
+  label: string;
+  href: string;
+  allowed: (permissions: AdminPermissions) => boolean;
+};
+
+type RoutePermissionRule = {
+  prefix: string;
+  permission: keyof AdminPermissions;
+};
 
 function initialsFrom(s: string) {
   const v = (s || "").trim();
@@ -19,13 +36,7 @@ function initialsFrom(s: string) {
 
 function Chevron({ dir }: { dir: "left" | "right" }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="h-4 w-4"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth="2">
       {dir === "left" ? (
         <path d="M15 18l-6-6 6-6" strokeLinecap="round" strokeLinejoin="round" />
       ) : (
@@ -37,13 +48,7 @@ function Chevron({ dir }: { dir: "left" | "right" }) {
 
 function MenuIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="h-5 w-5"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2">
       <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
     </svg>
   );
@@ -51,13 +56,7 @@ function MenuIcon() {
 
 function CloseIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="h-5 w-5"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
+    <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2">
       <path d="M6 6l12 12M18 6l-12 12" strokeLinecap="round" />
     </svg>
   );
@@ -65,13 +64,7 @@ function CloseIcon() {
 
 function LogoutIcon() {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="h-4 w-4"
-      stroke="currentColor"
-      strokeWidth="2"
-    >
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" stroke="currentColor" strokeWidth="2">
       <path d="M15 3h3a2 2 0 012 2v14a2 2 0 01-2 2h-3" strokeLinecap="round" />
       <path d="M10 17l5-5-5-5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M15 12H3" strokeLinecap="round" />
@@ -138,6 +131,37 @@ function TopButton({
   );
 }
 
+const routePermissionMap: RoutePermissionRule[] = [
+  { prefix: "/adm/usuarios", permission: "can_users" },
+  { prefix: "/adm/expedicao/mapa-separacao", permission: "can_separation_map" },
+  { prefix: "/adm/expedicao", permission: "can_expedition" },
+  { prefix: "/adm/emissao-fiscal", permission: "can_fiscal_issue" },
+  { prefix: "/adm/fiscal-produtos", permission: "can_fiscal_products" },
+  { prefix: "/adm/regras-fiscais", permission: "can_fiscal_rules" },
+  { prefix: "/adm/cadastros", permission: "can_registrations" },
+  { prefix: "/adm/lojas", permission: "can_stores" },
+  { prefix: "/adm/produtos", permission: "can_products" },
+  { prefix: "/adm/emitentes", permission: "can_emitters" },
+  { prefix: "/adm/financeiro", permission: "can_financial" },
+  { prefix: "/adm/credito", permission: "can_credit" },
+  { prefix: "/adm/pedidos", permission: "can_orders" },
+  { prefix: "/adm/dashboard", permission: "can_dashboard" },
+];
+
+function getRequiredPermission(pathname: string): keyof AdminPermissions | null {
+  if (!pathname.startsWith("/adm")) return null;
+  if (pathname === "/adm") return "can_dashboard";
+  if (pathname === "/adm/sem-acesso") return null;
+
+  for (const rule of routePermissionMap) {
+    if (pathname === rule.prefix || pathname.startsWith(rule.prefix + "/")) {
+      return rule.permission;
+    }
+  }
+
+  return null;
+}
+
 export default function PortalShell({
   children,
   title,
@@ -151,7 +175,6 @@ export default function PortalShell({
   const pathname = usePathname();
 
   const [mode, setMode] = useState<Mode>(null);
-
   const [userEmail, setUserEmail] = useState<string>("-");
   const [storeName, setStoreName] = useState<string>("-");
   const [loading, setLoading] = useState(true);
@@ -161,6 +184,12 @@ export default function PortalShell({
 
   const [sidebarState, setSidebarState] = useState<SidebarState>("expanded");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const [adminPermissions, setAdminPermissions] = useState<AdminPermissions>(
+    clonePermissions(EMPTY_ADMIN_PERMISSIONS)
+  );
+  const [isVerifiedAdmin, setIsVerifiedAdmin] = useState(false);
+  const [permissionReady, setPermissionReady] = useState(false);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -204,6 +233,8 @@ export default function PortalShell({
 
     (async () => {
       setLoading(true);
+      setPermissionReady(false);
+      setIsVerifiedAdmin(false);
 
       const { data: auth } = await supabase.auth.getUser();
       const user = auth?.user;
@@ -211,13 +242,68 @@ export default function PortalShell({
       if (!user) {
         setUserEmail("-");
         setStoreName("-");
+        setAdminPermissions(clonePermissions(EMPTY_ADMIN_PERMISSIONS));
         setLoading(false);
+        setPermissionReady(true);
         return;
       }
 
       setUserEmail(user.email ?? "-");
 
-      if (m !== "admin") {
+      if (m === "admin") {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,is_admin")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileError || !profile?.is_admin) {
+          setAdminPermissions(clonePermissions(EMPTY_ADMIN_PERMISSIONS));
+          setIsVerifiedAdmin(false);
+          setStoreName("-");
+          setLoading(false);
+          setPermissionReady(true);
+
+          if (pathname.startsWith("/adm")) {
+            router.replace("/login");
+          }
+          return;
+        }
+
+        setIsVerifiedAdmin(true);
+
+        const { data: permissionsData, error: permissionsError } = await supabase
+          .from("admin_permissions")
+          .select(`
+            can_dashboard,
+            can_orders,
+            can_expedition,
+            can_separation_map,
+            can_fiscal_issue,
+            can_fiscal_products,
+            can_fiscal_rules,
+            can_registrations,
+            can_users,
+            can_stores,
+            can_products,
+            can_emitters,
+            can_financial,
+            can_credit
+          `)
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (permissionsError) {
+          console.error("Erro ao carregar admin_permissions:", permissionsError);
+          setAdminPermissions(clonePermissions(FULL_ADMIN_PERMISSIONS));
+        } else if (permissionsData) {
+          setAdminPermissions(clonePermissions(permissionsData));
+        } else {
+          setAdminPermissions(clonePermissions(FULL_ADMIN_PERMISSIONS));
+        }
+
+        setStoreName("-");
+      } else {
         const { data: profile } = await supabase
           .from("profiles")
           .select("store_id")
@@ -229,6 +315,7 @@ export default function PortalShell({
         if (!storeId) {
           setStoreName("-");
           setLoading(false);
+          setPermissionReady(true);
           return;
         }
 
@@ -239,17 +326,32 @@ export default function PortalShell({
           .maybeSingle();
 
         setStoreName((store?.name as string) ?? "-");
-      } else {
-        setStoreName("-");
       }
 
       setLoading(false);
+      setPermissionReady(true);
     })();
 
     setUserMenuOpen(false);
     setMobileMenuOpen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
+
+  useEffect(() => {
+    if (!permissionReady) return;
+    if (!pathname.startsWith("/adm")) return;
+    if (pathname === "/adm/sem-acesso") return;
+    if (mode !== "admin") return;
+    if (!isVerifiedAdmin) return;
+
+    const requiredPermission = getRequiredPermission(pathname);
+    if (!requiredPermission) return;
+
+    const allowed = !!adminPermissions[requiredPermission];
+    if (!allowed) {
+      router.replace("/adm/sem-acesso");
+    }
+  }, [permissionReady, pathname, mode, isVerifiedAdmin, adminPermissions, router]);
 
   const isAdminMode = mode === "admin";
   const badge = useMemo(() => initialsFrom(userEmail === "-" ? "U" : userEmail), [userEmail]);
@@ -271,15 +373,21 @@ export default function PortalShell({
     });
   }
 
-  const adminItems = [
-    { label: "Dashboard", href: "/adm/dashboard" },
-    { label: "Pedidos", href: "/adm/pedidos" },
-    { label: "Cadastros", href: "/adm/cadastros" },
-    { label: "Usuários", href: "/adm/usuarios" },
-    { label: "Lojas", href: "/adm/lojas" },
-    { label: "Produtos", href: "/adm/produtos" },
-    { label: "Financeiro", href: "/adm/financeiro" },
-    { label: "Extrato de crédito", href: "/adm/credito" },
+  const adminItems: AdminMenuItem[] = [
+    { label: "Dashboard", href: "/adm/dashboard", allowed: (p) => p.can_dashboard },
+    { label: "Pedidos", href: "/adm/pedidos", allowed: (p) => p.can_orders },
+    { label: "Expedição", href: "/adm/expedicao", allowed: (p) => p.can_expedition },
+    { label: "Mapa de separação", href: "/adm/expedicao/mapa-separacao", allowed: (p) => p.can_separation_map },
+    { label: "Emissão fiscal", href: "/adm/emissao-fiscal", allowed: (p) => p.can_fiscal_issue },
+    { label: "Fiscal de produtos", href: "/adm/fiscal-produtos", allowed: (p) => p.can_fiscal_products },
+    { label: "Regras fiscais", href: "/adm/regras-fiscais", allowed: (p) => p.can_fiscal_rules },
+    { label: "Cadastros", href: "/adm/cadastros", allowed: (p) => p.can_registrations },
+    { label: "Usuários", href: "/adm/usuarios", allowed: (p) => p.can_users },
+    { label: "Lojas", href: "/adm/lojas", allowed: (p) => p.can_stores },
+    { label: "Produtos", href: "/adm/produtos", allowed: (p) => p.can_products },
+    { label: "Emitentes", href: "/adm/emitentes", allowed: (p) => p.can_emitters },
+    { label: "Financeiro", href: "/adm/financeiro", allowed: (p) => p.can_financial },
+    { label: "Extrato de crédito", href: "/adm/credito", allowed: (p) => p.can_credit },
   ];
 
   const franchiseeItems = [
@@ -290,7 +398,11 @@ export default function PortalShell({
     { label: "Extrato de crédito", href: "/extrato" },
   ];
 
-  const items = isAdminMode ? adminItems : franchiseeItems;
+  const items = isAdminMode
+    ? adminItems
+        .filter((it) => it.allowed(adminPermissions))
+        .map((it) => ({ label: it.label, href: it.href }))
+    : franchiseeItems;
 
   if (!mode) return <div className="min-h-screen bg-slate-50" />;
 
@@ -299,10 +411,7 @@ export default function PortalShell({
   return (
     <div className="min-h-screen bg-slate-50">
       {mobileMenuOpen ? (
-        <div
-          className="fixed inset-0 z-40 bg-black/30 md:hidden"
-          onClick={() => setMobileMenuOpen(false)}
-        />
+        <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={() => setMobileMenuOpen(false)} />
       ) : null}
 
       <div className="flex">
@@ -352,9 +461,7 @@ export default function PortalShell({
           {!collapsed ? (
             <div className="mt-auto px-6 pb-6">
               <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Portal
-                </div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portal</div>
                 <div className="mt-2 text-sm font-semibold text-slate-900">
                   {isAdminMode ? "Administrador" : "Franqueado"}
                 </div>
@@ -387,21 +494,14 @@ export default function PortalShell({
             </div>
             <div className="space-y-2">
               {items.map((it) => (
-                <NavItem
-                  key={it.href}
-                  href={it.href}
-                  label={it.label}
-                  onNavigate={() => setMobileMenuOpen(false)}
-                />
+                <NavItem key={it.href} href={it.href} label={it.label} onNavigate={() => setMobileMenuOpen(false)} />
               ))}
             </div>
           </div>
 
           <div className="mt-auto pt-6">
             <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Portal
-              </div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portal</div>
               <div className="mt-2 text-sm font-semibold text-slate-900">
                 {isAdminMode ? "Administrador" : "Franqueado"}
               </div>
@@ -444,9 +544,7 @@ export default function PortalShell({
               <div className="flex items-center gap-3">
                 <div className="hidden xl:flex items-center gap-3">
                   <div className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 shadow-[0_6px_18px_rgba(15,23,42,0.05)]">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                      Usuário
-                    </div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Usuário</div>
                     <div className="mt-1 max-w-[220px] truncate text-sm font-semibold text-slate-900">
                       {loading ? "..." : userEmail}
                     </div>
@@ -454,9 +552,7 @@ export default function PortalShell({
 
                   {!isAdminMode ? (
                     <div className="rounded-[20px] border border-slate-200 bg-white px-4 py-3 shadow-[0_6px_18px_rgba(15,23,42,0.05)]">
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                        Loja
-                      </div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Loja</div>
                       <div className="mt-1 max-w-[220px] truncate text-sm font-semibold text-slate-900">
                         {loading ? "..." : storeName}
                       </div>
@@ -482,9 +578,7 @@ export default function PortalShell({
                   {userMenuOpen ? (
                     <div className="absolute right-0 mt-2 w-72 overflow-hidden rounded-[24px] border border-slate-200 bg-white shadow-[0_18px_40px_rgba(15,23,42,0.10)]">
                       <div className="px-4 py-4">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-                          Logado como
-                        </div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Logado como</div>
                         <div className="mt-2 text-sm font-semibold text-slate-900 truncate">
                           {loading ? "..." : userEmail}
                         </div>

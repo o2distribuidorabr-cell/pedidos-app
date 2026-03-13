@@ -40,6 +40,10 @@ type StoreInfo = {
   name: string | null;
   legal_name?: string | null;
   cnpj?: string | null;
+  ie?: string | null;
+  ind_ie_dest?: string | null;
+  email_nf?: string | null;
+  phone_nf?: string | null;
   address_zip?: string | null;
   address_street?: string | null;
   address_number?: string | null;
@@ -49,7 +53,20 @@ type StoreInfo = {
   state?: string | null;
 };
 
-type ProductEmbed = { sku: string | null; name: string | null; unit: string | null };
+type ProductEmbed = {
+  sku: string | null;
+  name: string | null;
+  unit: string | null;
+  ncm?: string | null;
+  cest?: string | null;
+  cfop?: string | null;
+  cfop_default?: string | null;
+  ean?: string | null;
+  origin?: string | null;
+  icms_cst?: string | null;
+  pis_cst?: string | null;
+  cofins_cst?: string | null;
+};
 
 type ItemRow = {
   id: string;
@@ -74,6 +91,45 @@ type OriginalItem = {
   sku: string | null;
   name: string | null;
   product_unit: string | null;
+};
+
+type SplitItemState = {
+  include: boolean;
+  qty: string;
+};
+
+type NfeItemDraft = {
+  product_id: string;
+  sku: string;
+  name: string;
+  unit: string;
+  qty: number;
+  unit_cost: number;
+  ncm: string;
+  cest: string;
+  cfop: string;
+  ean: string;
+  origin: string;
+  icms_cst: string;
+  pis_cst: string;
+  cofins_cst: string;
+};
+
+type FocusNfeDocRow = {
+  id: string;
+  order_id: string;
+  store_id?: string | null;
+  status: string | null;
+  reference: string | null;
+  numero: string | null;
+  serie: string | null;
+  chave: string | null;
+  protocolo: string | null;
+  url_danfe: string | null;
+  url_xml: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
@@ -119,18 +175,6 @@ function todayYMD() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-
-function fmtYMD(ymd: string | null | undefined) {
-  if (!ymd) return "-";
-  try {
-    const [y, m, d] = ymd.split("-").map(Number);
-    if (!y || !m || !d) return ymd;
-    const dt = new Date(y, m - 1, d, 12, 0, 0);
-    return dt.toLocaleDateString("pt-BR");
-  } catch {
-    return String(ymd);
-  }
 }
 
 function onlyDigits(v: string | null | undefined) {
@@ -215,28 +259,6 @@ function packBaseText(pack: PackInfo) {
   if (pack.perPack && pack.perPack > 0) return `${fmtNumBR(pack.perPack)}${pack.unitLabel}/${pack.packLabel}`;
   return `-${pack.unitLabel}/${pack.packLabel}`;
 }
-
-type SplitItemState = {
-  include: boolean;
-  qty: string;
-};
-
-type NfeItemDraft = {
-  product_id: string;
-  sku: string;
-  name: string;
-  unit: string;
-  qty: number;
-  unit_cost: number;
-  ncm: string;
-  cest: string;
-  cfop: string;
-  ean: string;
-  origin: string;
-  icms_cst: string;
-  pis_cst: string;
-  cofins_cst: string;
-};
 
 function PrimaryActionButton({
   children,
@@ -351,6 +373,15 @@ function SummaryBox({
   );
 }
 
+function toneForNfeStatus(status: string | null | undefined) {
+  const s = String(status || "").toLowerCase();
+
+  if (["autorizado", "emitido", "processado", "aprovado"].includes(s)) return "green";
+  if (["erro", "rejeitado", "cancelado", "denegado"].includes(s)) return "red";
+  if (["processando", "pendente", "enviado"].includes(s)) return "yellow";
+  return "neutral";
+}
+
 export default function AdmPedidoDetalhePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -366,9 +397,9 @@ export default function AdmPedidoDetalhePage() {
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [creditBalance, setCreditBalance] = useState<number>(0);
+  const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
 
   const [printMode, setPrintMode] = useState(false);
-  const [storeInfo, setStoreInfo] = useState<StoreInfo | null>(null);
 
   const [originalItems, setOriginalItems] = useState<OriginalItem[] | null>(null);
   const [itemEdits, setItemEdits] = useState<Record<string, ItemEdit>>({});
@@ -389,6 +420,11 @@ export default function AdmPedidoDetalhePage() {
   const [nfeNumero, setNfeNumero] = useState<string>("");
   const [nfeCopyMsg, setNfeCopyMsg] = useState<string>("");
 
+  const [focusDoc, setFocusDoc] = useState<FocusNfeDocRow | null>(null);
+  const [focusLoading, setFocusLoading] = useState(false);
+  const [focusEmitting, setFocusEmitting] = useState(false);
+  const [focusRefreshing, setFocusRefreshing] = useState(false);
+
   const lockedByLogistics = useMemo(() => {
     return (order?.logistic_status ?? null) === "ENTREGUE";
   }, [order?.logistic_status]);
@@ -401,7 +437,6 @@ export default function AdmPedidoDetalhePage() {
 
       const qtyStr = editMode ? (edit?.qty ?? String(it.qty ?? 0)) : String(it.qty ?? 0);
       const qty = Number(qtyStr.replace(",", ".")) || 0;
-
       const unitCost = Number(it.unit_cost ?? 0);
       return acc + qty * unitCost;
     }, 0);
@@ -427,7 +462,7 @@ export default function AdmPedidoDetalhePage() {
 
   const forecastOverdue = useMemo(() => {
     if (!order?.delivery_forecast) return false;
-    if ((order.logistic_status ?? null) === "ENTREGUE") return false;
+    if ((order?.logistic_status ?? null) === "ENTREGUE") return false;
     return order.delivery_forecast < todayYMD();
   }, [order?.delivery_forecast, order?.logistic_status]);
 
@@ -471,6 +506,29 @@ export default function AdmPedidoDetalhePage() {
     return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []);
 
+  async function loadFocusDoc(currentOrderId: string) {
+    setFocusLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("focus_nfe_documents")
+        .select("*")
+        .eq("order_id", currentOrderId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.warn("loadFocusDoc:", error.message);
+        setFocusDoc(null);
+        return;
+      }
+
+      setFocusDoc((data ?? null) as FocusNfeDocRow | null);
+    } finally {
+      setFocusLoading(false);
+    }
+  }
+
   async function loadCreditBalance(storeId: string) {
     const { data, error } = await supabase
       .from("v_store_credit_balance")
@@ -490,7 +548,9 @@ export default function AdmPedidoDetalhePage() {
   async function loadStoreInfo(storeId: string) {
     const { data, error } = await supabase
       .from("stores")
-      .select("id,name,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state")
+      .select(
+        "id,name,legal_name,cnpj,ie,ind_ie_dest,email_nf,phone_nf,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state"
+      )
       .eq("id", storeId)
       .maybeSingle();
 
@@ -519,6 +579,7 @@ export default function AdmPedidoDetalhePage() {
       setCreditBalance(0);
       setOriginalItems(null);
       setStoreInfo(null);
+      setFocusDoc(null);
       return;
     }
 
@@ -529,15 +590,22 @@ export default function AdmPedidoDetalhePage() {
     setOriginalItems(snap);
 
     if (ord.store_id) {
-      await Promise.all([loadCreditBalance(ord.store_id), loadStoreInfo(ord.store_id)]);
+      await Promise.all([
+        loadCreditBalance(ord.store_id),
+        loadStoreInfo(ord.store_id),
+        loadFocusDoc(ord.id),
+      ]);
     } else {
       setCreditBalance(0);
       setStoreInfo(null);
+      await loadFocusDoc(ord.id);
     }
 
     const { data: it, error: itErr } = await supabase
       .from("order_items")
-      .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
+      .select(
+        "id,qty,unit,unit_cost,product_id, products:products (sku,name,unit,ncm,cest,cfop,cfop_default,ean,origin,icms_cst,pis_cst,cofins_cst)"
+      )
       .eq("order_id", id);
 
     if (itErr) {
@@ -878,14 +946,14 @@ export default function AdmPedidoDetalhePage() {
         unit,
         qty,
         unit_cost,
-        ncm: "",
-        cest: "",
-        cfop: "",
-        ean: "",
-        origin: "",
-        icms_cst: "",
-        pis_cst: "",
-        cofins_cst: "",
+        ncm: it.products?.ncm ?? "",
+        cest: it.products?.cest ?? "",
+        cfop: it.products?.cfop ?? it.products?.cfop_default ?? "",
+        ean: it.products?.ean ?? "",
+        origin: it.products?.origin ?? "",
+        icms_cst: it.products?.icms_cst ?? "",
+        pis_cst: it.products?.pis_cst ?? "",
+        cofins_cst: it.products?.cofins_cst ?? "",
       };
     }
 
@@ -911,87 +979,63 @@ export default function AdmPedidoDetalhePage() {
   }
 
   const nfeDraftPayload = useMemo(() => {
-    if (!order) return null;
-
-    const s = storeInfo;
-
-    const dest = {
-      name: s?.name ?? "",
-      legal_name: s?.legal_name ?? "",
-      cnpj: onlyDigits(s?.cnpj ?? ""),
-      address: {
-        zip: onlyDigits(s?.address_zip ?? ""),
-        street: s?.address_street ?? "",
-        number: s?.address_number ?? "",
-        complement: s?.address_complement ?? "",
-        neighborhood: s?.address_neighborhood ?? "",
-        city: s?.city ?? "",
-        state: s?.state ?? "",
-      },
-    };
-
-    const emit = {
-      name: "O2 Distribuidora",
-      cnpj: "",
-    };
+    if (!order || !storeInfo) return null;
 
     const itemsList = Object.values(nfeItems).map((it) => {
       const qty = Number(it.qty || 0);
       const unit_cost = Number(it.unit_cost || 0);
-      const total = qty * unit_cost;
 
       return {
-        product_id: it.product_id,
-        sku: it.sku,
-        description: it.name,
-        unit: it.unit,
-        qty,
-        unit_cost,
-        total,
-        fiscal: {
-          ncm: (it.ncm || "").trim() || null,
-          cest: (it.cest || "").trim() || null,
-          cfop: (it.cfop || "").trim() || null,
-          ean: (it.ean || "").trim() || null,
-          origin: (it.origin || "").trim() || null,
-          icms_cst: (it.icms_cst || "").trim() || null,
-          pis_cst: (it.pis_cst || "").trim() || null,
-          cofins_cst: (it.cofins_cst || "").trim() || null,
-        },
+        codigo: it.sku || it.product_id,
+        descricao: it.name,
+        ncm: (it.ncm || "").trim() || null,
+        cest: (it.cest || "").trim() || null,
+        cfop: (it.cfop || "").trim() || null,
+        unidade: it.unit || "UN",
+        quantidade: qty,
+        valor_unitario: unit_cost,
+        valor_total: qty * unit_cost,
+        gtin: (it.ean || "").trim() || null,
+        origem: (it.origin || "").trim() || null,
+        icms_situacao_tributaria: (it.icms_cst || "").trim() || null,
+        pis_situacao_tributaria: (it.pis_cst || "").trim() || null,
+        cofins_situacao_tributaria: (it.cofins_cst || "").trim() || null,
       };
     });
 
-    const totals = {
-      items_total: Number(totalItens || 0),
-      freight: Number(frete || 0),
-      gross_total: Number(totalComFrete || 0),
-      credit_applied: Number(creditApplied || 0),
-      net_total: Number(totalLiquido || 0),
-    };
-
     return {
-      meta: {
-        source: "portal",
-        order_id: order.id,
-        created_at: order.created_at,
-      },
-      nfe: {
-        nature: (nfeNatureza || "").trim() || "VENDA",
-        serie: (nfeSerie || "").trim() || "1",
-        number: (nfeNumero || "").trim() || null,
-        issue_date: new Date().toISOString(),
-        operation: {
-          delivery_mode: order.delivery_mode ?? null,
-          freight_fee: Number(order.freight_fee ?? 0) || 0,
+      orderId: order.id,
+      storeId: order.store_id,
+      natureza_operacao: (nfeNatureza || "").trim() || "VENDA",
+      serie: (nfeSerie || "").trim() || "1",
+      numero: (nfeNumero || "").trim() || null,
+      data_emissao: new Date().toISOString(),
+      destinatario: {
+        nome: storeInfo.legal_name || storeInfo.name || "",
+        nome_fantasia: storeInfo.name || "",
+        cpf_cnpj: onlyDigits(storeInfo.cnpj || ""),
+        indicador_inscricao_estadual: storeInfo.ind_ie_dest || "9",
+        inscricao_estadual: storeInfo.ie || null,
+        email: storeInfo.email_nf || null,
+        telefone: storeInfo.phone_nf || null,
+        endereco: {
+          logradouro: storeInfo.address_street || "",
+          numero: storeInfo.address_number || "",
+          complemento: storeInfo.address_complement || "",
+          bairro: storeInfo.address_neighborhood || "",
+          cep: onlyDigits(storeInfo.address_zip || ""),
+          municipio: storeInfo.city || "",
+          uf: storeInfo.state || "",
         },
-        emit,
-        dest,
-        items: itemsList,
-        totals,
-        notes: order.notes ?? null,
       },
+      transporte: {
+        modalidade_frete: "9",
+        valor_frete: Number(order.freight_fee ?? 0) || 0,
+      },
+      itens: itemsList,
+      observacoes: order.notes || null,
     };
-  }, [order, storeInfo, nfeItems, nfeNatureza, nfeSerie, nfeNumero, totalItens, frete, totalComFrete, creditApplied, totalLiquido]);
+  }, [order, storeInfo, nfeItems, nfeNatureza, nfeSerie, nfeNumero]);
 
   async function copyNfeJson() {
     if (!nfeDraftPayload) return;
@@ -1002,6 +1046,159 @@ export default function AdmPedidoDetalhePage() {
       setTimeout(() => setNfeCopyMsg(""), 1500);
     } catch {
       setNfeCopyMsg("Não consegui copiar automaticamente. Selecione e copie manualmente.");
+    }
+  }
+
+  async function emitFocusNfe() {
+  if (!order || !storeInfo || !order.store_id) {
+    setMsg("Pedido sem store_id. Não é possível emitir.");
+    return;
+  }
+
+  setFocusEmitting(true);
+  setMsg("");
+
+  try {
+    const reference = `PED-${order.id}`;
+
+    const payload = {
+      orderId: order.id,
+      storeId: order.store_id,
+      emitterId: (order as any).emitter_id || null,
+      reference,
+      natureza_operacao: (nfeNatureza || "VENDA").trim(),
+      serie: (nfeSerie || "1").trim(),
+      numero: (nfeNumero || "").trim() || null,
+      destinatario: {
+        nome: storeInfo.legal_name || storeInfo.name || "",
+        nome_fantasia: storeInfo.name || "",
+        cpf_cnpj: onlyDigits(storeInfo.cnpj || ""),
+        indicador_inscricao_estadual: storeInfo.ind_ie_dest || "9",
+        inscricao_estadual: storeInfo.ie || null,
+        email: storeInfo.email_nf || null,
+        telefone: storeInfo.phone_nf || null,
+        endereco: {
+          logradouro: storeInfo.address_street || "",
+          numero: storeInfo.address_number || "",
+          complemento: storeInfo.address_complement || "",
+          bairro: storeInfo.address_neighborhood || "",
+          cep: onlyDigits(storeInfo.address_zip || ""),
+          municipio: storeInfo.city || "",
+          uf: storeInfo.state || "",
+        },
+      },
+      transporte: {
+        modalidade_frete: "9",
+        valor_frete: Number(order.freight_fee ?? 0) || 0,
+      },
+      itens: Object.values(nfeItems).length
+        ? Object.values(nfeItems).map((it) => ({
+            codigo: it.sku || it.product_id,
+            descricao: it.name,
+            ncm: (it.ncm || "").trim() || null,
+            cest: (it.cest || "").trim() || null,
+            cfop: (it.cfop || "").trim() || null,
+            unidade: it.unit || "UN",
+            quantidade: Number(it.qty || 0),
+            valor_unitario: Number(it.unit_cost || 0),
+            valor_total: Number(it.qty || 0) * Number(it.unit_cost || 0),
+            gtin: (it.ean || "").trim() || null,
+            origem: (it.origin || "").trim() || null,
+            icms_situacao_tributaria: (it.icms_cst || "").trim() || null,
+            pis_situacao_tributaria: (it.pis_cst || "").trim() || null,
+            cofins_situacao_tributaria: (it.cofins_cst || "").trim() || null,
+          }))
+        : items.map((it) => ({
+            codigo: it.products?.sku || it.product_id,
+            descricao: it.products?.name || "",
+            ncm: (it.products?.ncm || "").trim() || null,
+            cest: (it.products?.cest || "").trim() || null,
+            cfop: (it.products?.cfop || it.products?.cfop_default || "").trim() || null,
+            unidade: it.products?.unit || it.unit || "UN",
+            quantidade: Number(it.qty || 0),
+            valor_unitario: Number(it.unit_cost || 0),
+            valor_total: Number(it.qty || 0) * Number(it.unit_cost || 0),
+            gtin: (it.products?.ean || "").trim() || null,
+            origem: (it.products?.origin || "").trim() || null,
+            icms_situacao_tributaria: (it.products?.icms_cst || "").trim() || null,
+            pis_situacao_tributaria: (it.products?.pis_cst || "").trim() || null,
+            cofins_situacao_tributaria: (it.products?.cofins_cst || "").trim() || null,
+          })),
+      observacoes: order.notes || null,
+    };
+
+    const res = await fetch("/api/focus/nfe/emitir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok || !data?.ok) {
+      const validationErrors = Array.isArray(data?.validation_errors)
+        ? data.validation_errors.join(" | ")
+        : "";
+
+      const focusDetails =
+        typeof data?.focus_details === "string"
+          ? data.focus_details
+          : data?.focus_details
+          ? JSON.stringify(data.focus_details)
+          : "";
+
+      const debugError =
+        typeof data?.error === "string"
+          ? data.error
+          : "Erro ao emitir NF-e.";
+
+      setMsg([debugError, validationErrors, focusDetails].filter(Boolean).join(" | "));
+      return;
+    }
+
+    await loadFocusDoc(order.id);
+    setMsg("NF-e enviada para a Focus.");
+  } catch (e: any) {
+    setMsg(e?.message || "Erro ao emitir NF-e.");
+  } finally {
+    setFocusEmitting(false);
+  }
+}
+
+  async function refreshFocusStatus() {
+    if (!order || !focusDoc?.reference) return;
+
+    setFocusRefreshing(true);
+    setMsg("");
+
+    try {
+      const res = await fetch("/api/focus/nfe/status", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          orderId: order.id,
+          reference: focusDoc.reference,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      console.log("RESPOSTA STATUS NF-E:", data);
+
+      if (!res.ok || !data?.ok) {
+        setMsg(data?.error || "Erro ao consultar status da NF-e.");
+        return;
+      }
+
+      await loadFocusDoc(order.id);
+      setMsg("Status da NF-e atualizado.");
+    } catch (e: any) {
+      console.error("ERRO FRONT STATUS NF-E:", e);
+      setMsg(e?.message || "Erro ao consultar status da NF-e.");
+    } finally {
+      setFocusRefreshing(false);
     }
   }
 
@@ -1044,7 +1241,7 @@ export default function AdmPedidoDetalhePage() {
       <span className="text-slate-500">-</span>
     ) : (
       <div className="leading-tight">
-        <div className="text-slate-800 font-semibold">{packBaseText(pack)}</div>
+        <div className="font-semibold text-slate-800">{packBaseText(pack)}</div>
         <div className="text-xs text-slate-500">
           {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
         </div>
@@ -1110,7 +1307,7 @@ export default function AdmPedidoDetalhePage() {
         <span className="text-slate-500">-</span>
       ) : (
         <div className="leading-tight">
-          <div className="text-slate-800 font-semibold">{packBaseText(pack)}</div>
+          <div className="font-semibold text-slate-800">{packBaseText(pack)}</div>
           <div className="text-xs text-slate-500">
             {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
           </div>
@@ -1128,327 +1325,8 @@ export default function AdmPedidoDetalhePage() {
       ];
     }) ?? [];
 
-  const s = storeInfo;
-  const emitName = "O2 Distribuidora";
-  const emitDoc = "-";
-  const emitAddr = "-";
-
-  const destName = s?.name ?? "-";
-  const destLegal = s?.legal_name ?? null;
-  const destCnpj = s?.cnpj ?? null;
-  const destZip = s?.address_zip ?? null;
-  const destStreet = s?.address_street ?? null;
-  const destNumber = s?.address_number ?? null;
-  const destComp = s?.address_complement ?? null;
-  const destNeigh = s?.address_neighborhood ?? null;
-  const destCity = s?.city ?? null;
-  const destState = s?.state ?? null;
-
-  const destAddrLine1 = [destStreet, destNumber ? `nº ${destNumber}` : null, destComp ? `(${destComp})` : null]
-    .filter(Boolean)
-    .join(", ");
-
-  const destAddrLine2 = [destNeigh, destCity ? `${destCity}${destState ? `/${destState}` : ""}` : null, destZip ? `CEP ${destZip}` : null]
-    .filter(Boolean)
-    .join(" • ");
-
-  const entregaTxt = order.delivery_mode === "FRETE" ? "FRETE" : "RETIRADA";
-  const logTxt =
-    order.logistic_status === "RECEBIDO"
-      ? "RECEBIDO"
-      : order.logistic_status === "EM_SEPARACAO"
-      ? "EM SEPARAÇÃO"
-      : order.logistic_status === "ENTREGUE"
-      ? "ENTREGUE"
-      : "-";
-
   return (
     <div className="space-y-6">
-      <style jsx global>{`
-        #print-danfe {
-          display: none;
-        }
-        @media print {
-          body {
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-          body * {
-            visibility: hidden !important;
-          }
-          #print-danfe,
-          #print-danfe * {
-            visibility: visible !important;
-          }
-          #print-danfe {
-            display: block !important;
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 100%;
-            padding: 12mm;
-            background: #fff;
-            color: #111;
-          }
-          .danfe-box {
-            border: 1px solid #111;
-          }
-          .danfe-row {
-            display: grid;
-            gap: 0;
-          }
-          .danfe-cell {
-            border-right: 1px solid #111;
-            border-bottom: 1px solid #111;
-            padding: 6px 8px;
-            font-size: 11px;
-            line-height: 1.25;
-          }
-          .danfe-cell:last-child {
-            border-right: 0;
-          }
-          .danfe-title {
-            font-weight: 700;
-            font-size: 12px;
-            text-transform: uppercase;
-          }
-          .danfe-muted {
-            color: #444;
-          }
-          .danfe-kv {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 2px;
-          }
-          .danfe-k {
-            font-size: 10px;
-            text-transform: uppercase;
-          }
-          .danfe-v {
-            font-size: 12px;
-            font-weight: 700;
-          }
-          table.danfe-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 11px;
-          }
-          table.danfe-table th,
-          table.danfe-table td {
-            border: 1px solid #111;
-            padding: 6px 6px;
-            vertical-align: top;
-          }
-          table.danfe-table th {
-            font-size: 10px;
-            text-transform: uppercase;
-            background: #f3f3f3;
-          }
-          .danfe-right {
-            text-align: right;
-          }
-          .danfe-center {
-            text-align: center;
-          }
-          .danfe-big {
-            font-size: 16px;
-            font-weight: 800;
-          }
-        }
-      `}</style>
-
-      <div id="print-danfe" aria-hidden={!printMode}>
-        <div className="danfe-box">
-          <div className="danfe-row" style={{ gridTemplateColumns: "2fr 1fr 1fr" }}>
-            <div className="danfe-cell">
-              <div className="danfe-title">Documento Auxiliar - Pedido</div>
-              <div className="danfe-muted" style={{ marginTop: 2 }}>
-                Layout estilo DANFE (informativo)
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <div className="danfe-k">Emitente</div>
-                <div className="danfe-v">{emitName}</div>
-                <div className="danfe-muted">{emitDoc}</div>
-                <div className="danfe-muted">{emitAddr}</div>
-              </div>
-            </div>
-
-            <div className="danfe-cell">
-              <div className="danfe-kv">
-                <div className="danfe-k">Número do pedido</div>
-                <div className="danfe-v" style={{ wordBreak: "break-all" }}>
-                  {order.id}
-                </div>
-              </div>
-              <div className="danfe-kv" style={{ marginTop: 8 }}>
-                <div className="danfe-k">Emissão</div>
-                <div className="danfe-v">{fmtDT(order.created_at)}</div>
-              </div>
-            </div>
-
-            <div className="danfe-cell">
-              <div className="danfe-kv">
-                <div className="danfe-k">Status</div>
-                <div className="danfe-v">{String(order.status ?? "-").toUpperCase()}</div>
-              </div>
-              <div className="danfe-kv" style={{ marginTop: 8 }}>
-                <div className="danfe-k">Operação</div>
-                <div className="danfe-v">{logTxt}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="danfe-row" style={{ gridTemplateColumns: "2fr 1fr" }}>
-            <div className="danfe-cell">
-              <div className="danfe-title">Destinatário</div>
-              <div style={{ marginTop: 6 }}>
-                <div className="danfe-v">{destLegal ?? destName}</div>
-                <div className="danfe-muted">{destLegal ? destName : ""}</div>
-                <div className="danfe-muted">CNPJ: {fmtCNPJ(destCnpj)}</div>
-                <div className="danfe-muted">{destAddrLine1 || "-"}</div>
-                <div className="danfe-muted">{destAddrLine2 || "-"}</div>
-              </div>
-            </div>
-
-            <div className="danfe-cell">
-              <div className="danfe-title">Entrega / Pagamento</div>
-
-              <div className="danfe-kv" style={{ marginTop: 6 }}>
-                <div className="danfe-k">Modalidade</div>
-                <div className="danfe-v">{entregaTxt}</div>
-              </div>
-
-              <div className="danfe-kv" style={{ marginTop: 6 }}>
-                <div className="danfe-k">Frete</div>
-                <div className="danfe-v">
-                  {order.delivery_mode === "FRETE" ? fmtBRL(Number(order.freight_fee ?? 0)) : "-"}
-                </div>
-              </div>
-
-              <div className="danfe-kv" style={{ marginTop: 6 }}>
-                <div className="danfe-k">Previsão de entrega</div>
-                <div className="danfe-v">{fmtYMD(order.delivery_forecast)}</div>
-              </div>
-
-              <div className="danfe-kv" style={{ marginTop: 6 }}>
-                <div className="danfe-k">Forma</div>
-                <div className="danfe-v">{order.payment_method ?? "-"}</div>
-              </div>
-
-              <div className="danfe-kv" style={{ marginTop: 6 }}>
-                <div className="danfe-k">Vencimento</div>
-                <div className="danfe-v">{fmtYMD(order.due_date)}</div>
-              </div>
-
-              <div className="danfe-kv" style={{ marginTop: 6 }}>
-                <div className="danfe-k">Pago</div>
-                <div className="danfe-v">{order.is_paid ? `SIM (${fmtDT(order.paid_at)})` : "NÃO"}</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="danfe-cell" style={{ borderRight: 0 }}>
-            <div className="danfe-title">Itens</div>
-            <div style={{ marginTop: 8 }}>
-              <table className="danfe-table">
-                <thead>
-                  <tr>
-                    <th className="danfe-center" style={{ width: 40 }}>#</th>
-                    <th style={{ width: 110 }}>SKU</th>
-                    <th>Descrição</th>
-                    <th className="danfe-center" style={{ width: 70 }}>Unid.</th>
-                    <th className="danfe-right" style={{ width: 70 }}>Qtd</th>
-                    <th className="danfe-center" style={{ width: 110 }}>Qtd/Caixa</th>
-                    <th className="danfe-right" style={{ width: 110 }}>Vlr Unit.</th>
-                    <th className="danfe-right" style={{ width: 110 }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((it, idx) => {
-                    const sku = it.products?.sku ?? "-";
-                    const name = it.products?.name ?? "-";
-                    const unit = it.products?.unit ?? it.unit ?? "-";
-                    const unitCost = Number(it.unit_cost ?? 0);
-                    const qty = Number(it.qty ?? 0);
-                    const line = qty * unitCost;
-
-                    const pack = getPackInfo(name);
-                    const packsQty = pack ? ceilPacks(qty, pack) : null;
-
-                    return (
-                      <tr key={it.id}>
-                        <td className="danfe-center">{idx + 1}</td>
-                        <td style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" }}>{sku}</td>
-                        <td>{name}</td>
-                        <td className="danfe-center">{unit}</td>
-                        <td className="danfe-right">{qty}</td>
-                        <td className="danfe-center">
-                          {!pack ? (
-                            "-"
-                          ) : (
-                            <div style={{ lineHeight: 1.15 }}>
-                              <div>{packBaseText(pack)}</div>
-                              <div style={{ fontSize: 10, color: "#444" }}>
-                                {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
-                              </div>
-                            </div>
-                          )}
-                        </td>
-                        <td className="danfe-right">{fmtBRL(unitCost)}</td>
-                        <td className="danfe-right">{fmtBRL(line)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10 }}>
-              <div>
-                <div className="danfe-title">Observações</div>
-                <div className="danfe-muted" style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
-                  {order.notes ?? "-"}
-                </div>
-                <div className="danfe-muted" style={{ marginTop: 8 }}>
-                  Criado: {fmtDT(order.created_at)} • Enviado: {fmtDT(order.submitted_at)} • Aprovado: {fmtDT(order.approved_at)}
-                </div>
-              </div>
-
-              <div>
-                <table className="danfe-table">
-                  <tbody>
-                    <tr>
-                      <th style={{ width: "60%" }}>Subtotal itens</th>
-                      <td className="danfe-right">{fmtBRL(totalItens)}</td>
-                    </tr>
-                    <tr>
-                      <th>Frete</th>
-                      <td className="danfe-right">{fmtBRL(frete)}</td>
-                    </tr>
-                    <tr>
-                      <th>Total bruto</th>
-                      <td className="danfe-right">{fmtBRL(totalComFrete)}</td>
-                    </tr>
-                    <tr>
-                      <th>Crédito abatido</th>
-                      <td className="danfe-right">- {fmtBRL(creditApplied)}</td>
-                    </tr>
-                    <tr>
-                      <th className="danfe-big">Total líquido</th>
-                      <td className="danfe-right danfe-big">{fmtBRL(totalLiquido)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="danfe-muted" style={{ marginTop: 10, fontSize: 10 }}>
-              Documento informativo para conferência/expedição (não é NF-e).
-            </div>
-          </div>
-        </div>
-      </div>
-
       <PageHeader
         title="Detalhe do pedido"
         subtitle={`ID: ${order.id}`}
@@ -1500,7 +1378,7 @@ export default function AdmPedidoDetalhePage() {
 
       {msg ? (
         <Card>
-          <div className="text-sm text-red-600">{msg}</div>
+          <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
         </Card>
       ) : null}
 
@@ -1516,20 +1394,96 @@ export default function AdmPedidoDetalhePage() {
           <SummaryBox title="Frete" value={fmtBRL(frete)} />
           <SummaryBox title="Crédito abatido" value={`- ${fmtBRL(creditApplied)}`} />
           <SummaryBox title="Total líquido" value={fmtBRL(totalLiquido)} />
-          <SummaryBox
-            title="Saldo da loja"
-            value={fmtBRL(creditBalance)}
-            subtitle="Disponível para abatimento"
-          />
+          <SummaryBox title="Saldo da loja" value={fmtBRL(creditBalance)} subtitle="Disponível para abatimento" />
+        </div>
+      </div>
+
+      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <SectionTitle
+          title="NF-e / Focus"
+          subtitle="Emissão fiscal vinculada a este pedido"
+          right={
+            <div className="flex flex-wrap items-center gap-2">
+              {focusDoc ? (
+                <Badge tone={toneForNfeStatus(focusDoc.status) as any}>
+                  {focusDoc.status || "Sem status"}
+                </Badge>
+              ) : (
+                <Badge tone="neutral">Sem NF-e</Badge>
+              )}
+
+              <SecondaryActionButton onClick={refreshFocusStatus} disabled={!focusDoc?.reference || focusRefreshing}>
+                {focusRefreshing ? "Consultando..." : "Consultar status"}
+              </SecondaryActionButton>
+
+              <PrimaryActionButton onClick={emitFocusNfe} disabled={focusEmitting || !storeInfo || items.length === 0}>
+                {focusEmitting ? "Emitindo..." : "Emitir NF-e"}
+              </PrimaryActionButton>
+            </div>
+          }
+        />
+
+        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+          <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+            <div className="space-y-3">
+              <InfoPair label="Status" value={focusDoc?.status || "-"} />
+              <InfoPair label="Referência" value={focusDoc?.reference || `PED-${order.id}`} />
+              <InfoPair label="Número" value={focusDoc?.numero || "-"} />
+              <InfoPair label="Série" value={focusDoc?.serie || nfeSerie || "-"} />
+              <InfoPair label="Chave" value={focusDoc?.chave || "-"} />
+              <InfoPair label="Protocolo" value={focusDoc?.protocolo || "-"} />
+              <InfoPair label="Criado em" value={fmtDT(focusDoc?.created_at)} />
+              <InfoPair label="Atualizado em" value={fmtDT(focusDoc?.updated_at)} />
+            </div>
+          </div>
+
+          <div className="rounded-[22px] border border-slate-200 bg-white p-4">
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Links do documento</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {focusDoc?.url_danfe ? (
+                    <a
+                      href={focusDoc.url_danfe}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
+                    >
+                      Abrir DANFE
+                    </a>
+                  ) : (
+                    <Badge tone="neutral">DANFE indisponível</Badge>
+                  )}
+
+                  {focusDoc?.url_xml ? (
+                    <a
+                      href={focusDoc.url_xml}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
+                    >
+                      Abrir XML
+                    </a>
+                  ) : (
+                    <Badge tone="neutral">XML indisponível</Badge>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Erro / retorno Focus</div>
+                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                  {focusDoc?.error_message || "Sem mensagem de erro."}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <SectionTitle
-            title="Status e operação"
-            subtitle="Controle rápido do fluxo do pedido"
-          />
+          <SectionTitle title="Status e operação" subtitle="Controle rápido do fluxo do pedido" />
 
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <Select
@@ -1661,15 +1615,16 @@ export default function AdmPedidoDetalhePage() {
       </div>
 
       <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <SectionTitle
-          title="Informações da loja"
-          subtitle="Dados do destinatário para conferência e emissão"
-        />
+        <SectionTitle title="Informações da loja" subtitle="Dados do destinatário para conferência e emissão" />
 
         <div className="mt-6 grid gap-3 md:grid-cols-2">
           <InfoPair label="Loja" value={storeInfo?.name ?? "-"} />
           <InfoPair label="Razão social" value={storeInfo?.legal_name ?? "-"} />
           <InfoPair label="CNPJ" value={fmtCNPJ(storeInfo?.cnpj)} />
+          <InfoPair label="IE" value={storeInfo?.ie ?? "-"} />
+          <InfoPair label="Indicador IE destinatário" value={storeInfo?.ind_ie_dest ?? "-"} />
+          <InfoPair label="E-mail NF-e" value={storeInfo?.email_nf ?? "-"} />
+          <InfoPair label="Telefone NF-e" value={storeInfo?.phone_nf ?? "-"} />
           <InfoPair label="CEP" value={storeInfo?.address_zip ?? "-"} />
           <InfoPair
             label="Endereço"
@@ -1679,12 +1634,7 @@ export default function AdmPedidoDetalhePage() {
                 .join(", ") || "-"
             }
           />
-          <InfoPair
-            label="Cidade/UF"
-            value={
-              [storeInfo?.city, storeInfo?.state].filter(Boolean).join("/") || "-"
-            }
-          />
+          <InfoPair label="Cidade/UF" value={[storeInfo?.city, storeInfo?.state].filter(Boolean).join("/") || "-"} />
         </div>
       </div>
 
@@ -1719,10 +1669,7 @@ export default function AdmPedidoDetalhePage() {
         />
 
         <div className="mt-6">
-          <Table
-            headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
-            rows={itemsRows}
-          />
+          <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={itemsRows} />
         </div>
       </div>
 
@@ -1734,10 +1681,7 @@ export default function AdmPedidoDetalhePage() {
             right={<Badge tone="neutral">ORIGINAL</Badge>}
           />
           <div className="mt-6">
-            <Table
-              headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
-              rows={originalRows}
-            />
+            <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={originalRows} />
           </div>
         </div>
       ) : null}
@@ -1761,18 +1705,8 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-4 grid gap-3">
-              <Input
-                label="Valor (opcional)"
-                placeholder="Vazio = abater o máximo possível"
-                value={creditAmount}
-                onChange={setCreditAmount}
-              />
-              <Input
-                label="Observação (opcional)"
-                placeholder="Ex.: abatimento parcial"
-                value={creditNote}
-                onChange={setCreditNote}
-              />
+              <Input label="Valor (opcional)" placeholder="Vazio = abater o máximo possível" value={creditAmount} onChange={setCreditAmount} />
+              <Input label="Observação (opcional)" placeholder="Ex.: abatimento parcial" value={creditNote} onChange={setCreditNote} />
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
@@ -1801,9 +1735,7 @@ export default function AdmPedidoDetalhePage() {
                   Preencha dados fiscais e copie o JSON para plugar na API de emissão.
                 </div>
               </div>
-              <SecondaryActionButton onClick={closeNfeModal}>
-                Fechar
-              </SecondaryActionButton>
+              <SecondaryActionButton onClick={closeNfeModal}>Fechar</SecondaryActionButton>
             </div>
 
             <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -1833,7 +1765,7 @@ export default function AdmPedidoDetalhePage() {
                     <div key={it.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-sm">
                       <div className="col-span-4">
                         <div className="text-slate-900">{d.name || "-"}</div>
-                        <div className="text-xs text-slate-500 font-mono">{d.sku || "-"}</div>
+                        <div className="font-mono text-xs text-slate-500">{d.sku || "-"}</div>
                       </div>
                       <div className="col-span-1 text-right font-semibold">{d.qty}</div>
                       <div className="col-span-1 text-right">{fmtBRL(d.unit_cost)}</div>
@@ -1860,8 +1792,8 @@ export default function AdmPedidoDetalhePage() {
                 })}
               </div>
 
-              <div className="px-3 py-2 text-xs text-slate-500 border-t border-slate-200">
-                * PIS/COFINS CST ficam dentro do JSON; depois eu adiciono colunas se você quiser.
+              <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-500">
+                * PIS/COFINS CST ficam dentro do JSON.
               </div>
             </div>
 
@@ -1880,14 +1812,12 @@ export default function AdmPedidoDetalhePage() {
                   <div className="text-xs font-semibold text-slate-600">JSON (rascunho)</div>
                   <div className="flex items-center gap-2">
                     {nfeCopyMsg ? <span className="text-xs text-slate-600">{nfeCopyMsg}</span> : null}
-                    <SecondaryActionButton onClick={copyNfeJson}>
-                      Copiar JSON
-                    </SecondaryActionButton>
+                    <SecondaryActionButton onClick={copyNfeJson}>Copiar JSON</SecondaryActionButton>
                   </div>
                 </div>
 
                 <textarea
-                  className="mt-2 w-full min-h-[220px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-900 outline-none"
+                  className="mt-2 min-h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-900 outline-none"
                   readOnly
                   value={nfeDraftPayload ? JSON.stringify(nfeDraftPayload, null, 2) : ""}
                 />
@@ -1895,7 +1825,7 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-3 text-xs text-slate-500">
-              Isso não emite NF-e ainda. É só o payload pronto para plugar na API.
+              Isso não emite NF-e ainda pelo modal. A emissão agora está no quadro fixo “NF-e / Focus”.
             </div>
           </div>
         </div>
@@ -1944,7 +1874,7 @@ export default function AdmPedidoDetalhePage() {
                         <div className="col-span-2 text-right font-semibold">{Number(it.qty ?? 0)}</div>
                         <div className="col-span-3 text-right">
                           <input
-                            className="w-28 rounded-md border border-slate-200 bg-white px-2 py-1 text-sm outline-none focus:border-slate-300 disabled:bg-slate-50 text-right"
+                            className="w-28 rounded-md border border-slate-200 bg-white px-2 py-1 text-right text-sm outline-none focus:border-slate-300 disabled:bg-slate-50"
                             type="number"
                             min={0}
                             step={1}
