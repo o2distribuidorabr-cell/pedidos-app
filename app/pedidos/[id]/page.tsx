@@ -33,6 +33,14 @@ type OrderRow = {
   edited_by_admin: boolean | null;
   edited_at: string | null;
   original_items: OriginalItem[] | null;
+
+  delivery_status?:
+    | "PENDENTE"
+    | "EM_SEPARACAO"
+    | "SAIU_PARA_ENTREGA"
+    | "ENTREGUE"
+    | "OCORRENCIA"
+    | null;
 };
 
 type ProductRow = {
@@ -135,6 +143,25 @@ function forecastTone(
   if (!forecast) return "neutral";
   if (logistic === "ENTREGUE") return "green";
   return forecast < todayYMD() ? "red" : "green";
+}
+
+function deliveryTrackingTone(
+  status: OrderRow["delivery_status"]
+): "green" | "red" | "yellow" | "blue" | "neutral" {
+  if (status === "ENTREGUE") return "green";
+  if (status === "SAIU_PARA_ENTREGA") return "blue";
+  if (status === "EM_SEPARACAO") return "yellow";
+  if (status === "OCORRENCIA") return "red";
+  return "neutral";
+}
+
+function deliveryTrackingLabel(status: OrderRow["delivery_status"]) {
+  if (status === "PENDENTE") return "Pendente";
+  if (status === "EM_SEPARACAO") return "Em separação";
+  if (status === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
+  if (status === "ENTREGUE") return "Entregue";
+  if (status === "OCORRENCIA") return "Ocorrência";
+  return "Sem acompanhamento";
 }
 
 function getProduct(p: ItemRow["products"]): ProductRow | null {
@@ -263,6 +290,16 @@ export default function PedidoDetalhePage() {
     }, 0);
   }, [originalItems]);
 
+  const canTrackDelivery = useMemo(() => {
+    if (!order) return false;
+    return (
+      order.delivery_status === "EM_SEPARACAO" ||
+      order.delivery_status === "SAIU_PARA_ENTREGA" ||
+      order.delivery_status === "ENTREGUE" ||
+      order.delivery_status === "OCORRENCIA"
+    );
+  }, [order]);
+
   useEffect(() => {
     (async () => {
       setMsg("");
@@ -295,7 +332,7 @@ export default function PedidoDetalhePage() {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,delivery_forecast,credit_applied,edited_by_admin,edited_at,original_items"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,delivery_forecast,credit_applied,edited_by_admin,edited_at,original_items,delivery_status"
       )
       .eq("id", id)
       .maybeSingle();
@@ -378,6 +415,10 @@ export default function PedidoDetalhePage() {
                     <Badge tone={statusTone(order.status)}>{order.status}</Badge>
                     <Badge tone={logisticTone(order.logistic_status)}>
                       {logisticLabel(order.logistic_status)}
+                    </Badge>
+
+                    <Badge tone={deliveryTrackingTone(order.delivery_status)}>
+                      {deliveryTrackingLabel(order.delivery_status)}
                     </Badge>
 
                     {edited ? (
@@ -729,6 +770,13 @@ export default function PedidoDetalhePage() {
                       <SecondaryActionButton onClick={refresh} disabled={working || loading}>
                         {working ? "Atualizando..." : "Atualizar pedido"}
                       </SecondaryActionButton>
+
+                      <SecondaryActionButton
+                        onClick={() => router.push(`/pedidos/${order.id}/entrega`)}
+                        disabled={!canTrackDelivery}
+                      >
+                        Acompanhar entrega
+                      </SecondaryActionButton>
                     </div>
 
                     <div className="mt-6 rounded-[22px] border border-slate-200 bg-white p-4">
@@ -740,6 +788,9 @@ export default function PedidoDetalhePage() {
                         <Badge tone={statusTone(order.status)}>{order.status}</Badge>
                         <Badge tone={logisticTone(order.logistic_status)}>
                           {logisticLabel(order.logistic_status)}
+                        </Badge>
+                        <Badge tone={deliveryTrackingTone(order.delivery_status)}>
+                          {deliveryTrackingLabel(order.delivery_status)}
                         </Badge>
                         {order.is_paid ? <Badge tone="green">Pago</Badge> : <Badge tone="yellow">Pendente</Badge>}
                       </div>
@@ -766,6 +817,13 @@ export default function PedidoDetalhePage() {
                         </div>
 
                         <div className="flex items-center justify-between gap-3">
+                          <span>Status entrega</span>
+                          <span className="font-semibold text-slate-900">
+                            {deliveryTrackingLabel(order.delivery_status)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
                           <span>Vencimento</span>
                           <span className="font-semibold text-slate-900">
                             {fmtYMD(order.due_date)}
@@ -773,6 +831,12 @@ export default function PedidoDetalhePage() {
                         </div>
                       </div>
                     </div>
+
+                    {!canTrackDelivery ? (
+                      <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                        O acompanhamento da entrega será liberado quando o pedido entrar em separação, sair para entrega, for entregue ou tiver ocorrência registrada.
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>

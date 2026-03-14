@@ -135,6 +135,7 @@ const routePermissionMap: RoutePermissionRule[] = [
   { prefix: "/adm/usuarios", permission: "can_users" },
   { prefix: "/adm/expedicao/mapa-separacao", permission: "can_separation_map" },
   { prefix: "/adm/expedicao", permission: "can_expedition" },
+  { prefix: "/adm/logistica", permission: "can_expedition" },
   { prefix: "/adm/emissao-fiscal", permission: "can_fiscal_issue" },
   { prefix: "/adm/fiscal-produtos", permission: "can_fiscal_products" },
   { prefix: "/adm/regras-fiscais", permission: "can_fiscal_rules" },
@@ -392,6 +393,7 @@ export default function PortalShell({
   const adminItems: AdminMenuItem[] = [
     { label: "Dashboard", href: "/adm/dashboard", allowed: (p) => p.can_dashboard },
     { label: "Pedidos", href: "/adm/pedidos", allowed: (p) => p.can_orders },
+    { label: "Logística", href: "/adm/logistica", allowed: (p) => p.can_expedition },
     { label: "Expedição", href: "/adm/expedicao", allowed: (p) => p.can_expedition },
     { label: "Mapa de separação", href: "/adm/expedicao/mapa-separacao", allowed: (p) => p.can_separation_map },
     { label: "Emissão fiscal", href: "/adm/emissao-fiscal", allowed: (p) => p.can_fiscal_issue },
@@ -408,7 +410,7 @@ export default function PortalShell({
 
   const franchiseeItems = [
     { label: "Dashboard", href: "/dashboard" },
-    { label: "Pedidos", href: "/pedidos" },
+    { label: "Pedidos e entregas", href: "/pedidos" },
     { label: "Novo pedido", href: "/pedido" },
     { label: "Financeiro", href: "/financeiro" },
     { label: "Extrato de crédito", href: "/extrato" },

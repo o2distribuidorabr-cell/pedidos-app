@@ -1,10 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-import { PageHeader, Card, Button, Input, Select, Badge, Table } from "@/app/components/ui";
+import {
+  PageHeader,
+  Card,
+  Input,
+  Select,
+  Badge,
+  Table,
+} from "@/app/components/ui";
 
 type OrderRow = {
   id: string;
@@ -98,23 +106,6 @@ type SplitItemState = {
   qty: string;
 };
 
-type NfeItemDraft = {
-  product_id: string;
-  sku: string;
-  name: string;
-  unit: string;
-  qty: number;
-  unit_cost: number;
-  ncm: string;
-  cest: string;
-  cfop: string;
-  ean: string;
-  origin: string;
-  icms_cst: string;
-  pis_cst: string;
-  cofins_cst: string;
-};
-
 type FocusNfeDocRow = {
   id: string;
   order_id: string;
@@ -138,7 +129,10 @@ const PAY_METHODS = ["PIX", "CARTAO", "BOLETO"] as const;
 const DELIVERY_OPTIONS = ["RETIRADA", "FRETE"] as const;
 
 function fmtBRL(v: number) {
-  return Number(v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return Number(v ?? 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function fmtDT(v: string | null | undefined) {
@@ -244,7 +238,10 @@ function fmtNumBR(v: number) {
   const isInt = Math.abs(rounded - Math.round(rounded)) < 1e-9;
   return isInt
     ? String(Math.round(rounded))
-    : rounded.toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    : rounded.toLocaleString("pt-BR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      });
 }
 
 function ceilPacks(qty: number, pack: PackInfo) {
@@ -382,6 +379,25 @@ function toneForNfeStatus(status: string | null | undefined) {
   return "neutral";
 }
 
+function logisticLabel(v: OrderRow["logistic_status"]) {
+  if (v === "RECEBIDO") return "Recebido";
+  if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "ENTREGUE") return "Entregue";
+  return "—";
+}
+
+function logisticTone(v: OrderRow["logistic_status"]) {
+  if (v === "ENTREGUE") return "green" as const;
+  if (v === "EM_SEPARACAO") return "yellow" as const;
+  return "neutral" as const;
+}
+
+function paymentTone(order: Pick<OrderRow, "is_paid" | "due_date">) {
+  if (order.is_paid) return "green" as const;
+  if (order.due_date && order.due_date < todayYMD()) return "red" as const;
+  return "yellow" as const;
+}
+
 export default function AdmPedidoDetalhePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -413,16 +429,8 @@ export default function AdmPedidoDetalhePage() {
   const [splitNotes, setSplitNotes] = useState<string>("");
   const [splitCreating, setSplitCreating] = useState(false);
 
-  const [nfeModalOpen, setNfeModalOpen] = useState(false);
-  const [nfeItems, setNfeItems] = useState<Record<string, NfeItemDraft>>({});
-  const [nfeNatureza, setNfeNatureza] = useState<string>("VENDA");
-  const [nfeSerie, setNfeSerie] = useState<string>("1");
-  const [nfeNumero, setNfeNumero] = useState<string>("");
-  const [nfeCopyMsg, setNfeCopyMsg] = useState<string>("");
-
   const [focusDoc, setFocusDoc] = useState<FocusNfeDocRow | null>(null);
   const [focusLoading, setFocusLoading] = useState(false);
-  const [focusEmitting, setFocusEmitting] = useState(false);
   const [focusRefreshing, setFocusRefreshing] = useState(false);
 
   const lockedByLogistics = useMemo(() => {
@@ -721,12 +729,18 @@ export default function AdmPedidoDetalhePage() {
     await loadAll(order.id);
 
     setSaving(false);
-    setMsg(applied > 0 ? `Crédito abatido: ${fmtBRL(applied)}.` : "Nenhum crédito abatido (sem saldo ou pedido já quitado).");
+    setMsg(
+      applied > 0
+        ? `Crédito abatido: ${fmtBRL(applied)}.`
+        : "Nenhum crédito abatido (sem saldo ou pedido já quitado)."
+    );
   }
 
   async function deleteThisOrder() {
     if (!order) return;
-    const ok = window.confirm("Tem certeza que deseja excluir este pedido? Isso remove do Admin e do Franqueado.");
+    const ok = window.confirm(
+      "Tem certeza que deseja excluir este pedido? Isso remove do Admin e do Franqueado."
+    );
     if (!ok) return;
 
     setSaving(true);
@@ -926,245 +940,6 @@ export default function AdmPedidoDetalhePage() {
     }
   }
 
-  function openNfeModal() {
-    if (!order) return;
-
-    setNfeCopyMsg("");
-
-    const draft: Record<string, NfeItemDraft> = {};
-    for (const it of items) {
-      const sku = it.products?.sku ?? "";
-      const name = it.products?.name ?? "";
-      const unit = (it.products?.unit ?? it.unit ?? "un") as string;
-      const qty = Number(it.qty ?? 0) || 0;
-      const unit_cost = Number(it.unit_cost ?? 0) || 0;
-
-      draft[it.id] = {
-        product_id: it.product_id,
-        sku,
-        name,
-        unit,
-        qty,
-        unit_cost,
-        ncm: it.products?.ncm ?? "",
-        cest: it.products?.cest ?? "",
-        cfop: it.products?.cfop ?? it.products?.cfop_default ?? "",
-        ean: it.products?.ean ?? "",
-        origin: it.products?.origin ?? "",
-        icms_cst: it.products?.icms_cst ?? "",
-        pis_cst: it.products?.pis_cst ?? "",
-        cofins_cst: it.products?.cofins_cst ?? "",
-      };
-    }
-
-    setNfeItems(draft);
-    setNfeNatureza("VENDA");
-    setNfeSerie("1");
-    setNfeNumero("");
-    setNfeModalOpen(true);
-  }
-
-  function closeNfeModal() {
-    setNfeModalOpen(false);
-  }
-
-  function setNfeItemField(itemId: string, field: keyof NfeItemDraft, value: string) {
-    setNfeItems((prev) => ({
-      ...prev,
-      [itemId]: {
-        ...(prev[itemId] ?? ({} as any)),
-        [field]: value,
-      },
-    }));
-  }
-
-  const nfeDraftPayload = useMemo(() => {
-    if (!order || !storeInfo) return null;
-
-    const itemsList = Object.values(nfeItems).map((it) => {
-      const qty = Number(it.qty || 0);
-      const unit_cost = Number(it.unit_cost || 0);
-
-      return {
-        codigo: it.sku || it.product_id,
-        descricao: it.name,
-        ncm: (it.ncm || "").trim() || null,
-        cest: (it.cest || "").trim() || null,
-        cfop: (it.cfop || "").trim() || null,
-        unidade: it.unit || "UN",
-        quantidade: qty,
-        valor_unitario: unit_cost,
-        valor_total: qty * unit_cost,
-        gtin: (it.ean || "").trim() || null,
-        origem: (it.origin || "").trim() || null,
-        icms_situacao_tributaria: (it.icms_cst || "").trim() || null,
-        pis_situacao_tributaria: (it.pis_cst || "").trim() || null,
-        cofins_situacao_tributaria: (it.cofins_cst || "").trim() || null,
-      };
-    });
-
-    return {
-      orderId: order.id,
-      storeId: order.store_id,
-      natureza_operacao: (nfeNatureza || "").trim() || "VENDA",
-      serie: (nfeSerie || "").trim() || "1",
-      numero: (nfeNumero || "").trim() || null,
-      data_emissao: new Date().toISOString(),
-      destinatario: {
-        nome: storeInfo.legal_name || storeInfo.name || "",
-        nome_fantasia: storeInfo.name || "",
-        cpf_cnpj: onlyDigits(storeInfo.cnpj || ""),
-        indicador_inscricao_estadual: storeInfo.ind_ie_dest || "9",
-        inscricao_estadual: storeInfo.ie || null,
-        email: storeInfo.email_nf || null,
-        telefone: storeInfo.phone_nf || null,
-        endereco: {
-          logradouro: storeInfo.address_street || "",
-          numero: storeInfo.address_number || "",
-          complemento: storeInfo.address_complement || "",
-          bairro: storeInfo.address_neighborhood || "",
-          cep: onlyDigits(storeInfo.address_zip || ""),
-          municipio: storeInfo.city || "",
-          uf: storeInfo.state || "",
-        },
-      },
-      transporte: {
-        modalidade_frete: "9",
-        valor_frete: Number(order.freight_fee ?? 0) || 0,
-      },
-      itens: itemsList,
-      observacoes: order.notes || null,
-    };
-  }, [order, storeInfo, nfeItems, nfeNatureza, nfeSerie, nfeNumero]);
-
-  async function copyNfeJson() {
-    if (!nfeDraftPayload) return;
-    try {
-      const txt = JSON.stringify(nfeDraftPayload, null, 2);
-      await navigator.clipboard.writeText(txt);
-      setNfeCopyMsg("JSON copiado.");
-      setTimeout(() => setNfeCopyMsg(""), 1500);
-    } catch {
-      setNfeCopyMsg("Não consegui copiar automaticamente. Selecione e copie manualmente.");
-    }
-  }
-
-  async function emitFocusNfe() {
-  if (!order || !storeInfo || !order.store_id) {
-    setMsg("Pedido sem store_id. Não é possível emitir.");
-    return;
-  }
-
-  setFocusEmitting(true);
-  setMsg("");
-
-  try {
-    const reference = `PED-${order.id}`;
-
-    const payload = {
-      orderId: order.id,
-      storeId: order.store_id,
-      emitterId: (order as any).emitter_id || null,
-      reference,
-      natureza_operacao: (nfeNatureza || "VENDA").trim(),
-      serie: (nfeSerie || "1").trim(),
-      numero: (nfeNumero || "").trim() || null,
-      destinatario: {
-        nome: storeInfo.legal_name || storeInfo.name || "",
-        nome_fantasia: storeInfo.name || "",
-        cpf_cnpj: onlyDigits(storeInfo.cnpj || ""),
-        indicador_inscricao_estadual: storeInfo.ind_ie_dest || "9",
-        inscricao_estadual: storeInfo.ie || null,
-        email: storeInfo.email_nf || null,
-        telefone: storeInfo.phone_nf || null,
-        endereco: {
-          logradouro: storeInfo.address_street || "",
-          numero: storeInfo.address_number || "",
-          complemento: storeInfo.address_complement || "",
-          bairro: storeInfo.address_neighborhood || "",
-          cep: onlyDigits(storeInfo.address_zip || ""),
-          municipio: storeInfo.city || "",
-          uf: storeInfo.state || "",
-        },
-      },
-      transporte: {
-        modalidade_frete: "9",
-        valor_frete: Number(order.freight_fee ?? 0) || 0,
-      },
-      itens: Object.values(nfeItems).length
-        ? Object.values(nfeItems).map((it) => ({
-            codigo: it.sku || it.product_id,
-            descricao: it.name,
-            ncm: (it.ncm || "").trim() || null,
-            cest: (it.cest || "").trim() || null,
-            cfop: (it.cfop || "").trim() || null,
-            unidade: it.unit || "UN",
-            quantidade: Number(it.qty || 0),
-            valor_unitario: Number(it.unit_cost || 0),
-            valor_total: Number(it.qty || 0) * Number(it.unit_cost || 0),
-            gtin: (it.ean || "").trim() || null,
-            origem: (it.origin || "").trim() || null,
-            icms_situacao_tributaria: (it.icms_cst || "").trim() || null,
-            pis_situacao_tributaria: (it.pis_cst || "").trim() || null,
-            cofins_situacao_tributaria: (it.cofins_cst || "").trim() || null,
-          }))
-        : items.map((it) => ({
-            codigo: it.products?.sku || it.product_id,
-            descricao: it.products?.name || "",
-            ncm: (it.products?.ncm || "").trim() || null,
-            cest: (it.products?.cest || "").trim() || null,
-            cfop: (it.products?.cfop || it.products?.cfop_default || "").trim() || null,
-            unidade: it.products?.unit || it.unit || "UN",
-            quantidade: Number(it.qty || 0),
-            valor_unitario: Number(it.unit_cost || 0),
-            valor_total: Number(it.qty || 0) * Number(it.unit_cost || 0),
-            gtin: (it.products?.ean || "").trim() || null,
-            origem: (it.products?.origin || "").trim() || null,
-            icms_situacao_tributaria: (it.products?.icms_cst || "").trim() || null,
-            pis_situacao_tributaria: (it.products?.pis_cst || "").trim() || null,
-            cofins_situacao_tributaria: (it.products?.cofins_cst || "").trim() || null,
-          })),
-      observacoes: order.notes || null,
-    };
-
-    const res = await fetch("/api/focus/nfe/emitir", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const data = await res.json().catch(() => ({}));
-
-    if (!res.ok || !data?.ok) {
-      const validationErrors = Array.isArray(data?.validation_errors)
-        ? data.validation_errors.join(" | ")
-        : "";
-
-      const focusDetails =
-        typeof data?.focus_details === "string"
-          ? data.focus_details
-          : data?.focus_details
-          ? JSON.stringify(data.focus_details)
-          : "";
-
-      const debugError =
-        typeof data?.error === "string"
-          ? data.error
-          : "Erro ao emitir NF-e.";
-
-      setMsg([debugError, validationErrors, focusDetails].filter(Boolean).join(" | "));
-      return;
-    }
-
-    await loadFocusDoc(order.id);
-    setMsg("NF-e enviada para a Focus.");
-  } catch (e: any) {
-    setMsg(e?.message || "Erro ao emitir NF-e.");
-  } finally {
-    setFocusEmitting(false);
-  }
-}
-
   async function refreshFocusStatus() {
     if (!order || !focusDoc?.reference) return;
 
@@ -1185,8 +960,6 @@ export default function AdmPedidoDetalhePage() {
 
       const data = await res.json().catch(() => ({}));
 
-      console.log("RESPOSTA STATUS NF-E:", data);
-
       if (!res.ok || !data?.ok) {
         setMsg(data?.error || "Erro ao consultar status da NF-e.");
         return;
@@ -1195,14 +968,15 @@ export default function AdmPedidoDetalhePage() {
       await loadFocusDoc(order.id);
       setMsg("Status da NF-e atualizado.");
     } catch (e: any) {
-      console.error("ERRO FRONT STATUS NF-E:", e);
       setMsg(e?.message || "Erro ao consultar status da NF-e.");
     } finally {
       setFocusRefreshing(false);
     }
   }
 
-  if (loading) return <Card>Carregando...</Card>;
+  if (loading) {
+    return <Card>Carregando...</Card>;
+  }
 
   if (!order) {
     return (
@@ -1210,7 +984,11 @@ export default function AdmPedidoDetalhePage() {
         <PageHeader
           title="Pedido"
           subtitle="Não foi possível carregar"
-          right={<SecondaryActionButton onClick={() => router.push("/adm/pedidos")}>Voltar</SecondaryActionButton>}
+          right={
+            <SecondaryActionButton onClick={() => router.push("/adm/pedidos")}>
+              Voltar
+            </SecondaryActionButton>
+          }
         />
         <Card>
           <div className="text-sm text-red-600">{msg || "Pedido não encontrado."}</div>
@@ -1220,6 +998,8 @@ export default function AdmPedidoDetalhePage() {
   }
 
   const edited = !!order.edited_by_admin;
+  const logisticsHref = `/adm/logistica/${order.id}`;
+  const fiscalHref = `/adm/emissao-fiscal/${order.id}`;
 
   const itemsRows = items.map((it) => {
     const sku = it.products?.sku ?? "-";
@@ -1333,29 +1113,45 @@ export default function AdmPedidoDetalhePage() {
         right={
           <div className="flex flex-wrap items-center gap-2">
             {edited ? (
-              <Badge tone="blue">EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}</Badge>
+              <Badge tone="blue">
+                EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}
+              </Badge>
             ) : (
               <Badge tone="neutral">ORIGINAL</Badge>
             )}
 
+            <Link href={logisticsHref}>
+              <SecondaryActionButton>Ir para logística</SecondaryActionButton>
+            </Link>
+
+            <Link href={fiscalHref}>
+              <SecondaryActionButton>Ir para emissão fiscal</SecondaryActionButton>
+            </Link>
+
             <SecondaryActionButton onClick={() => router.push("/adm/pedidos")}>
               Voltar
             </SecondaryActionButton>
+
             <SecondaryActionButton onClick={() => loadAll(order.id)} disabled={saving}>
               Recarregar
             </SecondaryActionButton>
+
             <SecondaryActionButton onClick={handlePrint}>
               Imprimir
             </SecondaryActionButton>
-            <SecondaryActionButton onClick={openNfeModal} disabled={saving || loading}>
-              Preparar NF-e
-            </SecondaryActionButton>
-            <SecondaryActionButton onClick={openSplitModal} disabled={saving || editMode || lockedByLogistics}>
+
+            <SecondaryActionButton
+              onClick={openSplitModal}
+              disabled={saving || editMode || lockedByLogistics}
+            >
               Gerar pedido parcial
             </SecondaryActionButton>
 
             {!editMode ? (
-              <PrimaryActionButton onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)} disabled={saving || lockedByLogistics}>
+              <PrimaryActionButton
+                onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)}
+                disabled={saving || lockedByLogistics}
+              >
                 Editar itens
               </PrimaryActionButton>
             ) : (
@@ -1394,14 +1190,18 @@ export default function AdmPedidoDetalhePage() {
           <SummaryBox title="Frete" value={fmtBRL(frete)} />
           <SummaryBox title="Crédito abatido" value={`- ${fmtBRL(creditApplied)}`} />
           <SummaryBox title="Total líquido" value={fmtBRL(totalLiquido)} />
-          <SummaryBox title="Saldo da loja" value={fmtBRL(creditBalance)} subtitle="Disponível para abatimento" />
+          <SummaryBox
+            title="Saldo da loja"
+            value={fmtBRL(creditBalance)}
+            subtitle="Disponível para abatimento"
+          />
         </div>
       </div>
 
       <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
         <SectionTitle
           title="NF-e / Focus"
-          subtitle="Emissão fiscal vinculada a este pedido"
+          subtitle="Acompanhe a emissão já iniciada e navegue para a área fiscal"
           right={
             <div className="flex flex-wrap items-center gap-2">
               {focusDoc ? (
@@ -1412,13 +1212,16 @@ export default function AdmPedidoDetalhePage() {
                 <Badge tone="neutral">Sem NF-e</Badge>
               )}
 
-              <SecondaryActionButton onClick={refreshFocusStatus} disabled={!focusDoc?.reference || focusRefreshing}>
+              <SecondaryActionButton
+                onClick={refreshFocusStatus}
+                disabled={!focusDoc?.reference || focusRefreshing}
+              >
                 {focusRefreshing ? "Consultando..." : "Consultar status"}
               </SecondaryActionButton>
 
-              <PrimaryActionButton onClick={emitFocusNfe} disabled={focusEmitting || !storeInfo || items.length === 0}>
-                {focusEmitting ? "Emitindo..." : "Emitir NF-e"}
-              </PrimaryActionButton>
+              <Link href={fiscalHref}>
+                <PrimaryActionButton>Ir para emissão fiscal</PrimaryActionButton>
+              </Link>
             </div>
           }
         />
@@ -1429,7 +1232,7 @@ export default function AdmPedidoDetalhePage() {
               <InfoPair label="Status" value={focusDoc?.status || "-"} />
               <InfoPair label="Referência" value={focusDoc?.reference || `PED-${order.id}`} />
               <InfoPair label="Número" value={focusDoc?.numero || "-"} />
-              <InfoPair label="Série" value={focusDoc?.serie || nfeSerie || "-"} />
+              <InfoPair label="Série" value={focusDoc?.serie || "-"} />
               <InfoPair label="Chave" value={focusDoc?.chave || "-"} />
               <InfoPair label="Protocolo" value={focusDoc?.protocolo || "-"} />
               <InfoPair label="Criado em" value={fmtDT(focusDoc?.created_at)} />
@@ -1440,7 +1243,9 @@ export default function AdmPedidoDetalhePage() {
           <div className="rounded-[22px] border border-slate-200 bg-white p-4">
             <div className="space-y-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Links do documento</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Links do documento
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {focusDoc?.url_danfe ? (
                     <a
@@ -1471,7 +1276,9 @@ export default function AdmPedidoDetalhePage() {
               </div>
 
               <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Erro / retorno Focus</div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Erro / retorno Focus
+                </div>
                 <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
                   {focusDoc?.error_message || "Sem mensagem de erro."}
                 </div>
@@ -1494,13 +1301,6 @@ export default function AdmPedidoDetalhePage() {
             />
 
             <Select
-              label="Logística"
-              value={(order.logistic_status ?? "RECEBIDO") as any}
-              onChange={(v) => updateOrder({ logistic_status: v as any })}
-              options={LOG_OPTIONS.map((s) => ({ value: s, label: s }))}
-            />
-
-            <Select
               label="Entrega"
               value={(order.delivery_mode ?? "RETIRADA") as any}
               onChange={(v) => updateOrder({ delivery_mode: v as any })}
@@ -1513,14 +1313,6 @@ export default function AdmPedidoDetalhePage() {
               onChange={(v) => updateOrder({ freight_fee: Number(v) })}
               type="number"
             />
-
-            <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pagamento</div>
-              <PrimaryActionButton onClick={onTogglePaid} disabled={saving} fullWidth>
-                {order.is_paid ? "Pago" : "Marcar como pago"}
-              </PrimaryActionButton>
-              <div className="text-xs text-slate-500">{order.paid_at ? `Pago em: ${fmtDT(order.paid_at)}` : "Não pago"}</div>
-            </div>
 
             <div className="grid gap-2">
               <Input
@@ -1542,17 +1334,35 @@ export default function AdmPedidoDetalhePage() {
                 options={PAY_METHODS.map((m) => ({ value: m, label: m }))}
               />
             </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Pagamento
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={paymentTone(order)}>
+                  {order.is_paid ? "Pago" : overdue ? "Pendente vencido" : "Pendente"}
+                </Badge>
+
+                <PrimaryActionButton onClick={onTogglePaid} disabled={saving}>
+                  {order.is_paid ? "Marcar como não pago" : "Marcar como pago"}
+                </PrimaryActionButton>
+              </div>
+              <div className="text-xs text-slate-500">
+                {order.paid_at ? `Pago em: ${fmtDT(order.paid_at)}` : "Não pago"}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <SectionTitle
-            title="Prazos e crédito"
-            subtitle="Vencimento, previsão de entrega e crédito da loja"
+            title="Prazos, crédito e logística"
+            subtitle="Vencimento, previsão de entrega e atalho da operação logística"
             right={
               <div className="flex flex-wrap items-center gap-2">
                 {order.due_date ? (
-                  overdue ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">OK</Badge>
+                  overdue ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">Financeiro OK</Badge>
                 ) : (
                   <Badge tone="neutral">Sem vencimento</Badge>
                 )}
@@ -1564,6 +1374,10 @@ export default function AdmPedidoDetalhePage() {
                 ) : (
                   <Badge tone="green">Previsão OK</Badge>
                 )}
+
+                <Badge tone={logisticTone(order.logistic_status)}>
+                  {logisticLabel(order.logistic_status)}
+                </Badge>
               </div>
             }
           />
@@ -1602,8 +1416,12 @@ export default function AdmPedidoDetalhePage() {
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Crédito da loja
                 </div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">{fmtBRL(creditBalance)}</div>
-                <div className="mt-1 text-xs text-slate-500">Abatido neste pedido: {fmtBRL(Number(order.credit_applied ?? 0))}</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">
+                  {fmtBRL(creditBalance)}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  Abatido neste pedido: {fmtBRL(Number(order.credit_applied ?? 0))}
+                </div>
               </div>
 
               <PrimaryActionButton onClick={openCreditModal} disabled={saving || creditBalance <= 0}>
@@ -1611,11 +1429,61 @@ export default function AdmPedidoDetalhePage() {
               </PrimaryActionButton>
             </div>
           </div>
+
+          <div className="mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Operação logística
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <Select
+                label="Status logístico"
+                value={(order.logistic_status ?? "RECEBIDO") as any}
+                onChange={(v) => updateOrder({ logistic_status: v as any })}
+                options={LOG_OPTIONS.map((s) => ({
+                  value: s,
+                  label: s === "RECEBIDO" ? "Recebido" : s === "EM_SEPARACAO" ? "Em separação" : "Entregue",
+                }))}
+              />
+
+              <div className="grid gap-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Ações
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link href={logisticsHref}>
+                    <SecondaryActionButton>Ir para logística</SecondaryActionButton>
+                  </Link>
+
+                  <SecondaryActionButton
+                    onClick={() => updateOrder({ logistic_status: "EM_SEPARACAO" })}
+                    disabled={saving || order.logistic_status === "EM_SEPARACAO"}
+                  >
+                    Marcar em separação
+                  </SecondaryActionButton>
+
+                  <SecondaryActionButton
+                    onClick={() => updateOrder({ logistic_status: "ENTREGUE" })}
+                    disabled={saving || order.logistic_status === "ENTREGUE"}
+                  >
+                    Marcar entregue
+                  </SecondaryActionButton>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 text-xs text-slate-500">
+              Esta página e a tela de logística usam o mesmo status operacional do pedido.
+            </div>
+          </div>
         </div>
       </div>
 
       <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <SectionTitle title="Informações da loja" subtitle="Dados do destinatário para conferência e emissão" />
+        <SectionTitle
+          title="Informações da loja"
+          subtitle="Dados do destinatário para conferência e emissão"
+        />
 
         <div className="mt-6 grid gap-3 md:grid-cols-2">
           <InfoPair label="Loja" value={storeInfo?.name ?? "-"} />
@@ -1634,7 +1502,10 @@ export default function AdmPedidoDetalhePage() {
                 .join(", ") || "-"
             }
           />
-          <InfoPair label="Cidade/UF" value={[storeInfo?.city, storeInfo?.state].filter(Boolean).join("/") || "-"} />
+          <InfoPair
+            label="Cidade/UF"
+            value={[storeInfo?.city, storeInfo?.state].filter(Boolean).join("/") || "-"}
+          />
         </div>
       </div>
 
@@ -1647,7 +1518,8 @@ export default function AdmPedidoDetalhePage() {
           placeholder="Observações do pedido..."
         />
         <div className="mt-3 text-xs text-slate-500">
-          Criado: {fmtDT(order.created_at)} · Enviado: {fmtDT(order.submitted_at)} · Aprovado: {fmtDT(order.approved_at)}
+          Criado: {fmtDT(order.created_at)} · Enviado: {fmtDT(order.submitted_at)} · Aprovado:{" "}
+          {fmtDT(order.approved_at)}
         </div>
       </Card>
 
@@ -1669,7 +1541,10 @@ export default function AdmPedidoDetalhePage() {
         />
 
         <div className="mt-6">
-          <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={itemsRows} />
+          <Table
+            headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
+            rows={itemsRows}
+          />
         </div>
       </div>
 
@@ -1681,7 +1556,10 @@ export default function AdmPedidoDetalhePage() {
             right={<Badge tone="neutral">ORIGINAL</Badge>}
           />
           <div className="mt-6">
-            <Table headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]} rows={originalRows} />
+            <Table
+              headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
+              rows={originalRows}
+            />
           </div>
         </div>
       ) : null}
@@ -1705,8 +1583,18 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-4 grid gap-3">
-              <Input label="Valor (opcional)" placeholder="Vazio = abater o máximo possível" value={creditAmount} onChange={setCreditAmount} />
-              <Input label="Observação (opcional)" placeholder="Ex.: abatimento parcial" value={creditNote} onChange={setCreditNote} />
+              <Input
+                label="Valor (opcional)"
+                placeholder="Vazio = abater o máximo possível"
+                value={creditAmount}
+                onChange={setCreditAmount}
+              />
+              <Input
+                label="Observação (opcional)"
+                placeholder="Ex.: abatimento parcial"
+                value={creditNote}
+                onChange={setCreditNote}
+              />
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
@@ -1717,115 +1605,6 @@ export default function AdmPedidoDetalhePage() {
 
             <div className="mt-3 text-xs text-slate-500">
               Regra: abate até o limite do saldo e até o limite do total do pedido.
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {nfeModalOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeNfeModal}>
-          <div
-            className="w-full max-w-5xl rounded-[28px] border border-slate-200 bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-base font-semibold text-slate-900">Preparar NF-e (rascunho)</div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Preencha dados fiscais e copie o JSON para plugar na API de emissão.
-                </div>
-              </div>
-              <SecondaryActionButton onClick={closeNfeModal}>Fechar</SecondaryActionButton>
-            </div>
-
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <Input label="Natureza da operação" value={nfeNatureza} onChange={setNfeNatureza} />
-              <Input label="Série" value={nfeSerie} onChange={setNfeSerie} />
-              <Input label="Número (opcional)" value={nfeNumero} onChange={setNfeNumero} placeholder="deixe vazio se a API gerar" />
-            </div>
-
-            <div className="mt-4 rounded-xl border border-slate-200">
-              <div className="grid grid-cols-12 gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
-                <div className="col-span-4">Produto</div>
-                <div className="col-span-1 text-right">Qtd</div>
-                <div className="col-span-1 text-right">Vlr</div>
-                <div className="col-span-1">NCM</div>
-                <div className="col-span-1">CFOP</div>
-                <div className="col-span-1">CEST</div>
-                <div className="col-span-1">EAN</div>
-                <div className="col-span-1">Orig</div>
-                <div className="col-span-1">CST</div>
-              </div>
-
-              <div className="max-h-[320px] overflow-auto">
-                {items.map((it) => {
-                  const d = nfeItems[it.id];
-                  if (!d) return null;
-                  return (
-                    <div key={it.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-sm">
-                      <div className="col-span-4">
-                        <div className="text-slate-900">{d.name || "-"}</div>
-                        <div className="font-mono text-xs text-slate-500">{d.sku || "-"}</div>
-                      </div>
-                      <div className="col-span-1 text-right font-semibold">{d.qty}</div>
-                      <div className="col-span-1 text-right">{fmtBRL(d.unit_cost)}</div>
-                      <div className="col-span-1">
-                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.ncm} onChange={(e) => setNfeItemField(it.id, "ncm", e.target.value)} />
-                      </div>
-                      <div className="col-span-1">
-                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.cfop} onChange={(e) => setNfeItemField(it.id, "cfop", e.target.value)} />
-                      </div>
-                      <div className="col-span-1">
-                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.cest} onChange={(e) => setNfeItemField(it.id, "cest", e.target.value)} />
-                      </div>
-                      <div className="col-span-1">
-                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.ean} onChange={(e) => setNfeItemField(it.id, "ean", e.target.value)} />
-                      </div>
-                      <div className="col-span-1">
-                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.origin} onChange={(e) => setNfeItemField(it.id, "origin", e.target.value)} placeholder="0" />
-                      </div>
-                      <div className="col-span-1">
-                        <input className="w-full rounded-md border border-slate-200 px-2 py-1 text-sm" value={d.icms_cst} onChange={(e) => setNfeItemField(it.id, "icms_cst", e.target.value)} placeholder="ICMS" />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="border-t border-slate-200 px-3 py-2 text-xs text-slate-500">
-                * PIS/COFINS CST ficam dentro do JSON.
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                <div className="font-semibold text-slate-700">Totais</div>
-                <div className="mt-1">Itens: <b>{fmtBRL(totalItens)}</b></div>
-                <div>Frete: <b>{fmtBRL(frete)}</b></div>
-                <div>Total bruto: <b>{fmtBRL(totalComFrete)}</b></div>
-                <div>Crédito: <b>- {fmtBRL(creditApplied)}</b></div>
-                <div className="mt-1">Total líquido: <b>{fmtBRL(totalLiquido)}</b></div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs font-semibold text-slate-600">JSON (rascunho)</div>
-                  <div className="flex items-center gap-2">
-                    {nfeCopyMsg ? <span className="text-xs text-slate-600">{nfeCopyMsg}</span> : null}
-                    <SecondaryActionButton onClick={copyNfeJson}>Copiar JSON</SecondaryActionButton>
-                  </div>
-                </div>
-
-                <textarea
-                  className="mt-2 min-h-[220px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono text-slate-900 outline-none"
-                  readOnly
-                  value={nfeDraftPayload ? JSON.stringify(nfeDraftPayload, null, 2) : ""}
-                />
-              </div>
-            </div>
-
-            <div className="mt-3 text-xs text-slate-500">
-              Isso não emite NF-e ainda pelo modal. A emissão agora está no quadro fixo “NF-e / Focus”.
             </div>
           </div>
         </div>
@@ -1865,7 +1644,11 @@ export default function AdmPedidoDetalhePage() {
                     return (
                       <div key={it.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-sm">
                         <div className="col-span-1">
-                          <input type="checkbox" checked={!!st.include} onChange={(e) => setSplitInclude(it.id, e.target.checked)} />
+                          <input
+                            type="checkbox"
+                            checked={!!st.include}
+                            onChange={(e) => setSplitInclude(it.id, e.target.checked)}
+                          />
                         </div>
                         <div className="col-span-6">
                           <div className="text-slate-900">{name}</div>
@@ -1891,7 +1674,9 @@ export default function AdmPedidoDetalhePage() {
 
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs text-slate-500">Observação da remessa (opcional)</label>
+                  <label className="mb-1 block text-xs text-slate-500">
+                    Observação da remessa (opcional)
+                  </label>
                   <textarea
                     className="w-full min-h-[90px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
                     value={splitNotes}
