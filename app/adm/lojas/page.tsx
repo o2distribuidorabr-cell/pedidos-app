@@ -34,6 +34,58 @@ type StoreRow = {
   asaas_customer_id?: string | null;
 };
 
+type CnpjaResponse = {
+  ok: boolean;
+  message?: string;
+  raw?: any;
+  company?: {
+    name?: string | null;
+    alias?: string | null;
+    status?: string | null;
+    founded?: string | null;
+    nature?: string | null;
+    size?: string | null;
+    equity?: number | null;
+  };
+  address?: {
+    zip?: string | null;
+    street?: string | null;
+    number?: string | null;
+    details?: string | null;
+    district?: string | null;
+    city?: string | null;
+    state?: string | null;
+  };
+  phones?: string[];
+  emails?: string[];
+  registrations?: Array<{
+    number?: string | null;
+    state?: string | null;
+    enabled?: boolean | null;
+  }>;
+  activity?: {
+    main?: { code?: string | null; text?: string | null } | null;
+    secondary?: Array<{ code?: string | null; text?: string | null }> | null;
+  };
+  tax?: {
+    ie?: string | null;
+    registrations?: Array<{
+      number?: string | null;
+      state?: string | null;
+      enabled?: boolean | null;
+      status?: string | null;
+    }> | null;
+    simples?: {
+      opted?: boolean | null;
+      since?: string | null;
+    } | null;
+  };
+  contacts?: {
+    phoneMain?: string | null;
+    emailMain?: string | null;
+  };
+};
+
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -186,6 +238,34 @@ function WarnActionButton({
   );
 }
 
+function DangerActionButton({
+  children,
+  onClick,
+  disabled,
+  fullWidth,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold transition",
+        "border border-red-200 bg-red-50 text-red-700 hover:bg-red-100",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
 function SectionTitle({
   title,
   subtitle,
@@ -229,11 +309,47 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
+function FormSection({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[24px] border border-slate-200 bg-slate-50/70 p-4 md:p-5">
+      <div className="mb-4">
+        <div className="text-sm font-semibold text-slate-900">{title}</div>
+        {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ReadOnlyField({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[18px] border border-slate-200 bg-white px-4 py-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-900 break-words">{value || "-"}</div>
+    </div>
+  );
+}
+
 export default function AdmLojasPage() {
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [fillingCnpj, setFillingCnpj] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [stores, setStores] = useState<StoreRow[]>([]);
@@ -262,6 +378,17 @@ export default function AdmLojasPage() {
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
   const [asaasCustomerId, setAsaasCustomerId] = useState("");
+
+  const [tradeName, setTradeName] = useState("");
+  const [companyStatus, setCompanyStatus] = useState("");
+  const [companyFounded, setCompanyFounded] = useState("");
+  const [companyNature, setCompanyNature] = useState("");
+  const [companySize, setCompanySize] = useState("");
+  const [companyEquity, setCompanyEquity] = useState("");
+  const [mainCnae, setMainCnae] = useState("");
+  const [secondaryCnaes, setSecondaryCnaes] = useState("");
+  const [simplesText, setSimplesText] = useState("");
+  const [registrationsText, setRegistrationsText] = useState("");
 
   const [creditStoreId, setCreditStoreId] = useState<string | null>(null);
   const [creditAmount, setCreditAmount] = useState<string>("");
@@ -384,6 +511,19 @@ export default function AdmLojasPage() {
     };
   }, [stores, balancesByStore]);
 
+  function resetConsultationExtras() {
+    setTradeName("");
+    setCompanyStatus("");
+    setCompanyFounded("");
+    setCompanyNature("");
+    setCompanySize("");
+    setCompanyEquity("");
+    setMainCnae("");
+    setSecondaryCnaes("");
+    setSimplesText("");
+    setRegistrationsText("");
+  }
+
   function resetForm() {
     setEditingId(null);
     setName("");
@@ -407,6 +547,8 @@ export default function AdmLojasPage() {
     setBillingEmail("");
     setBillingPhone("");
     setAsaasCustomerId("");
+
+    resetConsultationExtras();
   }
 
   function startEdit(s: StoreRow) {
@@ -433,6 +575,106 @@ export default function AdmLojasPage() {
     setBillingEmail(s.billing_email ?? "");
     setBillingPhone(s.billing_phone ?? "");
     setAsaasCustomerId(s.asaas_customer_id ?? "");
+
+    resetConsultationExtras();
+  }
+
+  async function fillFromCNPJ() {
+    setMsg("");
+
+    const normalizedCnpj = normalizeCNPJ(cnpj);
+    if (normalizedCnpj.length !== 14) {
+      setMsg("CNPJ inválido. Informe 14 dígitos.");
+      return;
+    }
+
+    try {
+      setFillingCnpj(true);
+
+      const resp = await fetch(`/api/cnpja/${normalizedCnpj}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = (await resp.json()) as CnpjaResponse;
+
+      if (!resp.ok || !data.ok) {
+        setMsg(data?.message || "Não foi possível consultar o CNPJ.");
+        return;
+      }
+
+      setLegalName(data.company?.name ?? "");
+      setName(data.company?.alias ?? data.company?.name ?? "");
+      setCnpj(normalizedCnpj);
+      setZip(data.address?.zip ?? "");
+      setStreet(data.address?.street ?? "");
+      setNumberAddr(data.address?.number ?? "");
+      setComplement(data.address?.details ?? "");
+      setNeighborhood(data.address?.district ?? "");
+      setCity(data.address?.city ?? "");
+      setStateUf((data.address?.state ?? "").toUpperCase());
+
+      const ieFromRegistrations =
+        data.registrations?.find((x) => x?.state?.toUpperCase() === (data.address?.state ?? "").toUpperCase())?.number ??
+        data.registrations?.find((x) => !!x?.number)?.number ??
+        "";
+
+      setIe(ieFromRegistrations || "");
+      setEmailNf(data.emails?.[0] ?? "");
+      setPhoneNf(data.phones?.[0] ?? "");
+
+      setBillingEmail(data.emails?.[0] ?? "");
+      setBillingPhone(data.phones?.[0] ?? "");
+
+      setTradeName(data.company?.alias ?? "");
+      setCompanyStatus(data.company?.status ?? "");
+      setCompanyFounded(data.company?.founded ?? "");
+      setCompanyNature(data.company?.nature ?? "");
+      setCompanySize(data.company?.size ?? "");
+      setCompanyEquity(
+        data.company?.equity != null && Number.isFinite(Number(data.company.equity))
+          ? money(Number(data.company.equity))
+          : ""
+      );
+      setMainCnae(data.activity?.main ? [data.activity.main.code, data.activity.main.text].filter(Boolean).join(" - ") : "");
+      setSecondaryCnaes(
+        Array.isArray(data.activity?.secondary)
+          ? data.activity.secondary
+              .map((x) => [x.code, x.text].filter(Boolean).join(" - "))
+              .filter(Boolean)
+              .join(" | ")
+          : ""
+      );
+      setSimplesText(
+        data.tax?.simples
+          ? `Optante: ${data.tax.simples.opted ? "Sim" : "Não"}${
+              data.tax.simples.since ? ` • Desde: ${data.tax.simples.since}` : ""
+            }`
+          : ""
+      );
+      setRegistrationsText(
+        Array.isArray(data.registrations)
+          ? data.registrations
+              .map((x) =>
+                [
+                  x.state ?? "",
+                  x.number ?? "",
+                  x.enabled == null ? "" : x.enabled ? "Habilitada" : "Desabilitada",
+                ]
+                  .filter(Boolean)
+                  .join(" - ")
+              )
+              .filter(Boolean)
+              .join(" | ")
+          : ""
+      );
+
+      setMsg("Dados do CNPJ atualizados e reaplicados no formulário.");
+    } catch (error: any) {
+      setMsg(error?.message || "Erro ao consultar o CNPJ.");
+    } finally {
+      setFillingCnpj(false);
+    }
   }
 
   async function saveStore() {
@@ -655,13 +897,13 @@ export default function AdmLojasPage() {
     <div className="space-y-6">
       <PageHeader
         title="Lojas"
-        subtitle="Cadastre, edite e administre os dados comerciais, fiscais e financeiros das unidades."
+        subtitle="Cadastre, consulte CNPJ, edite e administre os dados comerciais, fiscais e financeiros das unidades."
         right={
           <div className="flex flex-wrap gap-2">
             <SecondaryActionButton onClick={() => router.push("/adm/financeiro")}>
               Financeiro
             </SecondaryActionButton>
-            <SecondaryActionButton onClick={loadStores} disabled={working}>
+            <SecondaryActionButton onClick={loadStores} disabled={working || loading}>
               Atualizar
             </SecondaryActionButton>
           </div>
@@ -688,301 +930,386 @@ export default function AdmLojasPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.35fr]">
-        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <SectionTitle
-            title={editingId ? "Editar loja" : "Nova loja"}
-            subtitle={editingId ? "Atualize os dados da unidade selecionada" : "Preencha os dados para cadastrar uma nova unidade"}
-          />
+      <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.08fr)_minmax(0,1fr)]">
+        <div className="space-y-6">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <SectionTitle
+              title={editingId ? "Editar loja" : "Nova loja"}
+              subtitle={
+                editingId
+                  ? "Atualize os dados da unidade selecionada"
+                  : "Preencha os dados da loja. Você pode consultar o CNPJ para reaplicar automaticamente os dados."
+              }
+              right={
+                <div className="flex flex-wrap gap-2">
+                  <SecondaryActionButton onClick={resetForm} disabled={working || fillingCnpj}>
+                    Limpar
+                  </SecondaryActionButton>
 
-          <div className="mt-6 grid gap-4">
-            <Input
-              label="Nome da loja"
-              value={name}
-              onChange={setName}
-              placeholder="Ex.: Loja Shopping Cidade"
+                  <PrimaryActionButton onClick={saveStore} disabled={working || fillingCnpj}>
+                    {working ? "Salvando..." : editingId ? "Salvar alterações" : "Cadastrar loja"}
+                  </PrimaryActionButton>
+                </div>
+              }
             />
 
-            <div className="grid gap-4 md:grid-cols-2">
-              <Input
-                label="Razão social"
-                value={legalName}
-                onChange={setLegalName}
-                placeholder="Ex.: Minha Empresa LTDA"
-              />
-              <Input
-                label="CNPJ"
-                value={cnpj}
-                onChange={setCnpj}
-                placeholder="Somente números"
-              />
+            <div className="mt-6 space-y-5">
+              <FormSection
+                title="Consulta automática por CNPJ"
+                subtitle="Ao consultar, os campos do formulário serão preenchidos novamente com os dados mais atuais retornados pela CNPJA."
+              >
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_220px]">
+                  <Input
+                    label="CNPJ"
+                    value={cnpj}
+                    onChange={setCnpj}
+                    placeholder="Somente números"
+                  />
+
+                  <div className="flex items-end">
+                    <PrimaryActionButton onClick={fillFromCNPJ} disabled={fillingCnpj || working} fullWidth>
+                      {fillingCnpj ? "Consultando..." : "Preencher pelo CNPJ"}
+                    </PrimaryActionButton>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <ReadOnlyField label="Nome fantasia consultado" value={tradeName || "-"} />
+                  <ReadOnlyField label="Situação cadastral" value={companyStatus || "-"} />
+                  <ReadOnlyField label="Abertura" value={companyFounded || "-"} />
+                  <ReadOnlyField label="Porte" value={companySize || "-"} />
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <ReadOnlyField label="Natureza jurídica" value={companyNature || "-"} />
+                  <ReadOnlyField label="Capital social" value={companyEquity || "-"} />
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <ReadOnlyField label="CNAE principal" value={mainCnae || "-"} />
+                  <ReadOnlyField label="Simples / enquadramento" value={simplesText || "-"} />
+                </div>
+
+                <div className="mt-3 grid gap-3">
+                  <ReadOnlyField label="CNAEs secundários" value={secondaryCnaes || "-"} />
+                  <ReadOnlyField label="Inscrições estaduais encontradas" value={registrationsText || "-"} />
+                </div>
+              </FormSection>
+
+              <FormSection
+                title="Identificação da loja"
+                subtitle="Dados principais do cadastro interno"
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input
+                    label="Nome da loja"
+                    value={name}
+                    onChange={setName}
+                    placeholder="Ex.: Loja Shopping Cidade"
+                  />
+
+                  <Input
+                    label="Razão social"
+                    value={legalName}
+                    onChange={setLegalName}
+                    placeholder="Ex.: Minha Empresa LTDA"
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  <Input
+                    label="Cidade"
+                    value={city}
+                    onChange={setCity}
+                    placeholder="Ex.: Belo Horizonte"
+                  />
+                  <Input
+                    label="UF"
+                    value={stateUf}
+                    onChange={(v) => setStateUf(v.toUpperCase())}
+                    placeholder="MG"
+                    maxLength={2}
+                  />
+                  <Input
+                    label="Frete padrão"
+                    value={freightFee}
+                    onChange={setFreightFee}
+                    placeholder="Ex.: 65,00"
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <Select
+                    label="Ativa?"
+                    value={active ? "true" : "false"}
+                    onChange={(v) => setActive(v === "true")}
+                    options={[
+                      { value: "true", label: "Sim" },
+                      { value: "false", label: "Não" },
+                    ]}
+                  />
+
+                  <Input
+                    label="Asaas customer id"
+                    value={asaasCustomerId}
+                    onChange={setAsaasCustomerId}
+                    placeholder="Será preenchido pelo sistema quando existir"
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection
+                title="Endereço"
+                subtitle="Endereço fiscal e operacional da loja"
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input
+                    label="CEP"
+                    value={zip}
+                    onChange={setZip}
+                    placeholder="Somente números"
+                  />
+                  <Input
+                    label="Bairro"
+                    value={neighborhood}
+                    onChange={setNeighborhood}
+                    placeholder="Ex.: Centro"
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  <div className="md:col-span-2">
+                    <Input
+                      label="Logradouro"
+                      value={street}
+                      onChange={setStreet}
+                      placeholder="Rua / Avenida / etc."
+                    />
+                  </div>
+
+                  <Input
+                    label="Número"
+                    value={numberAddr}
+                    onChange={setNumberAddr}
+                    placeholder="Ex.: 123"
+                  />
+                </div>
+
+                <div className="mt-4">
+                  <Input
+                    label="Complemento"
+                    value={complement}
+                    onChange={setComplement}
+                    placeholder="Opcional"
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection
+                title="Dados fiscais"
+                subtitle="Informações usadas em emissão e conferência fiscal"
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input
+                    label="Inscrição Estadual"
+                    value={ie}
+                    onChange={setIe}
+                    placeholder="IE"
+                  />
+                  <Input
+                    label="CNPJ"
+                    value={cnpj}
+                    onChange={setCnpj}
+                    placeholder="Somente números"
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <Input
+                    label="Email NFe"
+                    value={emailNf}
+                    onChange={setEmailNf}
+                    placeholder="financeiro@loja.com"
+                    inputMode="email"
+                  />
+                  <Input
+                    label="Telefone NFe"
+                    value={phoneNf}
+                    onChange={setPhoneNf}
+                    placeholder="(xx) xxxxx-xxxx"
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection
+                title="Cobrança"
+                subtitle="Contatos de financeiro e cobrança da unidade"
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Input
+                    label="Email cobrança"
+                    value={billingEmail}
+                    onChange={setBillingEmail}
+                    placeholder="financeiro@loja.com"
+                    inputMode="email"
+                  />
+                  <Input
+                    label="Telefone cobrança"
+                    value={billingPhone}
+                    onChange={setBillingPhone}
+                    placeholder="(xx) xxxxx-xxxx"
+                  />
+                </div>
+              </FormSection>
+
+              {editingId ? (
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                  ID da loja: <span className="font-mono">{editingId}</span>
+                </div>
+              ) : null}
             </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <Input
-                label="CEP"
-                value={zip}
-                onChange={setZip}
-                placeholder="Somente números"
-              />
-              <Input
-                label="Bairro"
-                value={neighborhood}
-                onChange={setNeighborhood}
-                placeholder="Ex.: Centro"
-              />
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="md:col-span-2">
-                <Input
-                  label="Logradouro"
-                  value={street}
-                  onChange={setStreet}
-                  placeholder="Rua / Avenida / etc."
-                />
-              </div>
-              <Input
-                label="Número"
-                value={numberAddr}
-                onChange={setNumberAddr}
-                placeholder="Ex.: 123"
-              />
-            </div>
-
-            <Input
-              label="Complemento"
-              value={complement}
-              onChange={setComplement}
-              placeholder="Opcional"
-            />
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <Input
-                label="Cidade"
-                value={city}
-                onChange={setCity}
-                placeholder="Belo Horizonte"
-              />
-              <Input
-                label="UF"
-                value={stateUf}
-                onChange={(v) => setStateUf(v.toUpperCase())}
-                placeholder="MG"
-                maxLength={2}
-              />
-            </div>
-
-            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">Dados fiscais</div>
-
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <Input
-                  label="IE"
-                  value={ie}
-                  onChange={setIe}
-                  placeholder="Inscrição Estadual"
-                />
-                <Input
-                  label="Email NFe"
-                  value={emailNf}
-                  onChange={setEmailNf}
-                  placeholder="financeiro@loja.com"
-                  inputMode="email"
-                />
-              </div>
-
-              <div className="mt-4">
-                <Input
-                  label="Telefone NFe"
-                  value={phoneNf}
-                  onChange={setPhoneNf}
-                  placeholder="(xx) xxxxx-xxxx"
-                />
-              </div>
-            </div>
-
-            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-              <div className="text-sm font-semibold text-slate-900">Cobrança / Asaas</div>
-
-              <div className="mt-4 grid gap-4 md:grid-cols-2">
-                <Input
-                  label="Email cobrança"
-                  value={billingEmail}
-                  onChange={setBillingEmail}
-                  placeholder="financeiro@loja.com"
-                  inputMode="email"
-                />
-                <Input
-                  label="Telefone cobrança"
-                  value={billingPhone}
-                  onChange={setBillingPhone}
-                  placeholder="(xx) xxxxx-xxxx"
-                />
-              </div>
-
-              <div className="mt-4">
-                <Input
-                  label="Asaas customer id"
-                  value={asaasCustomerId}
-                  onChange={setAsaasCustomerId}
-                  placeholder="Será preenchido pelo sistema quando existir"
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <Input
-                label="Frete padrão"
-                value={freightFee}
-                onChange={setFreightFee}
-                placeholder="Ex.: 65,00"
-              />
-              <Select
-                label="Ativa?"
-                value={active ? "true" : "false"}
-                onChange={(v) => setActive(v === "true")}
-                options={[
-                  { value: "true", label: "Sim" },
-                  { value: "false", label: "Não" },
-                ]}
-              />
-            </div>
-
-            <div className="grid gap-2 pt-2 sm:grid-cols-2">
-              <SecondaryActionButton onClick={resetForm} disabled={working} fullWidth>
-                Limpar
-              </SecondaryActionButton>
-
-              <PrimaryActionButton onClick={saveStore} disabled={working} fullWidth>
-                {working ? "Salvando..." : editingId ? "Salvar alterações" : "Cadastrar loja"}
-              </PrimaryActionButton>
-            </div>
-
-            {editingId ? (
-              <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
-                ID da loja: <span className="font-mono">{editingId}</span>
-              </div>
-            ) : null}
           </div>
         </div>
 
-        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <SectionTitle
-            title="Lista de lojas"
-            subtitle="Busque, edite, ative/desative e gerencie crédito por unidade"
-          />
-
-          <div className="mt-6">
-            <Input
-              label="Buscar"
-              value={q}
-              onChange={setQ}
-              placeholder="Nome, razão social, CNPJ, cidade, UF, endereço..."
+        <div className="space-y-6">
+          <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <SectionTitle
+              title="Lista de lojas"
+              subtitle="Busque, edite, ative/desative e gerencie crédito por unidade"
             />
-          </div>
 
-          <div className="mt-6 space-y-4">
-            {loading ? <EmptyState text="Carregando lojas..." /> : null}
+            <div className="mt-6">
+              <Input
+                label="Buscar"
+                value={q}
+                onChange={setQ}
+                placeholder="Nome, razão social, CNPJ, cidade, UF, endereço..."
+              />
+            </div>
 
-            {!loading && filtered.length === 0 ? (
-              <EmptyState text="Nenhuma loja encontrada." />
-            ) : null}
+            <div className="mt-6 space-y-4">
+              {loading ? <EmptyState text="Carregando lojas..." /> : null}
 
-            {!loading && filtered.length > 0
-              ? filtered.map((s) => {
-                  const bal = balancesByStore[s.id] ?? 0;
+              {!loading && filtered.length === 0 ? (
+                <EmptyState text="Nenhuma loja encontrada." />
+              ) : null}
 
-                  return (
-                    <div
-                      key={s.id}
-                      className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5"
-                    >
-                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="truncate text-base font-semibold text-slate-900">
-                              {s.name}
+              {!loading && filtered.length > 0
+                ? filtered.map((s) => {
+                    const bal = balancesByStore[s.id] ?? 0;
+
+                    return (
+                      <div
+                        key={s.id}
+                        className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5"
+                      >
+                        <div className="flex flex-col gap-4">
+                          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="truncate text-base font-semibold text-slate-900">
+                                  {s.name}
+                                </div>
+                                <Badge tone={s.active ? "green" : "red"}>
+                                  {s.active ? "Ativa" : "Inativa"}
+                                </Badge>
+                                {bal > 0 ? <Badge tone="blue">Com crédito</Badge> : null}
+                              </div>
+
+                              <div className="mt-1 text-sm text-slate-500 break-all">
+                                {s.legal_name ?? "-"}
+                              </div>
                             </div>
-                            <Badge tone={s.active ? "green" : "red"}>
-                              {s.active ? "Ativa" : "Inativa"}
-                            </Badge>
-                            {bal > 0 ? <Badge tone="blue">Com crédito</Badge> : null}
+
+                            <div className="grid gap-2 sm:grid-cols-3 lg:w-[330px] lg:grid-cols-3">
+                              <SecondaryActionButton
+                                onClick={() => startEdit(s)}
+                                disabled={working}
+                                fullWidth
+                              >
+                                Editar
+                              </SecondaryActionButton>
+
+                              <PrimaryActionButton
+                                onClick={() => openCredit(s)}
+                                disabled={working}
+                                fullWidth
+                              >
+                                Crédito
+                              </PrimaryActionButton>
+
+                              {s.active ? (
+                                <WarnActionButton
+                                  onClick={() => toggleActive(s)}
+                                  disabled={working}
+                                  fullWidth
+                                >
+                                  Desativar
+                                </WarnActionButton>
+                              ) : (
+                                <DangerActionButton
+                                  onClick={() => toggleActive(s)}
+                                  disabled={working}
+                                  fullWidth
+                                >
+                                  Ativar
+                                </DangerActionButton>
+                              )}
+                            </div>
                           </div>
 
-                          <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                            <div className="space-y-3">
-                              <InfoPair label="Razão social" value={s.legal_name ?? "-"} />
-                              <InfoPair label="CNPJ" value={formatCNPJ(s.cnpj)} />
-                              <InfoPair
-                                label="Cidade / UF"
-                                value={`${s.city ?? "-"}${s.state ? ` / ${s.state}` : ""}`}
-                              />
-                              <InfoPair
-                                label="Endereço"
-                                value={`${s.address_street ?? "-"}${s.address_number ? `, ${s.address_number}` : ""}`}
-                              />
-                              <InfoPair label="Bairro" value={s.address_neighborhood ?? "-"} />
-                              <InfoPair label="CEP" value={formatCEP(s.address_zip)} />
-                              <InfoPair
-                                label="Frete padrão"
-                                value={s.freight_fee != null ? money(Number(s.freight_fee)) : "-"}
-                              />
-                              <InfoPair label="Email cobrança" value={s.billing_email ?? "-"} />
-                              <InfoPair label="Telefone cobrança" value={s.billing_phone ?? "-"} />
-                              <InfoPair
-                                label="Asaas customer"
-                                value={
-                                  s.asaas_customer_id ? (
-                                    <span className="break-all font-mono text-xs">
-                                      {s.asaas_customer_id}
-                                    </span>
-                                  ) : (
-                                    "-"
-                                  )
-                                }
-                              />
-                              <InfoPair label="Crédito" value={money(bal)} />
-                              <InfoPair
-                                label="ID"
-                                value={
-                                  <span className="break-all font-mono text-xs">{s.id}</span>
-                                }
-                              />
+                          <div className="grid gap-4 xl:grid-cols-2">
+                            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                              <div className="space-y-3">
+                                <InfoPair label="CNPJ" value={formatCNPJ(s.cnpj)} />
+                                <InfoPair
+                                  label="Cidade / UF"
+                                  value={`${s.city ?? "-"}${s.state ? ` / ${s.state}` : ""}`}
+                                />
+                                <InfoPair label="CEP" value={formatCEP(s.address_zip)} />
+                                <InfoPair
+                                  label="Endereço"
+                                  value={`${s.address_street ?? "-"}${s.address_number ? `, ${s.address_number}` : ""}`}
+                                />
+                                <InfoPair label="Bairro" value={s.address_neighborhood ?? "-"} />
+                                <InfoPair
+                                  label="Frete padrão"
+                                  value={s.freight_fee != null ? money(Number(s.freight_fee)) : "-"}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                              <div className="space-y-3">
+                                <InfoPair label="IE" value={s.ie ?? "-"} />
+                                <InfoPair label="Email NFe" value={s.email_nf ?? "-"} />
+                                <InfoPair label="Telefone NFe" value={s.phone_nf ?? "-"} />
+                                <InfoPair label="Email cobrança" value={s.billing_email ?? "-"} />
+                                <InfoPair label="Telefone cobrança" value={s.billing_phone ?? "-"} />
+                                <InfoPair label="Crédito" value={money(bal)} />
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="grid gap-2 sm:grid-cols-3 xl:w-[320px] xl:grid-cols-1">
-                          <SecondaryActionButton
-                            onClick={() => startEdit(s)}
-                            disabled={working}
-                            fullWidth
-                          >
-                            Editar
-                          </SecondaryActionButton>
-
-                          <PrimaryActionButton
-                            onClick={() => openCredit(s)}
-                            disabled={working}
-                            fullWidth
-                          >
-                            Crédito
-                          </PrimaryActionButton>
-
-                          <WarnActionButton
-                            onClick={() => toggleActive(s)}
-                            disabled={working}
-                            fullWidth
-                          >
-                            {s.active ? "Desativar" : "Ativar"}
-                          </WarnActionButton>
+                          <div className="rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                              <span>
+                                Asaas customer:{" "}
+                                <span className="font-mono break-all">
+                                  {s.asaas_customer_id ?? "-"}
+                                </span>
+                              </span>
+                              <span>
+                                ID: <span className="font-mono break-all">{s.id}</span>
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })
-              : null}
+                    );
+                  })
+                : null}
+            </div>
           </div>
         </div>
       </div>
