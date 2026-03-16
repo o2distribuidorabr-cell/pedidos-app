@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
+import { jsPDF } from "jspdf";
+import { autoTable } from "jspdf-autotable";
 import { supabase } from "@/lib/supabaseClient";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 import {
@@ -40,7 +43,12 @@ type OrderRow = {
   store_id: string;
   status: string | null;
   submitted_at: string | null;
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status:
+    | "RECEBIDO"
+    | "EM_SEPARACAO"
+    | "SAIU_PARA_ENTREGA"
+    | "ENTREGUE"
+    | null;
 };
 
 type ProductMini = {
@@ -102,6 +110,11 @@ type ForecastRow = {
   last_week_qty: number;
   suggested_next_week_qty: number;
   confidence: "Alta" | "Média" | "Baixa";
+
+  pack_label: string | null;
+  pack_base_qty: number | null;
+  suggested_pack_count: number | null;
+  suggested_display: string;
 };
 
 type ChartTone = "blue" | "green" | "yellow" | "red" | "slate";
@@ -110,6 +123,13 @@ type SimpleBarChartItem = {
   label: string;
   value: number;
   tone?: ChartTone;
+};
+
+type PackInfo = {
+  perPack?: number;
+  perPackKg?: number;
+  packLabel: string;
+  unitLabel: string;
 };
 
 function money(v: number) {
@@ -201,6 +221,82 @@ function chartToneByDemandMode(mode: "pending" | "delivered" | "all"): ChartTone
   if (mode === "delivered") return "green";
   if (mode === "pending") return "yellow";
   return "blue";
+}
+
+function normTxt(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const PACK_RULES: Array<{ match: string; info: PackInfo }> = [
+  { match: "bife picanha 120g", info: { perPack: 120, packLabel: "cx", unitLabel: "un" } },
+  { match: "bife picanha120g", info: { perPack: 120, packLabel: "cx", unitLabel: "un" } },
+  { match: "bife picanha 56g", info: { perPack: 216, packLabel: "cx", unitLabel: "un" } },
+  { match: "bife vegetariano", info: { perPack: 20, packLabel: "pct", unitLabel: "un" } },
+  { match: "copo milkshake", info: { perPack: 50, packLabel: "pct", unitLabel: "un" } },
+  { match: "embalagem batata m", info: { perPack: 800, packLabel: "cx", unitLabel: "un" } },
+  { match: "emba batata m", info: { perPack: 800, packLabel: "cx", unitLabel: "un" } },
+  { match: "embalagem batata p", info: { perPack: 2250, packLabel: "cx", unitLabel: "un" } },
+  { match: "emba batata p", info: { perPack: 2250, packLabel: "cx", unitLabel: "un" } },
+  { match: "emba kraft", info: { perPack: 50, packLabel: "pct", unitLabel: "un" } },
+  { match: "embalagem kraft", info: { perPack: 50, packLabel: "pct", unitLabel: "un" } },
+  { match: "etiqueta de identificacao", info: { perPack: 1000, packLabel: "rolo", unitLabel: "un" } },
+  { match: "etiqueta identificacao", info: { perPack: 1000, packLabel: "rolo", unitLabel: "un" } },
+  { match: "etiqueta identific", info: { perPack: 1000, packLabel: "rolo", unitLabel: "un" } },
+  { match: "molho american burger", info: { perPackKg: 3.5, packLabel: "balde", unitLabel: "kg" } },
+  { match: "molho american", info: { perPackKg: 3.5, packLabel: "balde", unitLabel: "kg" } },
+  { match: "molho barbecue", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "molho barbacue", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbecue whisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbacue whisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbecue wisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbacue wisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "pao hb", info: { perPack: 48, packLabel: "cx", unitLabel: "un" } },
+  { match: "papel acoplado", info: { perPack: 1000, packLabel: "fardo", unitLabel: "un" } },
+  { match: "sache baconese", info: { perPack: 60, packLabel: "cx", unitLabel: "un" } },
+  { match: "sache maionese temperada", info: { perPack: 60, packLabel: "cx", unitLabel: "un" } },
+];
+
+function getPackInfo(productName: string | null | undefined): PackInfo | null {
+  const n = normTxt(productName || "");
+  if (!n) return null;
+  const rule = PACK_RULES.find((r) => n.includes(r.match));
+  return rule?.info ?? null;
+}
+
+function ceilPacks(qty: number, pack: PackInfo) {
+  const q = Number(qty) || 0;
+  if (pack.perPackKg && pack.perPackKg > 0) return Math.ceil(q / pack.perPackKg);
+  if (pack.perPack && pack.perPack > 0) return Math.ceil(q / pack.perPack);
+  return 0;
+}
+
+function formatVolumeSuggestion(qty: number, unit: string, productName: string) {
+  const pack = getPackInfo(productName);
+  const qtyFmt = Number(qty || 0).toLocaleString("pt-BR");
+
+  if (!pack) {
+    return {
+      pack_label: null,
+      pack_base_qty: null,
+      suggested_pack_count: null,
+      suggested_display: `${qtyFmt} ${unit || "un"}`,
+    };
+  }
+
+  const packCount = ceilPacks(qty, pack);
+  const baseQty = pack.perPackKg ?? pack.perPack ?? null;
+
+  return {
+    pack_label: pack.packLabel,
+    pack_base_qty: baseQty,
+    suggested_pack_count: packCount,
+    suggested_display: `${qtyFmt} ${pack.unitLabel} • ${packCount} ${pack.packLabel}`,
+  };
 }
 
 function PrimaryActionButton({
@@ -1115,7 +1211,7 @@ export default function AdmDashboardPage() {
 
     if (recentWeeks.length === 0) return [];
 
-    const forecastBase = rangeAggFiltered.slice(0, 25).map((item) => {
+    const forecastBase = rangeAggFiltered.map((item) => {
       const avg = Number(item.total_qty || 0) / Math.max(recentWeeks.length, 1);
       const lastWeekQty = avg;
       const suggested = Math.ceil(avg);
@@ -1123,6 +1219,12 @@ export default function AdmDashboardPage() {
       let confidence: "Alta" | "Média" | "Baixa" = "Baixa";
       if (avg >= 20) confidence = "Alta";
       else if (avg >= 8) confidence = "Média";
+
+      const volume = formatVolumeSuggestion(
+        suggested,
+        item.unit || "un",
+        item.product_name || ""
+      );
 
       return {
         product_id: item.product_id,
@@ -1133,11 +1235,110 @@ export default function AdmDashboardPage() {
         last_week_qty: lastWeekQty,
         suggested_next_week_qty: suggested,
         confidence,
+
+        pack_label: volume.pack_label,
+        pack_base_qty: volume.pack_base_qty,
+        suggested_pack_count: volume.suggested_pack_count,
+        suggested_display: volume.suggested_display,
       };
     });
 
     return forecastBase.sort((a, b) => b.suggested_next_week_qty - a.suggested_next_week_qty);
   }, [rangeAggFiltered, weeklyDemand]);
+
+  function buildForecastExportRows() {
+    return forecastRows.map((r) => ({
+      SKU: r.sku || "",
+      Produto: r.product_name || "",
+      Unidade: r.unit || "",
+      "Média semanal": Number(r.avg_weekly_qty.toFixed(1)),
+      "Última base": Number(r.last_week_qty.toFixed(1)),
+      "Sugestão próxima semana": r.suggested_next_week_qty,
+      "Sugestão por volume": r.suggested_display,
+      Confiança: r.confidence,
+    }));
+  }
+
+  function exportForecastXlsx() {
+    const rows = buildForecastExportRows();
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Previsao Compras");
+
+    const ws2 = XLSX.utils.json_to_sheet(
+      rangeAggFiltered.map((r) => ({
+        SKU: r.sku || "",
+        Produto: r.product_name || "",
+        Unidade: r.unit || "",
+        "Qtd total": Number(r.total_qty || 0),
+        Pedidos: Number(r.orders_count || 0),
+        Lojas: Number(r.stores_count || 0),
+      }))
+    );
+    XLSX.utils.book_append_sheet(wb, ws2, "Demanda Detalhada");
+
+    XLSX.writeFileXLSX(
+      wb,
+      `previsao-compras-${rangeStart}-${rangeEnd}.xlsx`
+    );
+  }
+
+  function exportForecastPdf() {
+    const doc = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "a4",
+    });
+
+    doc.setFontSize(14);
+    doc.text("Previsão de compra para a próxima semana", 14, 14);
+
+    doc.setFontSize(9);
+    doc.text(
+      `Período analisado: ${isoToBR(rangeStart)} até ${isoToBR(rangeEnd)} | Demanda: ${rangeDemandMode}`,
+      14,
+      20
+    );
+
+    autoTable(doc, {
+      startY: 26,
+      head: [[
+        "SKU",
+        "Produto",
+        "Un",
+        "Média semanal",
+        "Última base",
+        "Sugestão",
+        "Volume",
+        "Confiança",
+      ]],
+      body: forecastRows.map((r) => [
+        r.sku || "",
+        r.product_name || "",
+        r.unit || "",
+        r.avg_weekly_qty.toFixed(1),
+        r.last_week_qty.toFixed(1),
+        String(r.suggested_next_week_qty),
+        r.suggested_display,
+        r.confidence,
+      ]),
+      styles: {
+        fontSize: 8,
+        cellPadding: 2,
+        overflow: "linebreak",
+      },
+      headStyles: {
+        fillColor: [8, 145, 178],
+      },
+      columnStyles: {
+        1: { cellWidth: 55 },
+        6: { cellWidth: 35 },
+      },
+    });
+
+    doc.save(`previsao-compras-${rangeStart}-${rangeEnd}.pdf`);
+  }
 
   async function refreshAll() {
     setLoading(true);
@@ -1524,6 +1725,23 @@ export default function AdmDashboardPage() {
         <SectionTitle
           title="Previsão de compra para a próxima semana"
           subtitle="Sugestão automática com base na demanda recente"
+          right={
+            <div className="flex flex-wrap gap-2">
+              <SecondaryActionButton
+                onClick={exportForecastPdf}
+                disabled={forecastRows.length === 0}
+              >
+                Exportar PDF
+              </SecondaryActionButton>
+
+              <PrimaryActionButton
+                onClick={exportForecastXlsx}
+                disabled={forecastRows.length === 0}
+              >
+                Exportar XLSX
+              </PrimaryActionButton>
+            </div>
+          }
         />
 
         <div className="mt-6">
@@ -1531,7 +1749,7 @@ export default function AdmDashboardPage() {
             <EmptyState text="Sem dados suficientes para projeção." />
           ) : (
             <Table
-              headers={["Item", "Média semanal", "Última base", "Sugestão próxima semana", "Confiança"]}
+              headers={["Item", "Média semanal", "Última base", "Sugestão próxima semana", "Volume", "Confiança"]}
               rows={forecastRows.slice(0, 20).map((r) => [
                 <div key={`${r.product_id}-name`} className="min-w-[260px]">
                   <div className="font-semibold text-slate-900">{r.product_name}</div>
@@ -1548,6 +1766,9 @@ export default function AdmDashboardPage() {
                 </div>,
                 <div key={`${r.product_id}-next`} className="font-semibold text-slate-900">
                   {Number(r.suggested_next_week_qty || 0).toLocaleString("pt-BR")}
+                </div>,
+                <div key={`${r.product_id}-volume`} className="text-slate-700">
+                  {r.suggested_display}
                 </div>,
                 <Badge key={`${r.product_id}-conf`} tone={confidenceTone(r.confidence)}>
                   {r.confidence}
@@ -1582,27 +1803,38 @@ export default function AdmDashboardPage() {
             <EmptyState text="Sem itens para o período selecionado." />
           ) : (
             <Table
-              headers={["Item", "Un", "Qtd total", "Pedidos", "Lojas"]}
-              rows={rangeAggFiltered.map((r) => [
-                <div key={`${r.product_id}-name`} className="min-w-[280px]">
-                  <div className="font-semibold text-slate-900">{r.product_name}</div>
-                  <div className="text-xs text-slate-500">
-                    {r.sku ? `SKU: ${r.sku}` : ""}
-                  </div>
-                </div>,
-                <div key={`${r.product_id}-unit`} className="text-slate-700">
-                  {r.unit || "-"}
-                </div>,
-                <div key={`${r.product_id}-qty`} className="font-semibold text-slate-900">
-                  {Number(r.total_qty || 0).toLocaleString("pt-BR")}
-                </div>,
-                <div key={`${r.product_id}-orders`} className="text-slate-700">
-                  {Number(r.orders_count || 0)}
-                </div>,
-                <div key={`${r.product_id}-stores`} className="text-slate-700">
-                  {Number(r.stores_count || 0)}
-                </div>,
-              ])}
+              headers={["Item", "Un", "Qtd total", "Volume", "Pedidos", "Lojas"]}
+              rows={rangeAggFiltered.map((r) => {
+                const volume = formatVolumeSuggestion(
+                  Number(r.total_qty || 0),
+                  r.unit || "un",
+                  r.product_name || ""
+                );
+
+                return [
+                  <div key={`${r.product_id}-name`} className="min-w-[280px]">
+                    <div className="font-semibold text-slate-900">{r.product_name}</div>
+                    <div className="text-xs text-slate-500">
+                      {r.sku ? `SKU: ${r.sku}` : ""}
+                    </div>
+                  </div>,
+                  <div key={`${r.product_id}-unit`} className="text-slate-700">
+                    {r.unit || "-"}
+                  </div>,
+                  <div key={`${r.product_id}-qty`} className="font-semibold text-slate-900">
+                    {Number(r.total_qty || 0).toLocaleString("pt-BR")}
+                  </div>,
+                  <div key={`${r.product_id}-volume`} className="text-slate-700">
+                    {volume.suggested_display}
+                  </div>,
+                  <div key={`${r.product_id}-orders`} className="text-slate-700">
+                    {Number(r.orders_count || 0)}
+                  </div>,
+                  <div key={`${r.product_id}-stores`} className="text-slate-700">
+                    {Number(r.stores_count || 0)}
+                  </div>,
+                ];
+              })}
             />
           )}
         </div>
