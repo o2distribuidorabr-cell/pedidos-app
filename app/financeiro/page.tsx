@@ -16,7 +16,7 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | null;
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
@@ -139,8 +139,16 @@ function near(a: number, b: number, eps = 0.01) {
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
   if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
   if (v === "ENTREGUE") return "Entregue";
   return "—";
+}
+
+function logisticTone(v: OrderRow["logistic_status"]) {
+  if (v === "ENTREGUE") return "green" as const;
+  if (v === "SAIU_PARA_ENTREGA") return "blue" as const;
+  if (v === "EM_SEPARACAO") return "yellow" as const;
+  return "neutral" as const;
 }
 
 function deliveryLabel(v: OrderRow["delivery_mode"]) {
@@ -1575,14 +1583,15 @@ export default function FinanceiroFranqueadoPage() {
                             </td>
 
                             <td className="border-b border-slate-100 px-4 py-4 align-top">
-                              <div className="flex flex-wrap gap-2">
-                                <Badge tone={statusTone(r.status) as any}>{r.status}</Badge>
-                                {dueBadge(r.due_status)}
-                              </div>
-                              <div className="mt-2 text-sm text-slate-700">
-                                {logisticLabel(r.logistic_status)} • {deliveryLabel(r.delivery_mode)}
-                              </div>
-                            </td>
+  <div className="flex flex-wrap gap-2">
+    <Badge tone={statusTone(r.status) as any}>{r.status}</Badge>
+    <Badge tone={logisticTone(r.logistic_status)}>{logisticLabel(r.logistic_status)}</Badge>
+    {dueBadge(r.due_status)}
+  </div>
+  <div className="mt-2 text-sm text-slate-700">
+    {deliveryLabel(r.delivery_mode)}
+  </div>
+</td>
 
                             <td className="border-b border-slate-100 px-4 py-4 align-top">
                               <div className="text-sm font-semibold text-slate-900">

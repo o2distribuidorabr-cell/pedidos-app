@@ -15,21 +15,66 @@ import {
   getTrackingSessionByToken,
 } from "@/lib/deliveryTracking";
 
+function mapLogisticToDeliveryStatus(
+  logisticStatus: string | null | undefined
+): DeliveryStatus {
+  if (logisticStatus === "EM_SEPARACAO") return "EM_SEPARACAO";
+  if (logisticStatus === "SAIU_PARA_ENTREGA") return "SAIU_PARA_ENTREGA";
+  if (logisticStatus === "ENTREGUE") return "ENTREGUE";
+  return "PENDENTE";
+}
+
+function mapDeliveryToLogisticStatus(
+  deliveryStatus: DeliveryStatus
+): "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | null {
+  if (deliveryStatus === "EM_SEPARACAO") return "EM_SEPARACAO";
+  if (deliveryStatus === "SAIU_PARA_ENTREGA") return "SAIU_PARA_ENTREGA";
+  if (deliveryStatus === "ENTREGUE") return "ENTREGUE";
+  if (deliveryStatus === "PENDENTE") return "RECEBIDO";
+  return null; // OCORRENCIA não entra no fluxo logístico principal
+}
+
 export async function getOrderDeliveryOverview(
   supabase: SupabaseClient,
   orderId: string
 ): Promise<OrderDeliveryOverviewRow | null> {
-  const { data, error } = await supabase
-    .from("vw_order_delivery_overview")
-    .select("*")
-    .eq("order_id", orderId)
-    .maybeSingle();
+  const [
+    { data: overviewData, error: overviewError },
+    { data: orderData, error: orderError },
+  ] = await Promise.all([
+    supabase
+      .from("vw_order_delivery_overview")
+      .select("*")
+      .eq("order_id", orderId)
+      .maybeSingle(),
+    supabase
+      .from("orders")
+      .select("id, logistic_status")
+      .eq("id", orderId)
+      .maybeSingle(),
+  ]);
 
-  if (error) {
-    throw new Error(`Erro ao buscar overview da logística: ${error.message}`);
+  if (overviewError) {
+    throw new Error(`Erro ao buscar overview da logística: ${overviewError.message}`);
   }
 
-  return (data as OrderDeliveryOverviewRow | null) ?? null;
+  if (orderError) {
+    throw new Error(`Erro ao buscar status do pedido: ${orderError.message}`);
+  }
+
+  const overview = (overviewData as OrderDeliveryOverviewRow | null) ?? null;
+  if (!overview) return null;
+
+  const logisticStatus =
+    (orderData as { logistic_status?: string | null } | null)?.logistic_status ?? null;
+
+  return {
+    ...overview,
+    delivery_status:
+      overview.delivery_status === "OCORRENCIA"
+        ? "OCORRENCIA"
+        : mapLogisticToDeliveryStatus(logisticStatus),
+  };
 }
 
 export async function updateOrderDeliveryFields(
@@ -56,13 +101,23 @@ export async function updateOrderDeliveryFields(
 
   const payload: Record<string, unknown> = {};
 
-  if (deliveryStatus !== undefined) payload.delivery_status = deliveryStatus;
+  if (deliveryStatus !== undefined) {
+    payload.delivery_status = deliveryStatus;
+
+    const mappedLogisticStatus = mapDeliveryToLogisticStatus(deliveryStatus);
+    if (mappedLogisticStatus) {
+      payload.logistic_status = mappedLogisticStatus;
+    }
+  }
+
   if (driverName !== undefined) payload.delivery_driver_name = driverName;
   if (driverPhone !== undefined) payload.delivery_driver_phone = driverPhone;
-  if (deliveryStartedAt !== undefined)
+  if (deliveryStartedAt !== undefined) {
     payload.delivery_started_at = deliveryStartedAt;
-  if (deliveryFinishedAt !== undefined)
+  }
+  if (deliveryFinishedAt !== undefined) {
     payload.delivery_finished_at = deliveryFinishedAt;
+  }
   if (deliveryNotes !== undefined) payload.delivery_notes = deliveryNotes;
 
   const { error } = await supabase

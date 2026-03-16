@@ -17,7 +17,7 @@ type OrderRow = {
   submitted_at: string | null;
   approved_at: string | null;
 
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | null;
 
   is_paid: boolean | null;
   paid_at: string | null;
@@ -114,6 +114,7 @@ function isOrderOverdue(order: Pick<OrderRow, "due_date" | "is_paid">) {
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
   if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
   if (v === "ENTREGUE") return "Entregue";
   return "—";
 }
@@ -130,8 +131,11 @@ function statusTone(status: string): "green" | "red" | "yellow" | "neutral" {
   return "neutral";
 }
 
-function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neutral" {
+function logisticTone(
+  v: OrderRow["logistic_status"]
+): "green" | "yellow" | "blue" | "neutral" {
   if (v === "ENTREGUE") return "green";
+  if (v === "SAIU_PARA_ENTREGA") return "blue";
   if (v === "EM_SEPARACAO") return "yellow";
   return "neutral";
 }
@@ -174,17 +178,22 @@ function PrimaryActionButton({
   children,
   onClick,
   disabled,
+  fullWidth,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  fullWidth?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-12 items-center justify-center rounded-[18px] bg-cyan-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(8,145,178,0.26)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] bg-cyan-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(8,145,178,0.26)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
     >
       {children}
     </button>
@@ -195,17 +204,22 @@ function SecondaryActionButton({
   children,
   onClick,
   disabled,
+  fullWidth,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  fullWidth?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-12 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
     >
       {children}
     </button>
@@ -222,10 +236,93 @@ function MetricCard({
   subtitle?: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
+    <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[24px]">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs">
+        {title}
+      </div>
+      <div className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-900 md:text-2xl">
+        {value}
+      </div>
       {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function MobileItemCard({ item }: { item: ItemRow }) {
+  const prod = getProduct(item.products);
+  const sku = prod?.sku ?? "-";
+  const name = prod?.name ?? "-";
+  const unit = prod?.unit ?? item.unit ?? "-";
+  const unitCost = Number(item.unit_cost ?? 0) || 0;
+  const qty = Number(item.qty ?? 0) || 0;
+  const line = qty * unitCost;
+
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-900 break-words">{name}</div>
+          <div className="mt-1 font-mono text-[11px] text-slate-500">{sku}</div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
+          <div className="text-sm font-semibold text-slate-900">{money(line)}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Unid.</div>
+          <div className="mt-1 font-semibold text-slate-900">{unit}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Qtd</div>
+          <div className="mt-1 font-semibold text-slate-900">{qty}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Preço</div>
+          <div className="mt-1 font-semibold text-slate-900">{money(unitCost)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MobileOriginalItemCard({ item }: { item: OriginalItem }) {
+  const sku = item.sku ?? "-";
+  const name = item.name ?? "-";
+  const unit = item.product_unit ?? item.unit ?? "-";
+  const unitCost = Number(item.unit_cost ?? 0) || 0;
+  const qty = Number(item.qty ?? 0) || 0;
+  const line = qty * unitCost;
+
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-slate-900 break-words">{name}</div>
+          <div className="mt-1 font-mono text-[11px] text-slate-500">{sku}</div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
+          <div className="text-sm font-semibold text-slate-900">{money(line)}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Unid.</div>
+          <div className="mt-1 font-semibold text-slate-900">{unit}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Qtd</div>
+          <div className="mt-1 font-semibold text-slate-900">{qty}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Preço</div>
+          <div className="mt-1 font-semibold text-slate-900">{money(unitCost)}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -291,14 +388,13 @@ export default function PedidoDetalhePage() {
   }, [originalItems]);
 
   const canTrackDelivery = useMemo(() => {
-    if (!order) return false;
-    return (
-      order.delivery_status === "EM_SEPARACAO" ||
-      order.delivery_status === "SAIU_PARA_ENTREGA" ||
-      order.delivery_status === "ENTREGUE" ||
-      order.delivery_status === "OCORRENCIA"
-    );
-  }, [order]);
+  if (!order) return false;
+  return (
+    order.logistic_status === "EM_SEPARACAO" ||
+    order.logistic_status === "SAIU_PARA_ENTREGA" ||
+    order.logistic_status === "ENTREGUE"
+  );
+}, [order]);
 
   useEffect(() => {
     (async () => {
@@ -375,17 +471,25 @@ export default function PedidoDetalhePage() {
 
   return (
     <PortalShell title="Pedidos" subtitle="Detalhe do pedido">
-      <div className="space-y-6">
+      <div className="space-y-4 md:space-y-6">
         <PageHeader
           title="Detalhe do pedido"
           subtitle={orderId ? `ID: ${orderId}` : "—"}
           right={
-            <div className="flex flex-wrap gap-2">
-              <SecondaryActionButton onClick={() => router.push(backTo)} disabled={working}>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+              <SecondaryActionButton
+                onClick={() => router.push(backTo)}
+                disabled={working}
+                fullWidth
+              >
                 Voltar
               </SecondaryActionButton>
 
-              <SecondaryActionButton onClick={refresh} disabled={working || loading}>
+              <SecondaryActionButton
+                onClick={refresh}
+                disabled={working || loading}
+                fullWidth
+              >
                 {working ? "Atualizando..." : "Atualizar"}
               </SecondaryActionButton>
             </div>
@@ -394,7 +498,7 @@ export default function PedidoDetalhePage() {
 
         {msg ? (
           <Card title="Aviso">
-            <div className="text-sm whitespace-pre-wrap text-red-600">{msg}</div>
+            <div className="whitespace-pre-wrap text-sm text-red-600">{msg}</div>
           </Card>
         ) : null}
 
@@ -408,9 +512,9 @@ export default function PedidoDetalhePage() {
           </Card>
         ) : (
           <>
-            <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
+            <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm md:rounded-[30px] md:p-6">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge tone={statusTone(order.status)}>{order.status}</Badge>
                     <Badge tone={logisticTone(order.logistic_status)}>
@@ -450,7 +554,7 @@ export default function PedidoDetalhePage() {
                     )}
                   </div>
 
-                  <div className="mt-4 text-sm leading-7 text-slate-700">
+                  <div className="mt-4 space-y-2 text-sm leading-6 text-slate-700 md:leading-7">
                     <div>
                       <span className="font-semibold text-slate-900">Entrega:</span>{" "}
                       {deliveryLabel(order.delivery_mode)}
@@ -472,8 +576,8 @@ export default function PedidoDetalhePage() {
                   </div>
                 </div>
 
-                <div className="w-full max-w-sm rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <div className="w-full rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm xl:max-w-sm xl:shrink-0 xl:rounded-[24px]">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs">
                     Resumo financeiro
                   </div>
 
@@ -501,7 +605,7 @@ export default function PedidoDetalhePage() {
 
                     <div className="flex items-end justify-between gap-3">
                       <span className="text-sm font-semibold text-slate-900">Total líquido</span>
-                      <span className="text-2xl font-semibold tracking-[-0.03em] text-slate-900">
+                      <span className="text-xl font-semibold tracking-[-0.03em] text-slate-900 md:text-2xl">
                         {money(totalLiquido)}
                       </span>
                     </div>
@@ -516,33 +620,37 @@ export default function PedidoDetalhePage() {
               ) : null}
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-              <div className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:gap-6">
+              <div className="order-2 space-y-4 md:space-y-6 xl:order-1">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
                   <MetricCard title="Itens atuais" value={money(totalItens)} />
                   <MetricCard title="Frete" value={money(frete)} />
-                  <MetricCard title="Total com frete" value={money(totalComFrete)} />
+                  <div className="col-span-2 md:col-span-1">
+                    <MetricCard title="Total com frete" value={money(totalComFrete)} />
+                  </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
                   <MetricCard title="Crédito abatido" value={`- ${money(creditApplied)}`} />
                   <MetricCard title="Total líquido" value={money(totalLiquido)} />
-                  <MetricCard
-                    title="Pagamento"
-                    value={order.is_paid ? "Pago" : "Não pago"}
-                    subtitle={order.paid_at ? fmtDT(order.paid_at) : order.payment_method ?? "—"}
-                  />
+                  <div className="col-span-2 md:col-span-1">
+                    <MetricCard
+                      title="Pagamento"
+                      value={order.is_paid ? "Pago" : "Não pago"}
+                      subtitle={order.paid_at ? fmtDT(order.paid_at) : order.payment_method ?? "—"}
+                    />
+                  </div>
                 </div>
 
-                <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[30px] md:p-6">
                   <div className="text-sm font-semibold text-slate-900">Datas do pedido</div>
                   <div className="mt-1 text-sm text-slate-600">
                     Linha do tempo do processo.
                   </div>
 
-                  <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4 md:rounded-[22px]">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         Criado
                       </div>
                       <div className="mt-2 text-sm font-semibold text-slate-900">
@@ -550,8 +658,8 @@ export default function PedidoDetalhePage() {
                       </div>
                     </div>
 
-                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4 md:rounded-[22px]">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         Enviado
                       </div>
                       <div className="mt-2 text-sm font-semibold text-slate-900">
@@ -559,8 +667,8 @@ export default function PedidoDetalhePage() {
                       </div>
                     </div>
 
-                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4 md:rounded-[22px]">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         Aprovado
                       </div>
                       <div className="mt-2 text-sm font-semibold text-slate-900">
@@ -568,8 +676,8 @@ export default function PedidoDetalhePage() {
                       </div>
                     </div>
 
-                    <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4 md:rounded-[22px]">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         Previsão
                       </div>
                       <div className="mt-2 text-sm font-semibold text-slate-900">
@@ -579,14 +687,14 @@ export default function PedidoDetalhePage() {
                   </div>
                 </div>
 
-                <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[30px] md:p-6">
                   <div className="text-sm font-semibold text-slate-900">Observações</div>
                   <div className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                     {order.notes ?? "—"}
                   </div>
                 </div>
 
-                <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[30px] md:p-6">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <div className="text-sm font-semibold text-slate-900">
@@ -601,73 +709,81 @@ export default function PedidoDetalhePage() {
                   {items.length === 0 ? (
                     <div className="mt-6 text-sm text-slate-600">Nenhum item.</div>
                   ) : (
-                    <div className="mt-6 overflow-x-auto">
-                      <table className="w-full border-separate border-spacing-0">
-                        <thead>
-                          <tr className="text-left text-xs text-slate-600">
-                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                              SKU
-                            </th>
-                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                              Produto
-                            </th>
-                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                              Unid.
-                            </th>
-                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                              Preço
-                            </th>
-                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                              Qtd
-                            </th>
-                            <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                              Total
-                            </th>
-                          </tr>
-                        </thead>
+                    <>
+                      <div className="mt-6 hidden overflow-x-auto md:block">
+                        <table className="w-full border-separate border-spacing-0">
+                          <thead>
+                            <tr className="text-left text-xs text-slate-600">
+                              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                SKU
+                              </th>
+                              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                Produto
+                              </th>
+                              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                                Unid.
+                              </th>
+                              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                                Preço
+                              </th>
+                              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                                Qtd
+                              </th>
+                              <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                                Total
+                              </th>
+                            </tr>
+                          </thead>
 
-                        <tbody>
-                          {items.map((it) => {
-                            const prod = getProduct(it.products);
-                            const sku = prod?.sku ?? "-";
-                            const name = prod?.name ?? "-";
-                            const unit = prod?.unit ?? it.unit ?? "-";
-                            const unitCost = Number(it.unit_cost ?? 0) || 0;
-                            const qty = Number(it.qty ?? 0) || 0;
-                            const line = qty * unitCost;
+                          <tbody>
+                            {items.map((it) => {
+                              const prod = getProduct(it.products);
+                              const sku = prod?.sku ?? "-";
+                              const name = prod?.name ?? "-";
+                              const unit = prod?.unit ?? it.unit ?? "-";
+                              const unitCost = Number(it.unit_cost ?? 0) || 0;
+                              const qty = Number(it.qty ?? 0) || 0;
+                              const line = qty * unitCost;
 
-                            return (
-                              <tr key={it.id} className="hover:bg-slate-50">
-                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4">
-                                  <div className="font-mono text-xs text-slate-600">{sku}</div>
-                                </td>
-                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-900">
-                                  {name}
-                                </td>
-                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-700">
-                                  {unit}
-                                </td>
-                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right text-sm text-slate-900">
-                                  {money(unitCost)}
-                                </td>
-                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
-                                  {qty}
-                                </td>
-                                <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
-                                  {money(line)}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                              return (
+                                <tr key={it.id} className="hover:bg-slate-50">
+                                  <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4">
+                                    <div className="font-mono text-xs text-slate-600">{sku}</div>
+                                  </td>
+                                  <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-900">
+                                    {name}
+                                  </td>
+                                  <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-sm text-slate-700">
+                                    {unit}
+                                  </td>
+                                  <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right text-sm text-slate-900">
+                                    {money(unitCost)}
+                                  </td>
+                                  <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
+                                    {qty}
+                                  </td>
+                                  <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 text-right font-semibold text-slate-900">
+                                    {money(line)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="mt-6 space-y-3 md:hidden">
+                        {items.map((it) => (
+                          <MobileItemCard key={it.id} item={it} />
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
 
                 {edited && originalItems && originalItems.length > 0 ? (
-                  <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[30px] md:p-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <div>
                         <div className="text-sm font-semibold text-slate-900">
                           Pedido original do franqueado ({originalItems.length})
@@ -677,17 +793,17 @@ export default function PedidoDetalhePage() {
                         </div>
                       </div>
 
-                      <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <div className="rounded-[20px] border border-slate-200 bg-slate-50 px-4 py-3 md:rounded-[22px]">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                           Total original
                         </div>
-                        <div className="mt-1 text-lg font-semibold text-slate-900">
+                        <div className="mt-1 text-base font-semibold text-slate-900 md:text-lg">
                           {money(originalTotal)}
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-6 overflow-x-auto">
+                    <div className="mt-6 hidden overflow-x-auto md:block">
                       <table className="w-full border-separate border-spacing-0">
                         <thead>
                           <tr className="text-left text-xs text-slate-600">
@@ -747,13 +863,19 @@ export default function PedidoDetalhePage() {
                         </tbody>
                       </table>
                     </div>
+
+                    <div className="mt-6 space-y-3 md:hidden">
+                      {originalItems.map((it) => (
+                        <MobileOriginalItemCard key={it.id} item={it} />
+                      ))}
+                    </div>
                   </div>
                 ) : null}
               </div>
 
-              <div>
+              <div className="order-1 xl:order-2">
                 <div className="xl:sticky xl:top-24">
-                  <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-5 shadow-sm md:p-6">
+                  <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-4 shadow-sm md:rounded-[30px] md:p-6">
                     <div className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
                       Ações
                     </div>
@@ -762,25 +884,33 @@ export default function PedidoDetalhePage() {
                       Navegação rápida do pedido.
                     </div>
 
-                    <div className="mt-6 grid gap-3">
-                      <PrimaryActionButton onClick={() => router.push(backTo)}>
+                    <div className="mt-5 grid gap-3">
+                      <PrimaryActionButton
+                        onClick={() => router.push(backTo)}
+                        fullWidth
+                      >
                         Voltar para histórico
                       </PrimaryActionButton>
 
-                      <SecondaryActionButton onClick={refresh} disabled={working || loading}>
+                      <SecondaryActionButton
+                        onClick={refresh}
+                        disabled={working || loading}
+                        fullWidth
+                      >
                         {working ? "Atualizando..." : "Atualizar pedido"}
                       </SecondaryActionButton>
 
                       <SecondaryActionButton
                         onClick={() => router.push(`/pedidos/${order.id}/entrega`)}
                         disabled={!canTrackDelivery}
+                        fullWidth
                       >
                         Acompanhar entrega
                       </SecondaryActionButton>
                     </div>
 
-                    <div className="mt-6 rounded-[22px] border border-slate-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <div className="mt-5 rounded-[20px] border border-slate-200 bg-white p-4 md:rounded-[22px]">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         Situação
                       </div>
 
@@ -792,40 +922,44 @@ export default function PedidoDetalhePage() {
                         <Badge tone={deliveryTrackingTone(order.delivery_status)}>
                           {deliveryTrackingLabel(order.delivery_status)}
                         </Badge>
-                        {order.is_paid ? <Badge tone="green">Pago</Badge> : <Badge tone="yellow">Pendente</Badge>}
+                        {order.is_paid ? (
+                          <Badge tone="green">Pago</Badge>
+                        ) : (
+                          <Badge tone="yellow">Pendente</Badge>
+                        )}
                       </div>
                     </div>
 
-                    <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    <div className="mt-4 rounded-[20px] border border-slate-200 bg-white p-4 md:rounded-[22px]">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         Entrega
                       </div>
 
-                      <div className="mt-3 space-y-2 text-sm text-slate-700">
-                        <div className="flex items-center justify-between gap-3">
+                      <div className="mt-3 space-y-3 text-sm text-slate-700">
+                        <div className="flex items-start justify-between gap-3">
                           <span>Modalidade</span>
-                          <span className="font-semibold text-slate-900">
+                          <span className="text-right font-semibold text-slate-900">
                             {deliveryLabel(order.delivery_mode)}
                           </span>
                         </div>
 
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-start justify-between gap-3">
                           <span>Previsão</span>
-                          <span className="font-semibold text-slate-900">
+                          <span className="text-right font-semibold text-slate-900">
                             {fmtYMD(order.delivery_forecast)}
                           </span>
                         </div>
 
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-start justify-between gap-3">
                           <span>Status entrega</span>
-                          <span className="font-semibold text-slate-900">
+                          <span className="text-right font-semibold text-slate-900">
                             {deliveryTrackingLabel(order.delivery_status)}
                           </span>
                         </div>
 
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-start justify-between gap-3">
                           <span>Vencimento</span>
-                          <span className="font-semibold text-slate-900">
+                          <span className="text-right font-semibold text-slate-900">
                             {fmtYMD(order.due_date)}
                           </span>
                         </div>
@@ -833,7 +967,7 @@ export default function PedidoDetalhePage() {
                     </div>
 
                     {!canTrackDelivery ? (
-                      <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4 text-sm text-slate-600">
+                      <div className="mt-4 rounded-[20px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600 md:rounded-[22px]">
                         O acompanhamento da entrega será liberado quando o pedido entrar em separação, sair para entrega, for entregue ou tiver ocorrência registrada.
                       </div>
                     ) : null}

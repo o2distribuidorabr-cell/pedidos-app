@@ -20,7 +20,7 @@ type OrderRow = {
   paid_at: string | null;
   payment_method: "PIX" | "CARTAO" | "BOLETO" | null;
 
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | null;
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
@@ -78,6 +78,7 @@ function money(n: number) {
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
   if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
   if (v === "ENTREGUE") return "Entregue";
   return "—";
 }
@@ -94,8 +95,11 @@ function statusTone(status: string): "green" | "red" | "yellow" | "neutral" {
   return "neutral";
 }
 
-function logisticTone(v: OrderRow["logistic_status"]): "green" | "yellow" | "neutral" {
+function logisticTone(
+  v: OrderRow["logistic_status"]
+): "green" | "yellow" | "blue" | "neutral" {
   if (v === "ENTREGUE") return "green";
+  if (v === "SAIU_PARA_ENTREGA") return "blue";
   if (v === "EM_SEPARACAO") return "yellow";
   return "neutral";
 }
@@ -280,11 +284,146 @@ function SummaryBox({
   subtitle?: string;
 }) {
   return (
-    <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-      <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
+    <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[24px]">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs">
+        {title}
+      </div>
+      <div className="mt-2 text-xl font-semibold tracking-[-0.03em] text-slate-900 md:text-2xl">
+        {value}
+      </div>
       {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
     </div>
+  );
+}
+
+function TopInfoCard({
+  title,
+  value,
+  subtitle,
+}: {
+  title: string;
+  value: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[24px]">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 md:text-xs">
+        {title}
+      </div>
+      <div className="mt-2 break-words text-sm font-semibold text-slate-900 md:text-base">
+        {value}
+      </div>
+      {subtitle ? <div className="mt-1 text-xs text-slate-500 break-all">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function MobileOrderCard({
+  order,
+  onOpen,
+}: {
+  order: OrderUi;
+  onOpen: () => void;
+}) {
+  const freteTxt =
+    order.delivery_mode === "FRETE"
+      ? money(Number(order.freight_fee ?? 0))
+      : "-";
+
+  const isEdited = !!order.edited_by_admin;
+  const overdue = isOrderOverdue(order);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="w-full rounded-[22px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-mono text-[11px] text-slate-500 break-all">{order.id}</div>
+          {isEdited ? (
+            <div className="mt-2">
+              <Badge tone="blue">Editado</Badge>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="shrink-0 text-right">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">A pagar</div>
+          <div className="mt-1 text-sm font-semibold text-slate-900">
+            {money(Number(order.amount_due ?? 0))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+        <Badge tone={logisticTone(order.logistic_status)}>
+          {logisticLabel(order.logistic_status)}
+        </Badge>
+        {order.due_date ? (
+          order.is_paid ? (
+            <Badge tone="green">Pago</Badge>
+          ) : overdue ? (
+            <Badge tone="red">Vencido</Badge>
+          ) : (
+            <Badge tone="green">OK</Badge>
+          )
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Entrega</div>
+          <div className="mt-1 font-semibold text-slate-900">
+            {deliveryLabel(order.delivery_mode)}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Frete</div>
+          <div className="mt-1 font-semibold text-slate-900">{freteTxt}</div>
+        </div>
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Previsão</div>
+          <div className="mt-1 font-semibold text-slate-900">
+            {forecastLabel(order.delivery_forecast)}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Vencimento</div>
+          <div className="mt-1 font-semibold text-slate-900">
+            {dueLabel(order.due_date)}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Total</div>
+          <div className="mt-1 font-semibold text-slate-900">
+            {money(Number(order.total_cost) || 0)}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Crédito</div>
+          <div className="mt-1 font-semibold text-slate-900">
+            {money(Number(order.credit_applied ?? 0) || 0)}
+          </div>
+        </div>
+
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Criado</div>
+          <div className="mt-1 font-semibold text-slate-900">
+            {fmtBR(order.created_at)}
+          </div>
+        </div>
+      </div>
+    </button>
   );
 }
 
@@ -497,20 +636,21 @@ export default function HistoricoPedidosPage() {
 
   return (
     <PortalShell title="Pedidos" subtitle="Histórico de pedidos">
-      <div className="space-y-6">
+      <div className="space-y-4 md:space-y-6">
         <PageHeader
           title="Histórico de pedidos"
           subtitle="Clique em um pedido para ver os detalhes."
           right={
-            <div className="flex flex-wrap gap-2">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
               <SecondaryActionButton
                 onClick={refresh}
                 disabled={working || loading || !storeId}
+                fullWidth
               >
                 {working ? "Atualizando..." : "Atualizar"}
               </SecondaryActionButton>
 
-              <PrimaryActionButton onClick={() => router.push("/pedido")}>
+              <PrimaryActionButton onClick={() => router.push("/pedido")} fullWidth>
                 Novo pedido
               </PrimaryActionButton>
             </div>
@@ -519,49 +659,33 @@ export default function HistoricoPedidosPage() {
 
         {msg ? (
           <Card title="Aviso">
-            <div className="text-sm whitespace-pre-wrap text-red-600">{msg}</div>
+            <div className="whitespace-pre-wrap text-sm text-red-600">{msg}</div>
           </Card>
         ) : null}
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="space-y-6">
-            <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Loja
-                  </div>
-                  <div className="mt-2 text-base font-semibold text-slate-900 truncate">
-                    {storeName}
-                  </div>
-                  {storeId ? (
-                    <div className="mt-1 font-mono text-xs text-slate-500 truncate">
-                      {storeId}
-                    </div>
-                  ) : null}
-                </div>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:gap-6">
+          <div className="order-2 space-y-4 md:space-y-6 xl:order-1">
+            <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm md:rounded-[30px] md:p-6">
+              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 md:gap-4">
+                <TopInfoCard
+                  title="Loja"
+                  value={storeName}
+                  subtitle={storeId ?? undefined}
+                />
 
-                <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Usuário
-                  </div>
-                  <div className="mt-2 text-base font-semibold text-slate-900 truncate">
-                    {userEmail}
-                  </div>
-                </div>
+                <TopInfoCard
+                  title="Usuário"
+                  value={userEmail}
+                />
 
-                <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Saldo de crédito
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">
-                    {money(creditBalance)}
-                  </div>
-                </div>
+                <TopInfoCard
+                  title="Saldo de crédito"
+                  value={money(creditBalance)}
+                />
               </div>
             </div>
 
-            <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[30px] md:p-6">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-slate-900">Filtros</div>
@@ -570,7 +694,7 @@ export default function HistoricoPedidosPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
                   <SecondaryActionButton
                     onClick={() => {
                       setQ("");
@@ -581,6 +705,7 @@ export default function HistoricoPedidosPage() {
                       setDateFrom("");
                       setDateTo("");
                     }}
+                    fullWidth
                   >
                     Limpar filtros
                   </SecondaryActionButton>
@@ -588,14 +713,15 @@ export default function HistoricoPedidosPage() {
                   <SecondaryActionButton
                     onClick={refresh}
                     disabled={working || loading || !storeId}
+                    fullWidth
                   >
                     Recarregar
                   </SecondaryActionButton>
                 </div>
               </div>
 
-              <div className="mt-6 grid gap-4 lg:grid-cols-12">
-                <div className="lg:col-span-4">
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-12">
+                <div className="sm:col-span-2 xl:col-span-4">
                   <TextFilter
                     label="Buscar pedido"
                     value={q}
@@ -604,7 +730,7 @@ export default function HistoricoPedidosPage() {
                   />
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="xl:col-span-2">
                   <SelectFilter
                     label="Status"
                     value={statusFilter}
@@ -619,21 +745,22 @@ export default function HistoricoPedidosPage() {
                   />
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="xl:col-span-2">
                   <SelectFilter
-                    label="Logística"
-                    value={logFilter}
-                    onChange={setLogFilter}
-                    options={[
-                      { value: "all", label: "Todos" },
-                      { value: "RECEBIDO", label: "Recebido" },
-                      { value: "EM_SEPARACAO", label: "Em separação" },
-                      { value: "ENTREGUE", label: "Entregue" },
-                    ]}
-                  />
+  label="Logística"
+  value={logFilter}
+  onChange={setLogFilter}
+  options={[
+    { value: "all", label: "Todos" },
+    { value: "RECEBIDO", label: "Recebido" },
+    { value: "EM_SEPARACAO", label: "Em separação" },
+    { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
+    { value: "ENTREGUE", label: "Entregue" },
+  ]}
+/>
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="xl:col-span-2">
                   <SelectFilter
                     label="Pagamento"
                     value={paidFilter}
@@ -646,7 +773,7 @@ export default function HistoricoPedidosPage() {
                   />
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="xl:col-span-2">
                   <SelectFilter
                     label="Vencimento"
                     value={dueFilter}
@@ -661,17 +788,17 @@ export default function HistoricoPedidosPage() {
                   />
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="xl:col-span-2">
                   <DateFilter label="De" value={dateFrom} onChange={setDateFrom} />
                 </div>
 
-                <div className="lg:col-span-2">
+                <div className="xl:col-span-2">
                   <DateFilter label="Até" value={dateTo} onChange={setDateTo} />
                 </div>
               </div>
             </div>
 
-            <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+            <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm md:rounded-[30px] md:p-6">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-slate-900">Pedidos</div>
@@ -688,172 +815,188 @@ export default function HistoricoPedidosPage() {
                   Nenhum pedido encontrado.
                 </div>
               ) : (
-                <div className="mt-6 overflow-x-auto">
-                  <table className="w-full border-separate border-spacing-0">
-                    <thead>
-                      <tr className="text-left text-xs text-slate-600">
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Pedido
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Status
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Operação
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Entrega
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Previsão
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Frete
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Vencimento
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Criado
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Enviado
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Aprovado
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                          Total
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                          Crédito
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                          A pagar
-                        </th>
-                      </tr>
-                    </thead>
+                <>
+                  <div className="mt-6 hidden overflow-x-auto md:block">
+                    <table className="w-full border-separate border-spacing-0">
+                      <thead>
+                        <tr className="text-left text-xs text-slate-600">
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Pedido
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Status
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Operação
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Entrega
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Previsão
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Frete
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Vencimento
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Criado
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Enviado
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Aprovado
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                            Total
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                            Crédito
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
+                            A pagar
+                          </th>
+                        </tr>
+                      </thead>
 
-                    <tbody>
-                      {filtered.map((o) => {
-                        const freteTxt =
-                          o.delivery_mode === "FRETE"
-                            ? money(Number(o.freight_fee ?? 0))
-                            : "-";
+                      <tbody>
+                        {filtered.map((o) => {
+                          const freteTxt =
+                            o.delivery_mode === "FRETE"
+                              ? money(Number(o.freight_fee ?? 0))
+                              : "-";
 
-                        const isEdited = !!o.edited_by_admin;
-                        const overdue = isOrderOverdue(o);
+                          const isEdited = !!o.edited_by_admin;
+                          const overdue = isOrderOverdue(o);
 
-                        return (
-                          <tr
-                            key={o.id}
-                            className="cursor-pointer hover:bg-slate-50"
-                            onClick={() => router.push(`/pedidos/${o.id}`)}
-                            title="Abrir pedido"
-                          >
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                              <div className="flex items-center gap-2">
-                                <div className="font-mono text-xs text-slate-600">{o.id}</div>
-                                {isEdited ? <Badge tone="blue">Editado</Badge> : null}
-                              </div>
-
-                              {isEdited && o.edited_at ? (
-                                <div className="mt-1 text-[11px] text-slate-500">
-                                  em {fmtBR(o.edited_at)}
+                          return (
+                            <tr
+                              key={o.id}
+                              className="cursor-pointer hover:bg-slate-50"
+                              onClick={() => router.push(`/pedidos/${o.id}`)}
+                              title="Abrir pedido"
+                            >
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-mono text-xs text-slate-600">{o.id}</div>
+                                  {isEdited ? <Badge tone="blue">Editado</Badge> : null}
                                 </div>
-                              ) : null}
-                            </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                              <Badge tone={statusTone(o.status)}>{o.status}</Badge>
-                            </td>
-
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                              <Badge tone={logisticTone(o.logistic_status)}>
-                                {logisticLabel(o.logistic_status)}
-                              </Badge>
-                            </td>
-
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
-                              {deliveryLabel(o.delivery_mode)}
-                            </td>
-
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                              <div className="flex items-center gap-2">
-                                <Badge tone={forecastTone(o.delivery_forecast, o.logistic_status)}>
-                                  {forecastLabel(o.delivery_forecast)}
-                                </Badge>
-
-                                {o.delivery_forecast &&
-                                o.logistic_status !== "ENTREGUE" &&
-                                o.delivery_forecast < todayYMD() ? (
-                                  <Badge tone="red">Atrasado</Badge>
+                                {isEdited && o.edited_at ? (
+                                  <div className="mt-1 text-[11px] text-slate-500">
+                                    em {fmtBR(o.edited_at)}
+                                  </div>
                                 ) : null}
-                              </div>
-                            </td>
+                              </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
-                              {freteTxt}
-                            </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                                <Badge tone={statusTone(o.status)}>{o.status}</Badge>
+                              </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                              <div className="flex items-center gap-2">
-                                <Badge tone={dueTone(o.due_date, o.is_paid)}>
-                                  {dueLabel(o.due_date)}
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                                <Badge tone={logisticTone(o.logistic_status)}>
+                                  {logisticLabel(o.logistic_status)}
                                 </Badge>
+                              </td>
 
-                                {o.due_date ? (
-                                  o.is_paid ? (
-                                    <Badge tone="green">Pago</Badge>
-                                  ) : overdue ? (
-                                    <Badge tone="red">Vencido</Badge>
-                                  ) : (
-                                    <Badge tone="green">OK</Badge>
-                                  )
-                                ) : null}
-                              </div>
-                            </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
+                                {deliveryLabel(o.delivery_mode)}
+                              </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
-                              {fmtBR(o.created_at)}
-                            </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                                <div className="flex items-center gap-2">
+                                  <Badge tone={forecastTone(o.delivery_forecast, o.logistic_status)}>
+                                    {forecastLabel(o.delivery_forecast)}
+                                  </Badge>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
-                              {fmtBR(o.submitted_at)}
-                            </td>
+                                  {o.delivery_forecast &&
+                                  o.logistic_status !== "ENTREGUE" &&
+                                  o.delivery_forecast < todayYMD() ? (
+                                    <Badge tone="red">Atrasado</Badge>
+                                  ) : null}
+                                </div>
+                              </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
-                              {fmtBR(o.approved_at)}
-                            </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
+                                {freteTxt}
+                              </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
-                              {money(Number(o.total_cost) || 0)}
-                            </td>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                                <div className="flex items-center gap-2">
+                                  <Badge tone={dueTone(o.due_date, o.is_paid)}>
+                                    {dueLabel(o.due_date)}
+                                  </Badge>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
-                              {money(Number(o.credit_applied ?? 0) || 0)}
-                            </td>
+                                  {o.due_date ? (
+                                    o.is_paid ? (
+                                      <Badge tone="green">Pago</Badge>
+                                    ) : overdue ? (
+                                      <Badge tone="red">Vencido</Badge>
+                                    ) : (
+                                      <Badge tone="green">OK</Badge>
+                                    )
+                                  ) : null}
+                                </div>
+                              </td>
 
-                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
-                              {money(Number(o.amount_due ?? 0) || 0)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
+                                {fmtBR(o.created_at)}
+                              </td>
 
-                  <div className="mt-4 text-xs text-slate-500">
-                    Clique em um pedido para abrir os detalhes.
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
+                                {fmtBR(o.submitted_at)}
+                              </td>
+
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-sm text-slate-700">
+                                {fmtBR(o.approved_at)}
+                              </td>
+
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
+                                {money(Number(o.total_cost) || 0)}
+                              </td>
+
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
+                                {money(Number(o.credit_applied ?? 0) || 0)}
+                              </td>
+
+                              <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
+                                {money(Number(o.amount_due ?? 0) || 0)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+
+                    <div className="mt-4 text-xs text-slate-500">
+                      Clique em um pedido para abrir os detalhes.
+                    </div>
                   </div>
-                </div>
+
+                  <div className="mt-6 space-y-3 md:hidden">
+                    {filtered.map((o) => (
+                      <MobileOrderCard
+                        key={o.id}
+                        order={o}
+                        onOpen={() => router.push(`/pedidos/${o.id}`)}
+                      />
+                    ))}
+
+                    <div className="text-center text-xs text-slate-500">
+                      Toque em um pedido para abrir os detalhes.
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
 
-          <div>
+          <div className="order-1 xl:order-2">
             <div className="xl:sticky xl:top-24">
-              <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-5 shadow-sm md:p-6">
+              <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-4 shadow-sm md:rounded-[30px] md:p-6">
                 <div className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
                   Resumo exibido
                 </div>
@@ -862,7 +1005,7 @@ export default function HistoricoPedidosPage() {
                   Valores com base nos filtros aplicados.
                 </div>
 
-                <div className="mt-6 grid gap-4">
+                <div className="mt-5 grid gap-3 md:gap-4">
                   <SummaryBox
                     title="Total exibido"
                     value={money(totalGeral)}

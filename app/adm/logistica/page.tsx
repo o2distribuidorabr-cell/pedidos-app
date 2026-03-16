@@ -5,7 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { PageHeader, Input, Select, Badge } from "@/app/components/ui";
 
-type DeliveryStatus =
+type UnifiedLogisticStatus =
+  | "RECEBIDO"
+  | "EM_SEPARACAO"
+  | "SAIU_PARA_ENTREGA"
+  | "ENTREGUE";
+
+type LegacyDeliveryStatus =
   | "PENDENTE"
   | "EM_SEPARACAO"
   | "SAIU_PARA_ENTREGA"
@@ -13,7 +19,6 @@ type DeliveryStatus =
   | "OCORRENCIA";
 
 type TrackingStatus = "PENDENTE" | "ATIVO" | "PAUSADO" | "ENCERRADO";
-
 type ConfirmationStatus = "PENDENTE" | "CONFIRMADO" | "EXPIRADO" | "BLOQUEADO";
 
 type DeliveryOverviewRow = {
@@ -24,7 +29,7 @@ type DeliveryOverviewRow = {
   submitted_at: string | null;
   approved_at: string | null;
 
-  delivery_status: DeliveryStatus;
+  delivery_status: LegacyDeliveryStatus;
   delivery_driver_name: string | null;
   delivery_driver_phone: string | null;
   delivery_started_at: string | null;
@@ -51,21 +56,34 @@ type DeliveryOverviewRow = {
   confirmed_by: string | null;
 };
 
+type OrderStatusRow = {
+  id: string;
+  store_id: string | null;
+  status: string | null;
+  created_at: string | null;
+  submitted_at: string | null;
+  approved_at: string | null;
+  logistic_status: UnifiedLogisticStatus | null;
+};
+
 type StoreRow = {
   id: string;
   [key: string]: unknown;
 };
 
+type LogisticsListRow = DeliveryOverviewRow & {
+  unified_logistic_status: UnifiedLogisticStatus;
+};
+
 const DELIVERY_STATUS_OPTIONS: Array<{
-  value: "TODOS" | DeliveryStatus;
+  value: "TODOS" | UnifiedLogisticStatus;
   label: string;
 }> = [
   { value: "TODOS", label: "Todos os status" },
-  { value: "PENDENTE", label: "Pendente" },
+  { value: "RECEBIDO", label: "Recebido" },
   { value: "EM_SEPARACAO", label: "Em separação" },
   { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
   { value: "ENTREGUE", label: "Entregue" },
-  { value: "OCORRENCIA", label: "Ocorrência" },
 ];
 
 const SORT_OPTIONS = [
@@ -78,7 +96,6 @@ type SortOption = (typeof SORT_OPTIONS)[number]["value"];
 
 function formatDateTime(value: string | null | undefined) {
   if (!value) return "—";
-
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
@@ -124,28 +141,27 @@ function getStoreNameFromRow(store: StoreRow): string {
 }
 
 function getStoreLabel(
-  row: DeliveryOverviewRow,
+  row: { store_id: string | null },
   storesMap: Record<string, string>
 ): string {
   if (!row.store_id) return "Sem loja";
   return storesMap[row.store_id] ?? row.store_id;
 }
 
-function getDeliveryStatusLabel(status: DeliveryStatus) {
-  switch (status) {
-    case "PENDENTE":
-      return "Pendente";
-    case "EM_SEPARACAO":
-      return "Em separação";
-    case "SAIU_PARA_ENTREGA":
-      return "Saiu para entrega";
-    case "ENTREGUE":
-      return "Entregue";
-    case "OCORRENCIA":
-      return "Ocorrência";
-    default:
-      return status;
-  }
+function mapLegacyToUnified(
+  legacy: LegacyDeliveryStatus | null | undefined
+): UnifiedLogisticStatus {
+  if (legacy === "EM_SEPARACAO") return "EM_SEPARACAO";
+  if (legacy === "SAIU_PARA_ENTREGA") return "SAIU_PARA_ENTREGA";
+  if (legacy === "ENTREGUE") return "ENTREGUE";
+  return "RECEBIDO";
+}
+
+function getUnifiedLabel(status: UnifiedLogisticStatus) {
+  if (status === "RECEBIDO") return "Recebido";
+  if (status === "EM_SEPARACAO") return "Em separação";
+  if (status === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
+  return "Entregue";
 }
 
 function getTrackingStatusLabel(status: TrackingStatus | null) {
@@ -178,9 +194,9 @@ function getConfirmationStatusLabel(status: ConfirmationStatus | null) {
   }
 }
 
-function statusBadgeTone(status: DeliveryStatus) {
+function statusBadgeTone(status: UnifiedLogisticStatus) {
   switch (status) {
-    case "PENDENTE":
+    case "RECEBIDO":
       return "neutral" as const;
     case "EM_SEPARACAO":
       return "yellow" as const;
@@ -188,8 +204,6 @@ function statusBadgeTone(status: DeliveryStatus) {
       return "blue" as const;
     case "ENTREGUE":
       return "green" as const;
-    case "OCORRENCIA":
-      return "red" as const;
     default:
       return "neutral" as const;
   }
@@ -225,11 +239,9 @@ function confirmationBadgeTone(status: ConfirmationStatus | null) {
   }
 }
 
-function getSortTime(row: DeliveryOverviewRow, sortBy: SortOption) {
+function getSortTime(row: LogisticsListRow, sortBy: SortOption) {
   if (sortBy === "saida_entrega") {
-    return row.delivery_started_at
-      ? new Date(row.delivery_started_at).getTime()
-      : 0;
+    return row.delivery_started_at ? new Date(row.delivery_started_at).getTime() : 0;
   }
 
   if (sortBy === "ultima_atualizacao") {
@@ -304,7 +316,7 @@ function MetricCard({
 }
 
 export default function AdmLogisticaPage() {
-  const [rows, setRows] = useState<DeliveryOverviewRow[]>([]);
+  const [rows, setRows] = useState<LogisticsListRow[]>([]);
   const [storesMap, setStoresMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -312,7 +324,7 @@ export default function AdmLogisticaPage() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] =
-    useState<"TODOS" | DeliveryStatus>("TODOS");
+    useState<"TODOS" | UnifiedLogisticStatus>("TODOS");
   const [sortBy, setSortBy] = useState<SortOption>("recentes");
 
   const loadData = useCallback(async (isRefresh = false) => {
@@ -325,21 +337,105 @@ export default function AdmLogisticaPage() {
         setLoading(true);
       }
 
-      const { data: logisticsData, error: logisticsError } = await supabase
-        .from("vw_order_delivery_overview")
-        .select("*")
-        .order("order_created_at", { ascending: false });
+      const [logisticsRes, ordersRes] = await Promise.all([
+        supabase
+          .from("vw_order_delivery_overview")
+          .select("*")
+          .order("order_created_at", { ascending: false }),
+        supabase
+          .from("orders")
+          .select("id,store_id,status,created_at,submitted_at,approved_at,logistic_status"),
+      ]);
 
-      if (logisticsError) {
-        throw new Error(logisticsError.message);
+      if (logisticsRes.error) {
+        throw new Error(logisticsRes.error.message);
       }
 
-      const safeRows = (logisticsData ?? []) as DeliveryOverviewRow[];
-      setRows(safeRows);
+      if (ordersRes.error) {
+        throw new Error(ordersRes.error.message);
+      }
+
+      const logisticsRows = (logisticsRes.data ?? []) as DeliveryOverviewRow[];
+      const orderRows = (ordersRes.data ?? []) as OrderStatusRow[];
+
+      const orderMap = new Map<string, OrderStatusRow>();
+      for (const order of orderRows) {
+        orderMap.set(order.id, order);
+      }
+
+      const mergedRows: LogisticsListRow[] = logisticsRows.map((row) => {
+        const order = orderMap.get(row.order_id);
+
+        const unifiedStatus =
+          order?.logistic_status ?? mapLegacyToUnified(row.delivery_status);
+
+        return {
+          ...row,
+          store_id: order?.store_id ?? row.store_id ?? null,
+          order_status: order?.status ?? row.order_status ?? null,
+          order_created_at: order?.created_at ?? row.order_created_at ?? null,
+          submitted_at: order?.submitted_at ?? row.submitted_at ?? null,
+          approved_at: order?.approved_at ?? row.approved_at ?? null,
+          unified_logistic_status: unifiedStatus,
+        };
+      });
+
+      const logisticsOrderIds = new Set(mergedRows.map((r) => r.order_id));
+
+      const missingOrders: LogisticsListRow[] = orderRows
+        .filter((order) => !logisticsOrderIds.has(order.id))
+        .map((order) => ({
+          order_id: order.id,
+          store_id: order.store_id ?? null,
+          order_status: order.status ?? null,
+          order_created_at: order.created_at ?? null,
+          submitted_at: order.submitted_at ?? null,
+          approved_at: order.approved_at ?? null,
+
+          delivery_status:
+            order.logistic_status === "ENTREGUE"
+              ? "ENTREGUE"
+              : order.logistic_status === "SAIU_PARA_ENTREGA"
+              ? "SAIU_PARA_ENTREGA"
+              : order.logistic_status === "EM_SEPARACAO"
+              ? "EM_SEPARACAO"
+              : "PENDENTE",
+
+          delivery_driver_name: null,
+          delivery_driver_phone: null,
+          delivery_started_at: null,
+          delivery_finished_at: null,
+          delivery_notes: null,
+
+          tracking_session_id: null,
+          tracking_status: null,
+          tracking_token: null,
+          last_lat: null,
+          last_lng: null,
+          last_accuracy: null,
+          last_seen_at: null,
+          tracking_started_at: null,
+          tracking_ended_at: null,
+
+          confirmation_id: null,
+          confirmation_status: null,
+          attempts: null,
+          max_attempts: null,
+          code_sent_at: null,
+          code_expires_at: null,
+          confirmed_at: null,
+          confirmed_by: null,
+
+          unified_logistic_status: order.logistic_status ?? "RECEBIDO",
+        }));
+
+      const finalRows = [...mergedRows, ...missingOrders];
+
+      setRows(finalRows);
 
       const storeIds = Array.from(
         new Set(
-          safeRows
+          finalRows
             .map((item) => item.store_id)
             .filter((id): id is string => Boolean(id))
         )
@@ -385,7 +481,7 @@ export default function AdmLogisticaPage() {
     let result = [...rows];
 
     if (statusFilter !== "TODOS") {
-      result = result.filter((row) => row.delivery_status === statusFilter);
+      result = result.filter((row) => row.unified_logistic_status === statusFilter);
     }
 
     if (normalizedSearch) {
@@ -413,13 +509,14 @@ export default function AdmLogisticaPage() {
 
   const metrics = useMemo(() => {
     const total = rows.length;
-    const pendentes = rows.filter((r) => r.delivery_status === "PENDENTE").length;
-    const separacao = rows.filter((r) => r.delivery_status === "EM_SEPARACAO").length;
-    const emRota = rows.filter((r) => r.delivery_status === "SAIU_PARA_ENTREGA").length;
-    const entregues = rows.filter((r) => r.delivery_status === "ENTREGUE").length;
-    const ocorrencias = rows.filter((r) => r.delivery_status === "OCORRENCIA").length;
+    const recebidos = rows.filter((r) => r.unified_logistic_status === "RECEBIDO").length;
+    const separacao = rows.filter((r) => r.unified_logistic_status === "EM_SEPARACAO").length;
+    const emRota = rows.filter(
+      (r) => r.unified_logistic_status === "SAIU_PARA_ENTREGA"
+    ).length;
+    const entregues = rows.filter((r) => r.unified_logistic_status === "ENTREGUE").length;
 
-    return { total, pendentes, separacao, emRota, entregues, ocorrencias };
+    return { total, recebidos, separacao, emRota, entregues };
   }, [rows]);
 
   return (
@@ -437,9 +534,7 @@ export default function AdmLogisticaPage() {
             </PrimaryActionButton>
 
             <Link href="/adm/pedidos">
-              <SecondaryActionButton>
-                Voltar para pedidos
-              </SecondaryActionButton>
+              <SecondaryActionButton>Voltar para pedidos</SecondaryActionButton>
             </Link>
           </div>
         }
@@ -459,16 +554,16 @@ export default function AdmLogisticaPage() {
                 {metrics.total}
               </div>
               <div>
+                <span className="font-semibold text-slate-900">Recebidos:</span>{" "}
+                {metrics.recebidos}
+              </div>
+              <div>
+                <span className="font-semibold text-slate-900">Em separação:</span>{" "}
+                {metrics.separacao}
+              </div>
+              <div>
                 <span className="font-semibold text-slate-900">Em rota:</span>{" "}
                 {metrics.emRota}
-              </div>
-              <div>
-                <span className="font-semibold text-slate-900">Entregues:</span>{" "}
-                {metrics.entregues}
-              </div>
-              <div>
-                <span className="font-semibold text-slate-900">Ocorrências:</span>{" "}
-                {metrics.ocorrencias}
               </div>
             </div>
           </div>
@@ -480,9 +575,9 @@ export default function AdmLogisticaPage() {
 
             <div className="mt-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-600">Pendentes</span>
+                <span className="text-sm text-slate-600">Recebidos</span>
                 <span className="text-sm font-semibold text-slate-900">
-                  {metrics.pendentes}
+                  {metrics.recebidos}
                 </span>
               </div>
 
@@ -513,13 +608,12 @@ export default function AdmLogisticaPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-3 xl:grid-cols-5">
         <MetricCard title="Total" value={String(metrics.total)} />
-        <MetricCard title="Pendentes" value={String(metrics.pendentes)} />
+        <MetricCard title="Recebidos" value={String(metrics.recebidos)} />
         <MetricCard title="Em separação" value={String(metrics.separacao)} />
         <MetricCard title="Em rota" value={String(metrics.emRota)} />
         <MetricCard title="Entregues" value={String(metrics.entregues)} />
-        <MetricCard title="Ocorrências" value={String(metrics.ocorrencias)} />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
@@ -527,9 +621,7 @@ export default function AdmLogisticaPage() {
           <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <div className="text-sm font-semibold text-slate-900">
-                  Filtros
-                </div>
+                <div className="text-sm font-semibold text-slate-900">Filtros</div>
                 <div className="mt-1 text-sm text-slate-600">
                   Busque pedidos e refine a operação logística.
                 </div>
@@ -550,7 +642,9 @@ export default function AdmLogisticaPage() {
                 <Select
                   label="Status logístico"
                   value={statusFilter}
-                  onChange={(v) => setStatusFilter(v as "TODOS" | DeliveryStatus)}
+                  onChange={(v) =>
+                    setStatusFilter(v as "TODOS" | UnifiedLogisticStatus)
+                  }
                   options={DELIVERY_STATUS_OPTIONS}
                 />
               </div>
@@ -604,7 +698,7 @@ export default function AdmLogisticaPage() {
                           Loja
                         </th>
                         <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Status entrega
+                          Status logístico
                         </th>
                         <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
                           Motorista
@@ -649,8 +743,8 @@ export default function AdmLogisticaPage() {
                           </td>
 
                           <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <Badge tone={statusBadgeTone(row.delivery_status)}>
-                              {getDeliveryStatusLabel(row.delivery_status)}
+                            <Badge tone={statusBadgeTone(row.unified_logistic_status)}>
+                              {getUnifiedLabel(row.unified_logistic_status)}
                             </Badge>
 
                             <div className="mt-2 text-xs text-slate-500">
@@ -717,9 +811,7 @@ export default function AdmLogisticaPage() {
 
                           <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right">
                             <Link href={`/adm/logistica/${row.order_id}`}>
-                              <SecondaryActionButton>
-                                Abrir
-                              </SecondaryActionButton>
+                              <SecondaryActionButton>Abrir</SecondaryActionButton>
                             </Link>
                           </td>
                         </tr>
@@ -744,8 +836,8 @@ export default function AdmLogisticaPage() {
                           </div>
                         </div>
 
-                        <Badge tone={statusBadgeTone(row.delivery_status)}>
-                          {getDeliveryStatusLabel(row.delivery_status)}
+                        <Badge tone={statusBadgeTone(row.unified_logistic_status)}>
+                          {getUnifiedLabel(row.unified_logistic_status)}
                         </Badge>
                       </div>
 
@@ -789,9 +881,7 @@ export default function AdmLogisticaPage() {
 
                         <div className="pt-2">
                           <Link href={`/adm/logistica/${row.order_id}`}>
-                            <PrimaryActionButton>
-                              Abrir logística
-                            </PrimaryActionButton>
+                            <PrimaryActionButton>Abrir logística</PrimaryActionButton>
                           </Link>
                         </div>
                       </div>
@@ -823,9 +913,7 @@ export default function AdmLogisticaPage() {
                 </PrimaryActionButton>
 
                 <Link href="/adm/pedidos">
-                  <SecondaryActionButton>
-                    Voltar para pedidos
-                  </SecondaryActionButton>
+                  <SecondaryActionButton>Voltar para pedidos</SecondaryActionButton>
                 </Link>
               </div>
 
@@ -836,6 +924,7 @@ export default function AdmLogisticaPage() {
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Badge tone="neutral">Total: {metrics.total}</Badge>
+                  <Badge tone="neutral">Recebidos: {metrics.recebidos}</Badge>
                   <Badge tone="yellow">Separação: {metrics.separacao}</Badge>
                   <Badge tone="blue">Em rota: {metrics.emRota}</Badge>
                   <Badge tone="green">Entregues: {metrics.entregues}</Badge>
@@ -853,7 +942,7 @@ export default function AdmLogisticaPage() {
                     <span className="font-semibold text-slate-900">
                       {statusFilter === "TODOS"
                         ? "Todos"
-                        : getDeliveryStatusLabel(statusFilter)}
+                        : getUnifiedLabel(statusFilter)}
                     </span>
                   </div>
 
@@ -879,7 +968,8 @@ export default function AdmLogisticaPage() {
                 </div>
 
                 <div className="mt-3 text-sm text-slate-600">
-                  Use este painel para localizar rapidamente pedidos em separação, em rota, entregues e com ocorrência.
+                  Esta tela agora usa o status logístico padronizado do pedido e mantém rastreio,
+                  confirmação e motorista sincronizados com a área de logística.
                 </div>
               </div>
             </div>

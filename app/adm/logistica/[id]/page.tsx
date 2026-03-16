@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import L from "leaflet";
 import { PageHeader, Input, Badge } from "@/app/components/ui";
@@ -275,17 +276,22 @@ function PrimaryActionButton({
   children,
   onClick,
   disabled,
+  fullWidth,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  fullWidth?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-12 items-center justify-center rounded-[18px] bg-cyan-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(8,145,178,0.26)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] bg-cyan-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(8,145,178,0.26)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
     >
       {children}
     </button>
@@ -296,17 +302,22 @@ function SecondaryActionButton({
   children,
   onClick,
   disabled,
+  fullWidth,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  fullWidth?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-12 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+      className={[
+        "inline-flex h-12 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-5 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50",
+        fullWidth ? "w-full" : "",
+      ].join(" ")}
     >
       {children}
     </button>
@@ -337,6 +348,9 @@ function MetricCard({
 
 export default function AdmLogisticaDetalhePage({ params }: Props) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
+
+  const isDispatchMode = searchParams.get("mode") === "dispatch";
 
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [overview, setOverview] = useState<DeliveryOverviewRow | null>(null);
@@ -346,6 +360,10 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const [driverPhone, setDriverPhone] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [occurrenceNotes, setOccurrenceNotes] = useState("");
+
+  const [driverNameDirty, setDriverNameDirty] = useState(false);
+  const [driverPhoneDirty, setDriverPhoneDirty] = useState(false);
+  const [deliveryNotesDirty, setDeliveryNotesDirty] = useState(false);
 
   const [lastGeneratedCode, setLastGeneratedCode] = useState<string | null>(null);
 
@@ -365,6 +383,8 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const [followVehicle, setFollowVehicle] = useState(true);
   const [mapKey, setMapKey] = useState(0);
 
+  const didInitialFormLoadRef = useRef(false);
+
   const showSuccess = (text: string) => {
     setMessage(text);
     setMessageTone("green");
@@ -380,11 +400,70 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     setMessageTone(null);
   };
 
-  const loadData = useCallback(
+  const applyServerData = useCallback(
+    (
+      data: {
+        order?: OrderRow | null;
+        overview?: DeliveryOverviewRow | null;
+        storeLabel?: string;
+      },
+      options?: {
+        preserveForm?: boolean;
+        clearFlashMessage?: boolean;
+      }
+    ) => {
+      const preserveForm = options?.preserveForm ?? true;
+      const clearFlashMessage = options?.clearFlashMessage ?? false;
+
+      if (clearFlashMessage) clearMessage();
+
+      const nextOrder = (data.order as OrderRow | null) ?? null;
+      const nextOverview = (data.overview as DeliveryOverviewRow | null) ?? null;
+      const prevLat = overview?.last_lat ?? null;
+      const prevLng = overview?.last_lng ?? null;
+
+      setOrder(nextOrder);
+      setOverview(nextOverview);
+      setStoreLabel(data.storeLabel || "Sem loja");
+
+      const shouldHydrateForm = !preserveForm || !didInitialFormLoadRef.current;
+
+      if (shouldHydrateForm) {
+        setDriverName(nextOverview?.delivery_driver_name ?? "");
+        setDriverPhone(nextOverview?.delivery_driver_phone ?? "");
+        setDeliveryNotes(nextOverview?.delivery_notes ?? "");
+        setDriverNameDirty(false);
+        setDriverPhoneDirty(false);
+        setDeliveryNotesDirty(false);
+        didInitialFormLoadRef.current = true;
+      } else {
+        if (!driverNameDirty) setDriverName(nextOverview?.delivery_driver_name ?? "");
+        if (!driverPhoneDirty) setDriverPhone(nextOverview?.delivery_driver_phone ?? "");
+        if (!deliveryNotesDirty) setDeliveryNotes(nextOverview?.delivery_notes ?? "");
+      }
+
+      if (
+        followVehicle &&
+        nextOverview?.last_lat != null &&
+        nextOverview?.last_lng != null &&
+        (nextOverview.last_lat !== prevLat || nextOverview.last_lng !== prevLng)
+      ) {
+        setMapKey((k) => k + 1);
+      }
+    },
+    [
+      overview?.last_lat,
+      overview?.last_lng,
+      followVehicle,
+      driverNameDirty,
+      driverPhoneDirty,
+      deliveryNotesDirty,
+    ]
+  );
+
+  const loadAllData = useCallback(
     async (isRefresh = false) => {
       try {
-        if (!isRefresh) clearMessage();
-
         if (isRefresh) setRefreshing(true);
         else setLoading(true);
 
@@ -399,26 +478,10 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
           throw new Error(data.message || "Erro ao carregar logística.");
         }
 
-        const nextOverview = (data.overview as DeliveryOverviewRow | null) ?? null;
-        const prevLat = overview?.last_lat ?? null;
-        const prevLng = overview?.last_lng ?? null;
-
-        setOrder((data.order as OrderRow) ?? null);
-        setOverview(nextOverview);
-        setStoreLabel(data.storeLabel || "Sem loja");
-
-        setDriverName(data.overview?.delivery_driver_name ?? "");
-        setDriverPhone(data.overview?.delivery_driver_phone ?? "");
-        setDeliveryNotes(data.overview?.delivery_notes ?? "");
-
-        if (
-          followVehicle &&
-          nextOverview?.last_lat != null &&
-          nextOverview?.last_lng != null &&
-          (nextOverview.last_lat !== prevLat || nextOverview.last_lng !== prevLng)
-        ) {
-          setMapKey((k) => k + 1);
-        }
+        applyServerData(data, {
+          preserveForm: true,
+          clearFlashMessage: false,
+        });
       } catch (error) {
         const text =
           error instanceof Error ? error.message : "Erro ao carregar logística.";
@@ -428,20 +491,40 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         setRefreshing(false);
       }
     },
-    [id, overview?.last_lat, overview?.last_lng, followVehicle]
+    [id, applyServerData]
   );
 
+  const loadLiveOnly = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/logistica/admin/order/${id}/overview`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) return;
+
+      applyServerData(data, {
+        preserveForm: true,
+        clearFlashMessage: false,
+      });
+    } catch {
+      // polling silencioso
+    }
+  }, [id, applyServerData]);
+
   useEffect(() => {
-    loadData(false);
-  }, [loadData]);
+    loadAllData(false);
+  }, [loadAllData]);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      loadData(true);
+      loadLiveOnly();
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [loadData]);
+  }, [loadLiveOnly]);
 
   const trackingLink = useMemo(() => {
     if (!overview?.tracking_token || typeof window === "undefined") return "";
@@ -469,7 +552,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
   const hasMap = lastLat != null && lastLng != null;
   const formattedCoords = hasMap ? `${lastLat.toFixed(5)}, ${lastLng.toFixed(5)}` : "—";
-  const formattedCoordsOrText = hasMap ? `${lastLat.toFixed(5)}, ${lastLng.toFixed(5)}` : "Sem coordenadas";
+  const formattedCoordsOrText = hasMap
+    ? `${lastLat.toFixed(5)}, ${lastLng.toFixed(5)}`
+    : "Sem coordenadas";
 
   const mapOpenUrl = useMemo(() => {
     if (lastLat == null || lastLng == null) return "";
@@ -499,7 +584,11 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         throw new Error(data.message || "Erro ao salvar dados do motorista.");
       }
 
-      await loadData(true);
+      setDriverNameDirty(false);
+      setDriverPhoneDirty(false);
+      setDeliveryNotesDirty(false);
+
+      await loadAllData(true);
       showSuccess(data.message || "Dados atualizados com sucesso.");
     } catch (error) {
       const text =
@@ -531,7 +620,11 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         throw new Error(data.message || "Erro ao marcar em separação.");
       }
 
-      await loadData(true);
+      setDriverNameDirty(false);
+      setDriverPhoneDirty(false);
+      setDeliveryNotesDirty(false);
+
+      await loadAllData(true);
       showSuccess(data.message || "Pedido marcado em separação.");
     } catch (error) {
       const text =
@@ -564,8 +657,11 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       }
 
       setLastGeneratedCode(data.confirmationCode ?? null);
+      setDriverNameDirty(false);
+      setDriverPhoneDirty(false);
+      setDeliveryNotesDirty(false);
 
-      await loadData(true);
+      await loadAllData(true);
       showSuccess(data.message || "Entrega iniciada com sucesso.");
     } catch (error) {
       const text =
@@ -593,7 +689,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
       setLastGeneratedCode(data.confirmationCode ?? null);
 
-      await loadData(true);
+      await loadAllData(true);
       showSuccess(data.message || "Código regenerado com sucesso.");
     } catch (error) {
       const text =
@@ -629,7 +725,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       }
 
       setOccurrenceNotes("");
-      await loadData(true);
+      await loadAllData(true);
       showSuccess(data.message || "Ocorrência registrada com sucesso.");
     } catch (error) {
       const text =
@@ -657,7 +753,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         throw new Error(data.message || "Erro ao atualizar status.");
       }
 
-      await loadData(true);
+      await loadAllData(true);
       showSuccess(data.message || "Status atualizado com sucesso.");
     } catch (error) {
       const text =
@@ -681,7 +777,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Logística da entrega"
+          title={isDispatchMode ? "Saída para entrega" : "Logística da entrega"}
           subtitle="Carregando dados da operação."
           right={
             <Link href="/adm/logistica">
@@ -701,7 +797,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Logística da entrega"
+          title={isDispatchMode ? "Saída para entrega" : "Logística da entrega"}
           subtitle="Pedido não encontrado."
           right={
             <Link href="/adm/logistica">
@@ -719,6 +815,345 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     );
   }
 
+  if (isDispatchMode) {
+    return (
+      <div className="space-y-4 md:space-y-6">
+        <PageHeader
+          title={`Saída para entrega ${id.slice(0, 8)}`}
+          subtitle="Fluxo rápido para expedição"
+          right={
+            <div className="flex flex-wrap gap-2">
+              <SecondaryActionButton onClick={() => loadAllData(true)} disabled={refreshing}>
+                {refreshing ? "Atualizando..." : "Atualizar"}
+              </SecondaryActionButton>
+
+              <Link href="/adm/expedicao">
+                <SecondaryActionButton>Voltar</SecondaryActionButton>
+              </Link>
+            </div>
+          }
+        />
+
+        {message ? (
+          <div className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm">
+            <div
+              className={`rounded-[18px] border p-3 text-sm ${
+                messageTone === "green"
+                  ? "border-green-200 bg-green-50 text-green-700"
+                  : "border-red-200 bg-red-50 text-red-700"
+              }`}
+            >
+              {message}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard title="Pedido" value={id.slice(0, 8)} subtitle={String(order.status ?? "—")} />
+          <MetricCard title="Loja" value={storeLabel} />
+          <MetricCard
+            title="Status"
+            value={getDeliveryStatusLabel(overview?.delivery_status ?? "PENDENTE")}
+            subtitle={`Rastreio: ${getTrackingStatusLabel(overview?.tracking_status ?? null)}`}
+          />
+          <MetricCard
+            title="Último check-in"
+            value={formatRelativeFromNow(lastSeenAt)}
+            subtitle={formatDateTime(lastSeenAt)}
+          />
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="space-y-4">
+            <div className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+              <div className="text-base font-semibold text-slate-900">
+                Dados do motorista
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                Preencha e já inicie a saída de forma rápida.
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-4">
+                <Input
+                  label="Nome do motorista"
+                  value={driverName}
+                  onChange={(v) => {
+                    setDriverName(v);
+                    setDriverNameDirty(true);
+                  }}
+                  placeholder="Ex.: Carlos Henrique"
+                />
+
+                <Input
+                  label="Telefone do motorista"
+                  value={driverPhone}
+                  onChange={(v) => {
+                    setDriverPhone(v);
+                    setDriverPhoneDirty(true);
+                  }}
+                  placeholder="Ex.: 31999999999"
+                />
+
+                <Input
+                  label="Observações"
+                  value={deliveryNotes}
+                  onChange={(v) => {
+                    setDeliveryNotes(v);
+                    setDeliveryNotesDirty(true);
+                  }}
+                  placeholder="Portaria, condomínio, referência..."
+                />
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <SecondaryActionButton
+                  fullWidth
+                  onClick={handleSaveDriver}
+                  disabled={savingDriver}
+                >
+                  {savingDriver ? "Salvando..." : "Salvar motorista"}
+                </SecondaryActionButton>
+
+                <SecondaryActionButton
+                  fullWidth
+                  onClick={handleMarkSeparation}
+                  disabled={markingSeparation}
+                >
+                  {markingSeparation ? "Processando..." : "Em separação"}
+                </SecondaryActionButton>
+              </div>
+
+              <div className="mt-3">
+                <PrimaryActionButton
+                  fullWidth
+                  onClick={handleStartDelivery}
+                  disabled={startingDelivery || !canStartDelivery}
+                >
+                  {startingDelivery ? "Gerando..." : "Sair para entrega"}
+                </PrimaryActionButton>
+              </div>
+
+              {!canStartDelivery ? (
+                <div className="mt-3 rounded-[18px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                  Este pedido já saiu para entrega ou já foi concluído.
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+              <div className="text-base font-semibold text-slate-900">
+                Link do rastreio
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                Gere e envie rapidamente para o motorista.
+              </div>
+
+              <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-slate-900 break-all">
+                {trackingLink || "O link aparecerá após sair para entrega."}
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3">
+                <SecondaryActionButton
+                  fullWidth
+                  disabled={!trackingLink}
+                  onClick={() =>
+                    trackingLink &&
+                    handleCopyText(trackingLink, "Link do motorista copiado.")
+                  }
+                >
+                  Copiar link
+                </SecondaryActionButton>
+
+                <a href={driverWhatsAppUrl || "#"} target="_blank" rel="noreferrer" className="block">
+                  <PrimaryActionButton fullWidth disabled={!trackingLink}>
+                    Enviar por WhatsApp
+                  </PrimaryActionButton>
+                </a>
+
+                <a href={trackingLink || "#"} target="_blank" rel="noreferrer" className="block">
+                  <SecondaryActionButton fullWidth disabled={!trackingLink}>
+                    Abrir link
+                  </SecondaryActionButton>
+                </a>
+              </div>
+            </div>
+
+            <div className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+              <div className="text-base font-semibold text-slate-900">
+                Código de confirmação
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                Mostre ou envie ao cliente.
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Código
+                  </div>
+                  <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">
+                    {lastGeneratedCode || "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Status
+                  </div>
+                  <div className="mt-2">
+                    <Badge tone={confirmationTone(overview?.confirmation_status ?? null)}>
+                      {getConfirmationStatusLabel(overview?.confirmation_status ?? null)}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Expiração
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-slate-900">
+                    {formatDateTime(overview?.code_expires_at)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <SecondaryActionButton
+                  fullWidth
+                  onClick={handleRegenerateCode}
+                  disabled={regeneratingCode}
+                >
+                  {regeneratingCode ? "Gerando..." : "Regenerar código"}
+                </SecondaryActionButton>
+
+                <a href={customerWhatsAppUrl || "#"} target="_blank" rel="noreferrer" className="block">
+                  <SecondaryActionButton fullWidth disabled={!lastGeneratedCode}>
+                    Enviar código ao cliente
+                  </SecondaryActionButton>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-[26px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-4 shadow-sm md:p-5">
+              <div className="text-base font-semibold text-slate-900">Resumo rápido</div>
+
+              <div className="mt-4 space-y-3 text-sm text-slate-700">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Status entrega</span>
+                  <Badge tone={deliveryTone(overview?.delivery_status ?? "PENDENTE")}>
+                    {getDeliveryStatusLabel(overview?.delivery_status ?? "PENDENTE")}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span>Rastreio</span>
+                  <Badge tone={trackingTone(overview?.tracking_status ?? null)}>
+                    {getTrackingStatusLabel(overview?.tracking_status ?? null)}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span>Check-in</span>
+                  <span className="font-semibold text-slate-900">
+                    {formatRelativeFromNow(lastSeenAt)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span>Motorista</span>
+                  <span className="font-semibold text-slate-900 text-right">
+                    {overview?.delivery_driver_name || "Não informado"}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                  <span>Telefone</span>
+                  <span className="font-semibold text-slate-900 text-right">
+                    {overview?.delivery_driver_phone || "—"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {hasMap && lastLat != null && lastLng != null ? (
+              <div className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-base font-semibold text-slate-900">Mapa</div>
+                    <div className="mt-1 text-sm text-slate-600">
+                      Última posição recebida
+                    </div>
+                  </div>
+
+                  {mapOpenUrl ? (
+                    <a href={mapOpenUrl} target="_blank" rel="noreferrer">
+                      <SecondaryActionButton>Abrir Maps</SecondaryActionButton>
+                    </a>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 overflow-hidden rounded-[20px] border border-slate-200">
+                  <div className="h-[300px] w-full">
+                    <MapContainer
+                      key={mapKey}
+                      center={[lastLat, lastLng]}
+                      zoom={16}
+                      scrollWheelZoom
+                      style={{ height: "100%", width: "100%" }}
+                    >
+                      <TileLayer
+                        attribution='&copy; OpenStreetMap contributors'
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      />
+
+                      <Circle
+                        center={[lastLat, lastLng]}
+                        radius={Math.max(Number(lastAccuracy ?? 15), 8)}
+                        pathOptions={{
+                          color: "#0891b2",
+                          fillColor: "#22d3ee",
+                          fillOpacity: 0.18,
+                        }}
+                      />
+
+                      <Marker position={[lastLat, lastLng]} icon={deliveryIcon}>
+                        <Popup>
+                          <div className="text-sm">
+                            <div className="font-semibold">Entrega em andamento</div>
+                            <div className="mt-1">
+                              Último check-in: {formatDateTime(lastSeenAt)}
+                            </div>
+                            <div>Precisão: {lastAccuracy ?? "—"}</div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    </MapContainer>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 p-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-500">Coordenadas</span>
+                    <span className="font-semibold text-slate-900">{formattedCoords}</span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-[26px] border border-slate-200 bg-white p-4 shadow-sm md:p-5">
+                <div className="text-base font-semibold text-slate-900">Mapa</div>
+                <div className="mt-4 rounded-[20px] border border-dashed border-slate-300 p-6 text-sm text-slate-500">
+                  Ainda não há coordenadas registradas para esta entrega.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -726,7 +1161,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         subtitle="Controle operacional da entrega, rastreio e confirmação."
         right={
           <div className="flex flex-wrap gap-2">
-            <SecondaryActionButton onClick={() => loadData(true)} disabled={refreshing}>
+            <SecondaryActionButton onClick={() => loadAllData(true)} disabled={refreshing}>
               {refreshing ? "Atualizando..." : "Atualizar"}
             </SecondaryActionButton>
 
@@ -865,14 +1300,20 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
               <Input
                 label="Nome do motorista"
                 value={driverName}
-                onChange={setDriverName}
+                onChange={(v) => {
+                  setDriverName(v);
+                  setDriverNameDirty(true);
+                }}
                 placeholder="Ex.: Carlos Henrique"
               />
 
               <Input
                 label="Telefone do motorista"
                 value={driverPhone}
-                onChange={setDriverPhone}
+                onChange={(v) => {
+                  setDriverPhone(v);
+                  setDriverPhoneDirty(true);
+                }}
                 placeholder="Ex.: 31999999999"
               />
 
@@ -880,7 +1321,10 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                 <Input
                   label="Observações logísticas"
                   value={deliveryNotes}
-                  onChange={setDeliveryNotes}
+                  onChange={(v) => {
+                    setDeliveryNotes(v);
+                    setDeliveryNotesDirty(true);
+                  }}
                   placeholder="Ex.: portaria, condomínio, entrega urgente"
                 />
               </div>
@@ -1190,7 +1634,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
               <div className="mt-6 grid gap-3">
                 <SecondaryActionButton
-                  onClick={() => loadData(true)}
+                  onClick={() => loadAllData(true)}
                   disabled={refreshing}
                 >
                   {refreshing ? "Atualizando..." : "Atualizar entrega"}
@@ -1331,7 +1775,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
             </div>
           </div>
         </div>
-      </div>
+      </div> 
     </div>
   );
 }

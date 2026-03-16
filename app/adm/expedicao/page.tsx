@@ -6,11 +6,17 @@ import { supabase } from "@/lib/supabaseClient";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 import { PageHeader, Card, Input, Badge, Select } from "@/app/components/ui";
 
+type UnifiedLogisticStatus =
+  | "RECEBIDO"
+  | "EM_SEPARACAO"
+  | "SAIU_PARA_ENTREGA"
+  | "ENTREGUE";
+
 type OrderRow = {
   id: string;
   store_id: string | null;
   status: string;
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status: UnifiedLogisticStatus | null;
   delivery_forecast: string | null;
   created_at: string | null;
   submitted_at: string | null;
@@ -35,9 +41,10 @@ type OrderItemAgg = {
   value_total: number;
 };
 
-const LOGISTIC_OPTIONS = [
+const LOGISTIC_OPTIONS: Array<{ value: UnifiedLogisticStatus; label: string }> = [
   { value: "RECEBIDO", label: "Recebido" },
   { value: "EM_SEPARACAO", label: "Em separação" },
+  { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
   { value: "ENTREGUE", label: "Entregue" },
 ];
 
@@ -46,7 +53,7 @@ function fmtDT(v: string | null | undefined) {
   try {
     return new Date(v).toLocaleString("pt-BR");
   } catch {
-    return v;
+    return String(v);
   }
 }
 
@@ -56,7 +63,7 @@ function fmtDate(v: string | null | undefined) {
     const d = new Date(`${v}T12:00:00`);
     return d.toLocaleDateString("pt-BR");
   } catch {
-    return v;
+    return String(v);
   }
 }
 
@@ -75,11 +82,19 @@ function fmtBRL(v: number | null | undefined) {
   });
 }
 
-function statusTone(status: OrderRow["logistic_status"]) {
-  if (status === "ENTREGUE") return "green";
-  if (status === "EM_SEPARACAO") return "yellow";
-  if (status === "RECEBIDO") return "blue";
-  return "neutral";
+function logisticTone(status: UnifiedLogisticStatus | null) {
+  if (status === "ENTREGUE") return "green" as const;
+  if (status === "SAIU_PARA_ENTREGA") return "blue" as const;
+  if (status === "EM_SEPARACAO") return "yellow" as const;
+  return "neutral" as const;
+}
+
+function logisticLabel(status: UnifiedLogisticStatus | null) {
+  if (status === "RECEBIDO") return "Recebido";
+  if (status === "EM_SEPARACAO") return "Em separação";
+  if (status === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
+  if (status === "ENTREGUE") return "Entregue";
+  return "—";
 }
 
 function deliveryModeLabel(mode: OrderRow["delivery_mode"]) {
@@ -106,10 +121,11 @@ function sortOrdersForExpedition(a: OrderRow, b: OrderRow) {
   const bToday = b.delivery_forecast === today;
   if (aToday !== bToday) return aToday ? -1 : 1;
 
-  const statusWeight = (s: OrderRow["logistic_status"]) => {
+  const statusWeight = (s: UnifiedLogisticStatus | null) => {
     if (s === "EM_SEPARACAO") return 0;
     if (s === "RECEBIDO") return 1;
-    return 2;
+    if (s === "SAIU_PARA_ENTREGA") return 2;
+    return 3;
   };
 
   const swA = statusWeight(a.logistic_status ?? "RECEBIDO");
@@ -274,7 +290,7 @@ export default function AdmExpedicaoPage() {
       id: row.id,
       store_id: row.store_id,
       status: row.status,
-      logistic_status: row.logistic_status ?? "RECEBIDO",
+      logistic_status: (row.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus,
       delivery_forecast: row.delivery_forecast ?? null,
       created_at: row.created_at ?? null,
       submitted_at: row.submitted_at ?? null,
@@ -324,7 +340,8 @@ export default function AdmExpedicaoPage() {
 
       map[orderId].lines += 1;
       map[orderId].qty_total += Number((row as any).qty ?? 0);
-      map[orderId].value_total += Number((row as any).qty ?? 0) * Number((row as any).unit_cost ?? 0);
+      map[orderId].value_total +=
+        Number((row as any).qty ?? 0) * Number((row as any).unit_cost ?? 0);
     }
 
     setItemAggMap(map);
@@ -338,10 +355,7 @@ export default function AdmExpedicaoPage() {
     setSavingId(orderId);
     setMsg("");
 
-    const { error } = await supabase
-      .from("orders")
-      .update(patch)
-      .eq("id", orderId);
+    const { error } = await supabase.from("orders").update(patch).eq("id", orderId);
 
     if (error) {
       setMsg(error.message);
@@ -373,6 +387,42 @@ export default function AdmExpedicaoPage() {
 
     setSavingId(null);
     if (successMessage) setMsg(successMessage);
+  }
+
+  async function openDeliveryFlow(order: OrderRow) {
+    setSavingId(order.id);
+    setMsg("");
+
+    try {
+      if (order.delivery_mode === "RETIRADA") {
+        router.push(`/adm/logistica/${order.id}`);
+        return;
+      }
+
+      const currentStatus = order.logistic_status ?? "RECEBIDO";
+
+      if (currentStatus === "RECEBIDO") {
+        const { error } = await supabase
+          .from("orders")
+          .update({ logistic_status: "EM_SEPARACAO" })
+          .eq("id", order.id);
+
+        if (error) {
+          setMsg(error.message);
+          return;
+        }
+
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === order.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
+          )
+        );
+      }
+
+      router.push(`/adm/logistica/${order.id}?mode=dispatch`);
+    } finally {
+      setSavingId(null);
+    }
   }
 
   const filtered = useMemo(() => {
@@ -419,8 +469,10 @@ export default function AdmExpedicaoPage() {
       total: filtered.length,
       recebido: filtered.filter((o) => (o.logistic_status ?? "RECEBIDO") === "RECEBIDO").length,
       separacao: filtered.filter((o) => o.logistic_status === "EM_SEPARACAO").length,
+      rota: filtered.filter((o) => o.logistic_status === "SAIU_PARA_ENTREGA").length,
       hoje: filtered.filter((o) => o.delivery_forecast === today).length,
-      atrasados: filtered.filter((o) => !!o.delivery_forecast && o.delivery_forecast < today).length,
+      atrasados: filtered.filter((o) => !!o.delivery_forecast && o.delivery_forecast < today)
+        .length,
     };
   }, [filtered]);
 
@@ -428,7 +480,7 @@ export default function AdmExpedicaoPage() {
     <div className="space-y-5">
       <PageHeader
         title="Expedição"
-        subtitle="Fila operacional mobile para separação e entrega"
+        subtitle="Fila operacional simples, rápida e pensada para uso no celular"
         right={
           <div className="flex flex-wrap gap-2">
             <SecondaryActionButton onClick={() => router.push("/adm/expedicao/mapa-separacao")}>
@@ -445,11 +497,12 @@ export default function AdmExpedicaoPage() {
         </Card>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <SummaryBox title="Fila" value={String(counts.total)} />
         <SummaryBox title="Recebidos" value={String(counts.recebido)} />
         <SummaryBox title="Separação" value={String(counts.separacao)} />
-        <SummaryBox title="Entrega hoje" value={String(counts.hoje)} />
+        <SummaryBox title="Em rota" value={String(counts.rota)} />
+        <SummaryBox title="Hoje" value={String(counts.hoje)} />
         <SummaryBox title="Atrasados" value={String(counts.atrasados)} />
       </div>
 
@@ -470,6 +523,7 @@ export default function AdmExpedicaoPage() {
               { value: "all", label: "Todos" },
               { value: "RECEBIDO", label: "Recebido" },
               { value: "EM_SEPARACAO", label: "Em separação" },
+              { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
             ]}
           />
 
@@ -542,12 +596,8 @@ export default function AdmExpedicaoPage() {
                   </div>
 
                   <div className="flex flex-col items-end gap-2">
-                    <Badge tone={statusTone(currentStatus) as any}>
-                      {currentStatus === "EM_SEPARACAO"
-                        ? "Em separação"
-                        : currentStatus === "ENTREGUE"
-                        ? "Entregue"
-                        : "Recebido"}
+                    <Badge tone={logisticTone(currentStatus)}>
+                      {logisticLabel(currentStatus)}
                     </Badge>
 
                     {forecastLate ? (
@@ -639,7 +689,7 @@ export default function AdmExpedicaoPage() {
                     onChange={(v) =>
                       updateOrder(
                         order.id,
-                        { logistic_status: v as OrderRow["logistic_status"] },
+                        { logistic_status: v as UnifiedLogisticStatus },
                         "Status logístico atualizado."
                       )
                     }
@@ -669,7 +719,17 @@ export default function AdmExpedicaoPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
+                <div className="mt-4 rounded-[18px] border border-cyan-100 bg-cyan-50 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-cyan-700">
+                    Fluxo rápido de entrega
+                  </div>
+                  <div className="mt-1 text-sm text-cyan-900">
+                    Ao tocar em <b>Sair para entrega</b>, abre uma tela curta para preencher
+                    motorista, enviar o link de rastreio e concluir a saída.
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
                   <SecondaryActionButton
                     fullWidth
                     disabled={saving}
@@ -708,6 +768,14 @@ export default function AdmExpedicaoPage() {
                   </PrimaryActionButton>
 
                   <PrimaryActionButton
+                    fullWidth
+                    disabled={saving || order.delivery_mode === "RETIRADA"}
+                    onClick={() => openDeliveryFlow(order)}
+                  >
+                    Sair para entrega
+                  </PrimaryActionButton>
+
+                  <PrimaryActionButton
                     tone="green"
                     fullWidth
                     disabled={saving}
@@ -722,6 +790,12 @@ export default function AdmExpedicaoPage() {
                     Entregue
                   </PrimaryActionButton>
                 </div>
+
+                {order.delivery_mode === "RETIRADA" ? (
+                  <div className="mt-3 text-xs text-slate-500">
+                    Pedido em retirada: a ação de rastreio/saída para entrega não se aplica.
+                  </div>
+                ) : null}
 
                 {order.notes ? (
                   <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 p-3">

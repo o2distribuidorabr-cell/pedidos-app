@@ -20,7 +20,7 @@ type OrderRow = {
 
   paid_amount: number | null;
 
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | null;
 
   delivery_mode: "RETIRADA" | "FRETE" | null;
   freight_fee: number | null;
@@ -143,6 +143,7 @@ function daysBetweenYMD(a: string, b: string) {
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
   if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
   if (v === "ENTREGUE") return "Entregue";
   return "—";
 }
@@ -1195,16 +1196,17 @@ export default function AdmFinanceiroPage() {
             />
 
             <Select
-              label="Status logístico"
-              value={logisticFilter}
-              onChange={setLogisticFilter}
-              options={[
-                { value: "all", label: "Todos" },
-                { value: "RECEBIDO", label: "Recebido" },
-                { value: "EM_SEPARACAO", label: "Em separação" },
-                { value: "ENTREGUE", label: "Entregue" },
-              ]}
-            />
+  label="Status logístico"
+  value={logisticFilter}
+  onChange={setLogisticFilter}
+  options={[
+    { value: "all", label: "Todos" },
+    { value: "RECEBIDO", label: "Recebido" },
+    { value: "EM_SEPARACAO", label: "Em separação" },
+    { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
+    { value: "ENTREGUE", label: "Entregue" },
+  ]}
+/>
 
             <Select
               label="Entrega"

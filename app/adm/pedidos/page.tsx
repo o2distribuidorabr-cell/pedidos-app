@@ -9,12 +9,17 @@ import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/componen
 
 type PaymentMethod = "PIX" | "CARTAO" | "BOLETO";
 type DeliveryMode = "RETIRADA" | "FRETE";
+type UnifiedLogisticStatus =
+  | "RECEBIDO"
+  | "EM_SEPARACAO"
+  | "SAIU_PARA_ENTREGA"
+  | "ENTREGUE";
 
 type OrderRow = {
   id: string;
   created_at: string;
   status: string;
-  logistic_status: string | null;
+  logistic_status: UnifiedLogisticStatus | null;
   is_paid: boolean | null;
   paid_at: string | null;
   payment_method: PaymentMethod | null;
@@ -32,7 +37,12 @@ type OrderRow = {
 };
 
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
-const LOG_OPTIONS = ["RECEBIDO", "EM_SEPARACAO", "ENTREGUE"] as const;
+const LOG_OPTIONS: UnifiedLogisticStatus[] = [
+  "RECEBIDO",
+  "EM_SEPARACAO",
+  "SAIU_PARA_ENTREGA",
+  "ENTREGUE",
+];
 
 type TabKey = "OPEN" | "DELIVERED";
 type OrdersAdminListRow = OrderRow;
@@ -72,6 +82,65 @@ function todayYMD() {
 
 function isPastDateYMD(ymd: string) {
   return ymd < todayYMD();
+}
+
+function getLogisticLabel(value: UnifiedLogisticStatus | null) {
+  switch (value) {
+    case "RECEBIDO":
+      return "Recebido";
+    case "EM_SEPARACAO":
+      return "Em separação";
+    case "SAIU_PARA_ENTREGA":
+      return "Saiu para entrega";
+    case "ENTREGUE":
+      return "Entregue";
+    default:
+      return "—";
+  }
+}
+
+function getLogisticTone(
+  value: UnifiedLogisticStatus | null
+): "green" | "yellow" | "blue" | "neutral" {
+  switch (value) {
+    case "ENTREGUE":
+      return "green";
+    case "SAIU_PARA_ENTREGA":
+      return "blue";
+    case "EM_SEPARACAO":
+      return "yellow";
+    default:
+      return "neutral";
+  }
+}
+
+function getStatusTone(status: string): "green" | "red" | "yellow" | "neutral" {
+  const s = (status || "").toLowerCase();
+  if (s === "approved") return "green";
+  if (s === "rejected") return "red";
+  if (s === "submitted") return "yellow";
+  return "neutral";
+}
+
+function getPaymentBadgeTone(
+  isPaid: boolean | null,
+  dueDate: string | null
+): "green" | "red" | "yellow" {
+  if (isPaid) return "green";
+  if (dueDate && isPastDateYMD(dueDate)) return "red";
+  return "yellow";
+}
+
+function getPaymentBadgeLabel(isPaid: boolean | null, dueDate: string | null) {
+  if (isPaid) return "Pago";
+  if (dueDate && isPastDateYMD(dueDate)) return "Vencido";
+  return "Não pago";
+}
+
+function getDeliveryLabel(mode: DeliveryMode | null) {
+  if (mode === "FRETE") return "Frete";
+  if (mode === "RETIRADA") return "Retirada";
+  return "—";
 }
 
 function PrimaryActionButton({
@@ -273,7 +342,10 @@ export default function AdmPedidosPage() {
 
   async function updateOrder(id: string, patch: Partial<OrderRow>) {
     const { error } = await supabase.from("orders").update(patch).eq("id", id);
-    if (error) console.error("updateOrder error:", error);
+    if (error) {
+      console.error("updateOrder error:", error);
+      return;
+    }
 
     setOrders((prev) =>
       prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o))
@@ -375,7 +447,7 @@ export default function AdmPedidosPage() {
         </div>
 
         <div className="mt-3 text-xs text-slate-500">
-          Regra: ao marcar <b>Logística = ENTREGUE</b>, o pedido vai para a aba <b>Entregues</b>.
+          Regra: o fluxo logístico unificado é <b>Recebido → Em separação → Saiu para entrega → Entregue</b>. Apenas <b>Entregue</b> vai para a aba final.
         </div>
       </div>
 
@@ -428,14 +500,14 @@ export default function AdmPedidosPage() {
                           {isSplitChild ? <Badge tone="blue">Parcial</Badge> : null}
                           {isOverdue ? <Badge tone="red">Vencido</Badge> : null}
                           {!!due && !isOverdue ? <Badge tone="neutral">Com vencimento</Badge> : null}
-                          {(o.logistic_status ?? "") === "ENTREGUE" ? (
-                            <Badge tone="green">Entregue</Badge>
-                          ) : null}
-                          {!!o.is_paid ? (
-                            <Badge tone="green">Pago</Badge>
-                          ) : (
-                            <Badge tone="yellow">Não pago</Badge>
-                          )}
+
+                          <Badge tone={getLogisticTone(o.logistic_status)}>
+                            {getLogisticLabel(o.logistic_status)}
+                          </Badge>
+
+                          <Badge tone={getPaymentBadgeTone(o.is_paid, o.due_date)}>
+                            {getPaymentBadgeLabel(o.is_paid, o.due_date)}
+                          </Badge>
                         </div>
                       </div>
                     </div>
@@ -455,10 +527,16 @@ export default function AdmPedidosPage() {
                   <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
                     <div className="space-y-3">
                       <InfoLine label="Criado em" value={fmtDT(o.created_at)} />
-                      <InfoLine label="Status" value={o.status} />
-                      <InfoLine label="Logística" value={o.logistic_status ?? "—"} />
+                      <InfoLine
+                        label="Status"
+                        value={<Badge tone={getStatusTone(o.status)}>{o.status}</Badge>}
+                      />
+                      <InfoLine
+                        label="Logística"
+                        value={<Badge tone={getLogisticTone(o.logistic_status)}>{getLogisticLabel(o.logistic_status)}</Badge>}
+                      />
                       <InfoLine label="Pagamento" value={o.payment_method ?? "—"} />
-                      <InfoLine label="Entrega" value={o.delivery_mode ?? "—"} />
+                      <InfoLine label="Entrega" value={getDeliveryLabel(o.delivery_mode)} />
                       <InfoLine label="Frete" value={fmtBRL(Number(o.freight_fee ?? 0) || 0)} />
                       <InfoLine label="Vencimento" value={due ? fmtDateOnly(due) : "—"} />
                     </div>
@@ -475,8 +553,13 @@ export default function AdmPedidosPage() {
                     <Select
                       label="Logística"
                       value={o.logistic_status ?? LOG_OPTIONS[0]}
-                      onChange={(v) => updateOrder(o.id, { logistic_status: v })}
-                      options={LOG_OPTIONS.map((s) => ({ value: s, label: s }))}
+                      onChange={(v) =>
+                        updateOrder(o.id, { logistic_status: v as UnifiedLogisticStatus })
+                      }
+                      options={LOG_OPTIONS.map((s) => ({
+                        value: s,
+                        label: getLogisticLabel(s),
+                      }))}
                     />
 
                     <div>

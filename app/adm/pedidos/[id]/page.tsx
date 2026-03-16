@@ -14,6 +14,12 @@ import {
   Table,
 } from "@/app/components/ui";
 
+type UnifiedLogisticStatus =
+  | "RECEBIDO"
+  | "EM_SEPARACAO"
+  | "SAIU_PARA_ENTREGA"
+  | "ENTREGUE";
+
 type OrderRow = {
   id: string;
   store_id: string | null;
@@ -24,7 +30,7 @@ type OrderRow = {
   submitted_at: string | null;
   approved_at: string | null;
 
-  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "ENTREGUE" | null;
+  logistic_status: UnifiedLogisticStatus | null;
 
   is_paid: boolean | null;
   paid_at: string | null;
@@ -124,7 +130,12 @@ type FocusNfeDocRow = {
 };
 
 const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
-const LOG_OPTIONS = ["RECEBIDO", "EM_SEPARACAO", "ENTREGUE"] as const;
+const LOG_OPTIONS: UnifiedLogisticStatus[] = [
+  "RECEBIDO",
+  "EM_SEPARACAO",
+  "SAIU_PARA_ENTREGA",
+  "ENTREGUE",
+];
 const PAY_METHODS = ["PIX", "CARTAO", "BOLETO"] as const;
 const DELIVERY_OPTIONS = ["RETIRADA", "FRETE"] as const;
 
@@ -382,12 +393,14 @@ function toneForNfeStatus(status: string | null | undefined) {
 function logisticLabel(v: OrderRow["logistic_status"]) {
   if (v === "RECEBIDO") return "Recebido";
   if (v === "EM_SEPARACAO") return "Em separação";
+  if (v === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
   if (v === "ENTREGUE") return "Entregue";
   return "—";
 }
 
 function logisticTone(v: OrderRow["logistic_status"]) {
   if (v === "ENTREGUE") return "green" as const;
+  if (v === "SAIU_PARA_ENTREGA") return "blue" as const;
   if (v === "EM_SEPARACAO") return "yellow" as const;
   return "neutral" as const;
 }
@@ -1185,6 +1198,22 @@ export default function AdmPedidoDetalhePage() {
           right={<Badge tone={statusBadgeTone(order.status) as any}>{order.status}</Badge>}
         />
 
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Badge tone={logisticTone(order.logistic_status)}>
+            {logisticLabel(order.logistic_status)}
+          </Badge>
+
+          {lockedByLogistics ? (
+            <Badge tone="green">Fluxo concluído</Badge>
+          ) : order.logistic_status === "SAIU_PARA_ENTREGA" ? (
+            <Badge tone="blue">Em rota</Badge>
+          ) : order.logistic_status === "EM_SEPARACAO" ? (
+            <Badge tone="yellow">Operação em andamento</Badge>
+          ) : (
+            <Badge tone="neutral">Aguardando operação</Badge>
+          )}
+        </div>
+
         <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <SummaryBox title="Itens" value={fmtBRL(totalItens)} />
           <SummaryBox title="Frete" value={fmtBRL(frete)} />
@@ -1438,11 +1467,18 @@ export default function AdmPedidoDetalhePage() {
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <Select
                 label="Status logístico"
-                value={(order.logistic_status ?? "RECEBIDO") as any}
-                onChange={(v) => updateOrder({ logistic_status: v as any })}
+                value={(order.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus}
+                onChange={(v) => updateOrder({ logistic_status: v as UnifiedLogisticStatus })}
                 options={LOG_OPTIONS.map((s) => ({
                   value: s,
-                  label: s === "RECEBIDO" ? "Recebido" : s === "EM_SEPARACAO" ? "Em separação" : "Entregue",
+                  label:
+                    s === "RECEBIDO"
+                      ? "Recebido"
+                      : s === "EM_SEPARACAO"
+                      ? "Em separação"
+                      : s === "SAIU_PARA_ENTREGA"
+                      ? "Saiu para entrega"
+                      : "Entregue",
                 }))}
               />
 
@@ -1463,6 +1499,13 @@ export default function AdmPedidoDetalhePage() {
                   </SecondaryActionButton>
 
                   <SecondaryActionButton
+                    onClick={() => updateOrder({ logistic_status: "SAIU_PARA_ENTREGA" })}
+                    disabled={saving || order.logistic_status === "SAIU_PARA_ENTREGA"}
+                  >
+                    Marcar saída
+                  </SecondaryActionButton>
+
+                  <SecondaryActionButton
                     onClick={() => updateOrder({ logistic_status: "ENTREGUE" })}
                     disabled={saving || order.logistic_status === "ENTREGUE"}
                   >
@@ -1473,7 +1516,7 @@ export default function AdmPedidoDetalhePage() {
             </div>
 
             <div className="mt-3 text-xs text-slate-500">
-              Esta página e a tela de logística usam o mesmo status operacional do pedido.
+              Esta página e a tela de logística devem usar o mesmo status operacional do pedido.
             </div>
           </div>
         </div>
