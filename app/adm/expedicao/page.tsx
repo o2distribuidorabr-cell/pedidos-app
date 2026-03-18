@@ -41,11 +41,90 @@ type OrderItemAgg = {
   value_total: number;
 };
 
+type PrintStoreInfo = {
+  id: string;
+  name: string | null;
+  legal_name?: string | null;
+  cnpj?: string | null;
+  ie?: string | null;
+  ind_ie_dest?: string | null;
+  email_nf?: string | null;
+  phone_nf?: string | null;
+  address_zip?: string | null;
+  address_street?: string | null;
+  address_number?: string | null;
+  address_complement?: string | null;
+  address_neighborhood?: string | null;
+  city?: string | null;
+  state?: string | null;
+};
+
+type PrintProductEmbed = {
+  sku: string | null;
+  name: string | null;
+  unit: string | null;
+};
+
+type PrintItemRow = {
+  id: string;
+  qty: number;
+  unit: string | null;
+  unit_cost: number | null;
+  product_id: string;
+  products: PrintProductEmbed | null;
+};
+
+type PrintPayload = {
+  order: OrderRow;
+  storeInfo: PrintStoreInfo | null;
+  items: PrintItemRow[];
+  totalItens: number;
+  frete: number;
+  creditApplied: number;
+  totalLiquido: number;
+};
+
+type PackInfo = {
+  perPack?: number;
+  perPackKg?: number;
+  packLabel: string;
+  unitLabel: string;
+};
+
 const LOGISTIC_OPTIONS: Array<{ value: UnifiedLogisticStatus; label: string }> = [
   { value: "RECEBIDO", label: "Recebido" },
   { value: "EM_SEPARACAO", label: "Em separação" },
   { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
   { value: "ENTREGUE", label: "Entregue" },
+];
+
+const PACK_RULES: Array<{ match: string; info: PackInfo }> = [
+  { match: "bife picanha 120g", info: { perPack: 120, packLabel: "cx", unitLabel: "u" } },
+  { match: "bife picanha120g", info: { perPack: 120, packLabel: "cx", unitLabel: "u" } },
+  { match: "bife picanha 56g", info: { perPack: 216, packLabel: "cx", unitLabel: "u" } },
+  { match: "bife vegetariano", info: { perPack: 20, packLabel: "pct", unitLabel: "u" } },
+  { match: "copo milkshake", info: { perPack: 50, packLabel: "pct", unitLabel: "u" } },
+  { match: "embalagem batata m", info: { perPack: 800, packLabel: "cx", unitLabel: "u" } },
+  { match: "emba batata m", info: { perPack: 800, packLabel: "cx", unitLabel: "u" } },
+  { match: "embalagem batata p", info: { perPack: 2250, packLabel: "cx", unitLabel: "u" } },
+  { match: "emba batata p", info: { perPack: 2250, packLabel: "cx", unitLabel: "u" } },
+  { match: "emba kraft", info: { perPack: 50, packLabel: "pct", unitLabel: "u" } },
+  { match: "embalagem kraft", info: { perPack: 50, packLabel: "pct", unitLabel: "u" } },
+  { match: "etiqueta de identificacao", info: { perPack: 1000, packLabel: "rolo", unitLabel: "u" } },
+  { match: "etiqueta identificacao", info: { perPack: 1000, packLabel: "rolo", unitLabel: "u" } },
+  { match: "etiqueta identific", info: { perPack: 1000, packLabel: "rolo", unitLabel: "u" } },
+  { match: "molho american burger", info: { perPackKg: 3.5, packLabel: "balde", unitLabel: "kg" } },
+  { match: "molho american", info: { perPackKg: 3.5, packLabel: "balde", unitLabel: "kg" } },
+  { match: "molho barbecue", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "molho barbacue", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbecue whisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbacue whisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbecue wisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "barbacue wisky", info: { perPackKg: 0.397, packLabel: "frasco", unitLabel: "kg" } },
+  { match: "pao hb", info: { perPack: 48, packLabel: "cx", unitLabel: "u" } },
+  { match: "papel acoplado", info: { perPack: 1000, packLabel: "fardo", unitLabel: "u" } },
+  { match: "sache baconese", info: { perPack: 60, packLabel: "cx", unitLabel: "u" } },
+  { match: "sache maionese temperada", info: { perPack: 60, packLabel: "cx", unitLabel: "u" } },
 ];
 
 function fmtDT(v: string | null | undefined) {
@@ -80,6 +159,56 @@ function fmtBRL(v: number | null | undefined) {
     style: "currency",
     currency: "BRL",
   });
+}
+
+function onlyDigits(v: string | null | undefined) {
+  return (v ?? "").replace(/\D/g, "");
+}
+
+function fmtCNPJ(v: string | null | undefined) {
+  const d = onlyDigits(v);
+  if (d.length !== 14) return v ?? "-";
+  return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+}
+
+function fmtNumBR(v: number) {
+  const rounded = Math.round((v + Number.EPSILON) * 100) / 100;
+  const isInt = Math.abs(rounded - Math.round(rounded)) < 1e-9;
+  return isInt
+    ? String(Math.round(rounded))
+    : rounded.toLocaleString("pt-BR", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      });
+}
+
+function normTxt(s: string) {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getPackInfo(productName: string | null | undefined): PackInfo | null {
+  const n = normTxt(productName || "");
+  if (!n) return null;
+  const rule = PACK_RULES.find((r) => n.includes(r.match));
+  return rule?.info ?? null;
+}
+
+function ceilPacks(qty: number, pack: PackInfo) {
+  const q = Number(qty) || 0;
+  if (pack.perPackKg && pack.perPackKg > 0) return Math.ceil(q / pack.perPackKg);
+  if (pack.perPack && pack.perPack > 0) return Math.ceil(q / pack.perPack);
+  return 0;
+}
+
+function packBaseText(pack: PackInfo) {
+  if (pack.perPackKg && pack.perPackKg > 0) return `${fmtNumBR(pack.perPackKg)}${pack.unitLabel}/${pack.packLabel}`;
+  if (pack.perPack && pack.perPack > 0) return `${fmtNumBR(pack.perPack)}${pack.unitLabel}/${pack.packLabel}`;
+  return `-${pack.unitLabel}/${pack.packLabel}`;
 }
 
 function logisticTone(status: UnifiedLogisticStatus | null) {
@@ -229,6 +358,7 @@ export default function AdmExpedicaoPage() {
 
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [printingId, setPrintingId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
@@ -239,6 +369,9 @@ export default function AdmExpedicaoPage() {
   const [filterDeliveryMode, setFilterDeliveryMode] = useState("all");
   const [filterForecast, setFilterForecast] = useState("all");
 
+  const [printMode, setPrintMode] = useState(false);
+  const [printPayload, setPrintPayload] = useState<PrintPayload | null>(null);
+
   useEffect(() => {
     (async () => {
       const ok = await requireAdminOrRedirect(router);
@@ -247,6 +380,12 @@ export default function AdmExpedicaoPage() {
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const onAfterPrint = () => setPrintMode(false);
+    window.addEventListener("afterprint", onAfterPrint);
+    return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []);
 
   async function loadOrders() {
@@ -425,6 +564,84 @@ export default function AdmExpedicaoPage() {
     }
   }
 
+  async function handlePrintOrder(order: OrderRow) {
+    setPrintingId(order.id);
+    setMsg("");
+
+    try {
+      let storeInfo: PrintStoreInfo | null = null;
+
+      if (order.store_id) {
+        const { data: storeData, error: storeError } = await supabase
+          .from("stores")
+          .select(
+            "id,name,legal_name,cnpj,ie,ind_ie_dest,email_nf,phone_nf,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state"
+          )
+          .eq("id", order.store_id)
+          .maybeSingle();
+
+        if (storeError) {
+          throw new Error(storeError.message);
+        }
+
+        storeInfo = (storeData ?? null) as PrintStoreInfo | null;
+      }
+
+      const { data: itemsData, error: itemsError } = await supabase
+        .from("order_items")
+        .select(
+          "id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)"
+        )
+        .eq("order_id", order.id);
+
+      if (itemsError) {
+        throw new Error(itemsError.message);
+      }
+
+      const items: PrintItemRow[] = (itemsData ?? []).map((row: any) => {
+        const raw = row?.products;
+        const prod: PrintProductEmbed | null = Array.isArray(raw) ? raw[0] ?? null : raw ?? null;
+
+        return {
+          id: row.id,
+          qty: Number(row.qty ?? 0),
+          unit: row.unit ?? null,
+          unit_cost: row.unit_cost ?? null,
+          product_id: row.product_id,
+          products: prod,
+        };
+      });
+
+      const totalItens = items.reduce((acc, item) => {
+        return acc + Number(item.qty ?? 0) * Number(item.unit_cost ?? 0);
+      }, 0);
+
+      const frete = order.delivery_mode === "FRETE" ? Number(order.freight_fee ?? 0) : 0;
+      const creditApplied = Number(order.credit_applied ?? 0);
+      const totalLiquido = Math.max(totalItens + frete - creditApplied, 0);
+
+      setPrintPayload({
+        order,
+        storeInfo,
+        items,
+        totalItens,
+        frete,
+        creditApplied,
+        totalLiquido,
+      });
+
+      setPrintMode(true);
+      setTimeout(() => window.print(), 80);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Erro ao preparar impressão do pedido.";
+      setMsg(message);
+      setPrintMode(false);
+    } finally {
+      setPrintingId(null);
+    }
+  }
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const today = todayYMD();
@@ -435,9 +652,10 @@ export default function AdmExpedicaoPage() {
       const matchText =
         !q || order.id.toLowerCase().includes(q) || storeName.includes(q);
 
-      const currentStatus = order.logistic_status ?? "RECEBIDO";
       const matchLogistic =
-        filterLogistic === "all" ? true : currentStatus === filterLogistic;
+        filterLogistic === "all"
+          ? true
+          : (order.logistic_status ?? "RECEBIDO") === filterLogistic;
 
       const matchDeliveryMode =
         filterDeliveryMode === "all"
@@ -478,6 +696,159 @@ export default function AdmExpedicaoPage() {
 
   return (
     <div className="space-y-5">
+      <style jsx global>{`
+        @page {
+          size: A4 portrait;
+          margin: 10mm;
+        }
+
+        .print-only {
+          display: none;
+        }
+
+        @media print {
+          html,
+          body {
+            background: #ffffff !important;
+          }
+
+          body * {
+            visibility: hidden;
+          }
+
+          #print-area,
+          #print-area * {
+            visibility: visible;
+          }
+
+          #print-area {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            background: #ffffff !important;
+          }
+
+          .print-only {
+            display: block !important;
+          }
+
+          .print-section {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            border: 1px solid #000 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            background: #fff !important;
+            margin-bottom: 10px !important;
+            padding: 10px !important;
+          }
+
+          .print-grid-2 {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+          }
+
+          .print-grid-3 {
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 8px !important;
+          }
+
+          .print-grid-4 {
+            display: grid !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 8px !important;
+          }
+
+          .print-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 11px;
+          }
+
+          .print-table th,
+          .print-table td {
+            border: 1px solid #000;
+            padding: 6px 7px;
+            vertical-align: top;
+            text-align: left;
+            word-break: break-word;
+          }
+
+          .print-table th {
+            background: #f1f5f9 !important;
+            font-weight: 700;
+          }
+
+          .print-label {
+            font-size: 10px;
+            line-height: 1.2;
+            font-weight: 700;
+            color: #475569 !important;
+            text-transform: uppercase;
+          }
+
+          .print-value {
+            margin-top: 2px;
+            font-size: 12px;
+            line-height: 1.35;
+            color: #0f172a !important;
+            font-weight: 600;
+            word-break: break-word;
+          }
+
+          .print-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #000 !important;
+            letter-spacing: 0.02em;
+          }
+
+          .print-subtitle {
+            font-size: 11px;
+            color: #334155 !important;
+          }
+
+          .print-box {
+            border: 1px solid #000;
+            padding: 8px;
+            min-height: 54px;
+          }
+
+          .print-total-box {
+            border: 1.5px solid #000;
+            padding: 8px;
+            background: #fff !important;
+          }
+
+          .print-total-label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #334155 !important;
+          }
+
+          .print-total-value {
+            margin-top: 4px;
+            font-size: 16px;
+            font-weight: 800;
+            color: #000 !important;
+          }
+
+          .print-note-box {
+            min-height: 58px;
+            border: 1px solid #000;
+            padding: 8px;
+            white-space: pre-wrap;
+            font-size: 11px;
+          }
+        }
+      `}</style>
+
       <PageHeader
         title="Expedição"
         subtitle="Fila operacional simples, rápida e pensada para uso no celular"
@@ -565,6 +936,7 @@ export default function AdmExpedicaoPage() {
           {filtered.map((order) => {
             const currentStatus = order.logistic_status ?? "RECEBIDO";
             const saving = savingId === order.id;
+            const printing = printingId === order.id;
             const agg = itemAggMap[order.id];
             const today = todayYMD();
             const forecastLate =
@@ -729,13 +1101,21 @@ export default function AdmExpedicaoPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-6">
                   <SecondaryActionButton
                     fullWidth
                     disabled={saving}
                     onClick={() => router.push(`/adm/expedicao/pedido/${order.id}`)}
                   >
                     Ver pedido
+                  </SecondaryActionButton>
+
+                  <SecondaryActionButton
+                    fullWidth
+                    disabled={saving || printing}
+                    onClick={() => handlePrintOrder(order)}
+                  >
+                    {printing ? "Preparando..." : "Imprimir pedido"}
                   </SecondaryActionButton>
 
                   <SecondaryActionButton
@@ -812,6 +1192,203 @@ export default function AdmExpedicaoPage() {
           })}
         </div>
       )}
+
+      <div id="print-area" className={printMode ? "print-mode" : ""}>
+        {printPayload ? (
+          <div className="print-only">
+            <div className="print-section">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="print-title">ESPELHO DO PEDIDO</div>
+                  <div className="print-subtitle">
+                    Documento interno para conferência operacional, financeira e logística
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="print-label">Pedido</div>
+                  <div className="print-value">{printPayload.order.id}</div>
+                </div>
+              </div>
+
+              <div className="mt-3 print-grid-4">
+                <div className="print-box">
+                  <div className="print-label">Status</div>
+                  <div className="print-value">{printPayload.order.status || "-"}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Status logístico</div>
+                  <div className="print-value">
+                    {logisticLabel(printPayload.order.logistic_status)}
+                  </div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Pagamento</div>
+                  <div className="print-value">
+                    {printPayload.order.is_paid ? "Pago" : "Pendente"}
+                  </div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Forma / Entrega</div>
+                  <div className="print-value">
+                    {paymentLabel(printPayload.order.payment_method)} /{" "}
+                    {deliveryModeLabel(printPayload.order.delivery_mode)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="print-section">
+              <div className="print-grid-2">
+                <div>
+                  <div className="print-label">Destinatário / Loja</div>
+                  <div className="print-value">
+                    {printPayload.storeInfo?.name || printPayload.order.stores?.name || "-"}
+                  </div>
+
+                  <div className="mt-2 print-label">Razão social</div>
+                  <div className="print-value">{printPayload.storeInfo?.legal_name || "-"}</div>
+
+                  <div className="mt-2 print-label">CNPJ / IE</div>
+                  <div className="print-value">
+                    {fmtCNPJ(printPayload.storeInfo?.cnpj)}{" "}
+                    {printPayload.storeInfo?.ie ? ` • IE ${printPayload.storeInfo.ie}` : ""}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="print-label">Endereço</div>
+                  <div className="print-value">
+                    {[
+                      printPayload.storeInfo?.address_street,
+                      printPayload.storeInfo?.address_number,
+                      printPayload.storeInfo?.address_complement,
+                      printPayload.storeInfo?.address_neighborhood,
+                      printPayload.storeInfo?.city,
+                      printPayload.storeInfo?.state,
+                      printPayload.storeInfo?.address_zip
+                        ? `CEP ${printPayload.storeInfo.address_zip}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(", ") || "-"}
+                  </div>
+
+                  <div className="mt-2 print-label">Contato NF-e</div>
+                  <div className="print-value">
+                    {[printPayload.storeInfo?.email_nf, printPayload.storeInfo?.phone_nf]
+                      .filter(Boolean)
+                      .join(" • ") || "-"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="print-section">
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: "12%" }}>SKU</th>
+                    <th style={{ width: "34%" }}>Produto</th>
+                    <th style={{ width: "8%" }}>Unid.</th>
+                    <th style={{ width: "11%" }}>Preço</th>
+                    <th style={{ width: "8%" }}>Qtd</th>
+                    <th style={{ width: "13%" }}>Qtd/Caixa</th>
+                    <th style={{ width: "14%" }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {printPayload.items.map((item) => {
+                    const sku = item.products?.sku ?? "-";
+                    const name = item.products?.name ?? "-";
+                    const unit = item.products?.unit ?? item.unit ?? "-";
+                    const unitCost = Number(item.unit_cost ?? 0);
+                    const qtyNum = Number(item.qty ?? 0);
+                    const line = qtyNum * unitCost;
+
+                    const pack = getPackInfo(name);
+                    const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+
+                    return (
+                      <tr key={item.id}>
+                        <td>{sku}</td>
+                        <td>{name}</td>
+                        <td>{unit}</td>
+                        <td>{fmtBRL(unitCost)}</td>
+                        <td>{fmtNumBR(qtyNum)}</td>
+                        <td>
+                          {!pack
+                            ? "-"
+                            : `${packBaseText(pack)} • ${pack.packLabel.toUpperCase()}: ${fmtNumBR(
+                                packsQty ?? 0
+                              )}`}
+                        </td>
+                        <td>{fmtBRL(line)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="print-section">
+              <div className="print-grid-4">
+                <div className="print-total-box">
+                  <div className="print-total-label">Itens</div>
+                  <div className="print-total-value">{fmtBRL(printPayload.totalItens)}</div>
+                </div>
+                <div className="print-total-box">
+                  <div className="print-total-label">Frete</div>
+                  <div className="print-total-value">{fmtBRL(printPayload.frete)}</div>
+                </div>
+                <div className="print-total-box">
+                  <div className="print-total-label">Crédito abatido</div>
+                  <div className="print-total-value">- {fmtBRL(printPayload.creditApplied)}</div>
+                </div>
+                <div className="print-total-box">
+                  <div className="print-total-label">Total líquido</div>
+                  <div className="print-total-value">{fmtBRL(printPayload.totalLiquido)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="print-section">
+              <div className="print-grid-3">
+                <div className="print-box">
+                  <div className="print-label">Criado em</div>
+                  <div className="print-value">{fmtDT(printPayload.order.created_at)}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Enviado em</div>
+                  <div className="print-value">{fmtDT(printPayload.order.submitted_at)}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Aprovado em</div>
+                  <div className="print-value">{fmtDT(printPayload.order.approved_at)}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Data de vencimento</div>
+                  <div className="print-value">-</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Previsão de entrega</div>
+                  <div className="print-value">
+                    {printPayload.order.delivery_forecast || "-"}
+                  </div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Pago em</div>
+                  <div className="print-value">{fmtDT(printPayload.order.paid_at)}</div>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 10 }}>
+                <div className="print-label">Observações</div>
+                <div className="print-note-box">{printPayload.order.notes || "-"}</div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

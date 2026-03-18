@@ -75,6 +75,8 @@ type LogisticsListRow = DeliveryOverviewRow & {
   unified_logistic_status: UnifiedLogisticStatus;
 };
 
+type TabKey = "OPEN" | "DELIVERED";
+
 const DELIVERY_STATUS_OPTIONS: Array<{
   value: "TODOS" | UnifiedLogisticStatus;
   label: string;
@@ -326,6 +328,7 @@ export default function AdmLogisticaPage() {
   const [statusFilter, setStatusFilter] =
     useState<"TODOS" | UnifiedLogisticStatus>("TODOS");
   const [sortBy, setSortBy] = useState<SortOption>("recentes");
+  const [tab, setTab] = useState<TabKey>("OPEN");
 
   const loadData = useCallback(async (isRefresh = false) => {
     try {
@@ -475,10 +478,20 @@ export default function AdmLogisticaPage() {
     loadData(false);
   }, [loadData]);
 
+  useEffect(() => {
+    setStatusFilter("TODOS");
+  }, [tab]);
+
+  const rowsByTab = useMemo(() => {
+    const delivered = rows.filter((r) => r.unified_logistic_status === "ENTREGUE");
+    const open = rows.filter((r) => r.unified_logistic_status !== "ENTREGUE");
+    return { open, delivered };
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
-    let result = [...rows];
+    let result = [...(tab === "DELIVERED" ? rowsByTab.delivered : rowsByTab.open)];
 
     if (statusFilter !== "TODOS") {
       result = result.filter((row) => row.unified_logistic_status === statusFilter);
@@ -505,7 +518,7 @@ export default function AdmLogisticaPage() {
     result.sort((a, b) => getSortTime(b, sortBy) - getSortTime(a, sortBy));
 
     return result;
-  }, [rows, search, statusFilter, sortBy, storesMap]);
+  }, [rowsByTab, tab, search, statusFilter, sortBy, storesMap]);
 
   const metrics = useMemo(() => {
     const total = rows.length;
@@ -664,7 +677,7 @@ export default function AdmLogisticaPage() {
           </div>
 
           <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <div className="text-sm font-semibold text-slate-900">
                   Pedidos logísticos ({filteredRows.length})
@@ -672,6 +685,28 @@ export default function AdmLogisticaPage() {
                 <div className="mt-1 text-sm text-slate-600">
                   Lista consolidada das entregas em acompanhamento.
                 </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {tab === "OPEN" ? (
+                  <>
+                    <PrimaryActionButton onClick={() => setTab("OPEN")}>
+                      Em acompanhamento ({rowsByTab.open.length})
+                    </PrimaryActionButton>
+                    <SecondaryActionButton onClick={() => setTab("DELIVERED")}>
+                      Entregues ({rowsByTab.delivered.length})
+                    </SecondaryActionButton>
+                  </>
+                ) : (
+                  <>
+                    <SecondaryActionButton onClick={() => setTab("OPEN")}>
+                      Em acompanhamento ({rowsByTab.open.length})
+                    </SecondaryActionButton>
+                    <PrimaryActionButton onClick={() => setTab("DELIVERED")}>
+                      Entregues ({rowsByTab.delivered.length})
+                    </PrimaryActionButton>
+                  </>
+                )}
               </div>
             </div>
 
@@ -687,137 +722,139 @@ export default function AdmLogisticaPage() {
               </div>
             ) : (
               <>
-                <div className="mt-6 hidden overflow-x-auto lg:block">
-                  <table className="w-full border-separate border-spacing-0">
-                    <thead>
-                      <tr className="text-left text-xs text-slate-600">
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Pedido
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Loja
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Status logístico
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Motorista
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Rastreio
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Código
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
-                          Última atualização
-                        </th>
-                        <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
-                          Ações
-                        </th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {filteredRows.map((row) => (
-                        <tr key={row.order_id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <div className="font-semibold text-slate-900">
-                              {row.order_id.slice(0, 8)}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              Criado em {formatDateTime(row.order_created_at)}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              Pedido: {row.order_status ?? "—"}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <div className="font-semibold text-slate-900">
-                              {getStoreLabel(row, storesMap)}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              Store ID: {row.store_id ?? "—"}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <Badge tone={statusBadgeTone(row.unified_logistic_status)}>
-                              {getUnifiedLabel(row.unified_logistic_status)}
-                            </Badge>
-
-                            <div className="mt-2 text-xs text-slate-500">
-                              Saída: {formatDateTime(row.delivery_started_at)}
-                            </div>
-
-                            <div className="mt-1 text-xs text-slate-500">
-                              Finalização: {formatDateTime(row.delivery_finished_at)}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <div className="font-semibold text-slate-900">
-                              {row.delivery_driver_name || "Não informado"}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              {formatPhone(row.delivery_driver_phone)}
-                            </div>
-                            <div className="mt-2 text-xs text-slate-500">
-                              {truncateText(row.delivery_notes, 42)}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <Badge tone={trackingBadgeTone(row.tracking_status)}>
-                              {getTrackingStatusLabel(row.tracking_status)}
-                            </Badge>
-
-                            <div className="mt-2 text-xs text-slate-500">
-                              Token: {row.tracking_token ? "Gerado" : "—"}
-                            </div>
-
-                            <div className="mt-1 text-xs text-slate-500">
-                              Última posição:{" "}
-                              {row.last_lat !== null && row.last_lng !== null
-                                ? `${row.last_lat.toFixed(5)}, ${row.last_lng.toFixed(5)}`
-                                : "—"}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <Badge tone={confirmationBadgeTone(row.confirmation_status)}>
-                              {getConfirmationStatusLabel(row.confirmation_status)}
-                            </Badge>
-
-                            <div className="mt-2 text-xs text-slate-500">
-                              Tentativas: {row.attempts ?? 0}
-                              {row.max_attempts ? ` / ${row.max_attempts}` : ""}
-                            </div>
-
-                            <div className="mt-1 text-xs text-slate-500">
-                              Expira em: {formatDateTime(row.code_expires_at)}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
-                            <div className="text-sm font-semibold text-slate-900">
-                              {formatDateTime(row.last_seen_at)}
-                            </div>
-                            <div className="mt-1 text-xs text-slate-500">
-                              Confirmado em: {formatDateTime(row.confirmed_at)}
-                            </div>
-                          </td>
-
-                          <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right">
-                            <Link href={`/adm/logistica/${row.order_id}`}>
-                              <SecondaryActionButton>Abrir</SecondaryActionButton>
-                            </Link>
-                          </td>
+                <div className="mt-6 hidden lg:block">
+                  <div className="overflow-auto rounded-[22px] border border-slate-200 max-h-[72vh]">
+                    <table className="min-w-[1280px] w-full border-separate border-spacing-0">
+                      <thead className="sticky top-0 z-20">
+                        <tr className="text-left text-xs text-slate-600">
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Pedido
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Loja
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Status logístico
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Motorista
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Rastreio
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Código
+                          </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            Última atualização
+                          </th>
+                          <th className="sticky right-0 z-30 whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right shadow-[-1px_0_0_0_#e2e8f0]">
+                            Ações
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+
+                      <tbody>
+                        {filteredRows.map((row) => (
+                          <tr key={row.order_id} className="group hover:bg-slate-50">
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="font-semibold text-slate-900">
+                                {row.order_id.slice(0, 8)}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Criado em {formatDateTime(row.order_created_at)}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Pedido: {row.order_status ?? "—"}
+                              </div>
+                            </td>
+
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="font-semibold text-slate-900">
+                                {getStoreLabel(row, storesMap)}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Store ID: {row.store_id ?? "—"}
+                              </div>
+                            </td>
+
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <Badge tone={statusBadgeTone(row.unified_logistic_status)}>
+                                {getUnifiedLabel(row.unified_logistic_status)}
+                              </Badge>
+
+                              <div className="mt-2 text-xs text-slate-500">
+                                Saída: {formatDateTime(row.delivery_started_at)}
+                              </div>
+
+                              <div className="mt-1 text-xs text-slate-500">
+                                Finalização: {formatDateTime(row.delivery_finished_at)}
+                              </div>
+                            </td>
+
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="font-semibold text-slate-900">
+                                {row.delivery_driver_name || "Não informado"}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {formatPhone(row.delivery_driver_phone)}
+                              </div>
+                              <div className="mt-2 text-xs text-slate-500">
+                                {truncateText(row.delivery_notes, 42)}
+                              </div>
+                            </td>
+
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <Badge tone={trackingBadgeTone(row.tracking_status)}>
+                                {getTrackingStatusLabel(row.tracking_status)}
+                              </Badge>
+
+                              <div className="mt-2 text-xs text-slate-500">
+                                Token: {row.tracking_token ? "Gerado" : "—"}
+                              </div>
+
+                              <div className="mt-1 text-xs text-slate-500">
+                                Última posição:{" "}
+                                {row.last_lat !== null && row.last_lng !== null
+                                  ? `${row.last_lat.toFixed(5)}, ${row.last_lng.toFixed(5)}`
+                                  : "—"}
+                              </div>
+                            </td>
+
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <Badge tone={confirmationBadgeTone(row.confirmation_status)}>
+                                {getConfirmationStatusLabel(row.confirmation_status)}
+                              </Badge>
+
+                              <div className="mt-2 text-xs text-slate-500">
+                                Tentativas: {row.attempts ?? 0}
+                                {row.max_attempts ? ` / ${row.max_attempts}` : ""}
+                              </div>
+
+                              <div className="mt-1 text-xs text-slate-500">
+                                Expira em: {formatDateTime(row.code_expires_at)}
+                              </div>
+                            </td>
+
+                            <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
+                              <div className="text-sm font-semibold text-slate-900">
+                                {formatDateTime(row.last_seen_at)}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Confirmado em: {formatDateTime(row.confirmed_at)}
+                              </div>
+                            </td>
+
+                            <td className="sticky right-0 z-10 whitespace-nowrap border-b border-slate-100 bg-white px-4 py-4 align-top text-right shadow-[-1px_0_0_0_#f1f5f9] group-hover:bg-slate-50">
+                              <Link href={`/adm/logistica/${row.order_id}`}>
+                                <SecondaryActionButton>Abrir</SecondaryActionButton>
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 gap-4 lg:hidden">
@@ -937,6 +974,13 @@ export default function AdmLogisticaPage() {
                 </div>
 
                 <div className="mt-3 space-y-2 text-sm text-slate-700">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>Aba</span>
+                    <span className="font-semibold text-slate-900">
+                      {tab === "OPEN" ? "Em acompanhamento" : "Entregues"}
+                    </span>
+                  </div>
+
                   <div className="flex items-center justify-between gap-3">
                     <span>Status</span>
                     <span className="font-semibold text-slate-900">
