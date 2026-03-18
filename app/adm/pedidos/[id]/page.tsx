@@ -288,7 +288,7 @@ function PrimaryActionButton({
         "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
         "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        fullWidth ? "w-full" : "",
+        fullWidth ? "w-full" : "w-full sm:w-auto",
       ].join(" ")}
     >
       {children}
@@ -320,7 +320,7 @@ function SecondaryActionButton({
           ? "border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
           : "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        fullWidth ? "w-full" : "",
+        fullWidth ? "w-full" : "w-full sm:w-auto",
       ].join(" ")}
     >
       {children}
@@ -339,11 +339,11 @@ function SectionTitle({
 }) {
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-      <div>
+      <div className="min-w-0">
         <div className="text-sm font-semibold text-slate-900">{title}</div>
         {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
       </div>
-      {right ? <div>{right}</div> : null}
+      {right ? <div className="w-full sm:w-auto">{right}</div> : null}
     </div>
   );
 }
@@ -356,9 +356,9 @@ function InfoPair({
   value: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3">
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
       <span className="text-sm text-slate-500">{label}</span>
-      <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+      <span className="break-words text-sm font-semibold text-slate-900 sm:text-right">{value}</span>
     </div>
   );
 }
@@ -377,6 +377,44 @@ function SummaryBox({
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
       <div className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-slate-900">{value}</div>
       {subtitle ? <div className="mt-1 text-xs text-slate-500">{subtitle}</div> : null}
+    </div>
+  );
+}
+
+function HeaderActionPanel({
+  title,
+  accent = "neutral",
+  children,
+}: {
+  title: string;
+  accent?: "neutral" | "cyan";
+  children: React.ReactNode;
+}) {
+  const tone =
+    accent === "cyan"
+      ? {
+          panel:
+            "border-cyan-100 bg-[linear-gradient(180deg,rgba(236,254,255,0.98)_0%,rgba(255,255,255,0.98)_100%)] shadow-[0_18px_38px_rgba(8,145,178,0.10)]",
+          dot: "bg-cyan-500",
+        }
+      : {
+          panel:
+            "border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] shadow-[0_16px_34px_rgba(15,23,42,0.06)]",
+          dot: "bg-slate-400",
+        };
+
+  return (
+    <div className={["rounded-[26px] border p-3 backdrop-blur", tone.panel].join(" ")}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className={["h-2 w-2 rounded-full", tone.dot].join(" ")} />
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          {title}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        {children}
+      </div>
     </div>
   );
 }
@@ -847,7 +885,7 @@ export default function AdmPedidoDetalhePage() {
 
   function handlePrint() {
     setPrintMode(true);
-    setTimeout(() => window.print(), 50);
+    setTimeout(() => window.print(), 80);
   }
 
   function openSplitModal() {
@@ -1063,9 +1101,9 @@ export default function AdmPedidoDetalhePage() {
       </span>,
       <span key="unit" className="text-slate-700">{unit}</span>,
       <span key="price" className="font-semibold">{fmtBRL(unitCost)}</span>,
-      <div key="qty" className="flex items-center gap-2">
+      <div key="qty" className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <input
-          className="w-24 rounded-[14px] border border-slate-200 bg-white px-2 py-2 text-sm outline-none focus:border-slate-300 disabled:bg-slate-50"
+          className="w-full rounded-[14px] border border-slate-200 bg-white px-2 py-2 text-sm outline-none focus:border-slate-300 disabled:bg-slate-50 sm:w-24"
           type="number"
           value={qtyStr}
           disabled={saving || lockedByLogistics || removed}
@@ -1075,6 +1113,7 @@ export default function AdmPedidoDetalhePage() {
         />
         <SecondaryActionButton
           danger={!removed}
+          fullWidth
           disabled={saving || lockedByLogistics}
           onClick={() => toggleRemoveItem(it.id)}
         >
@@ -1119,508 +1158,997 @@ export default function AdmPedidoDetalhePage() {
     }) ?? [];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Detalhe do pedido"
-        subtitle={`ID: ${order.id}`}
-        right={
-          <div className="flex flex-wrap items-center gap-2">
-            {edited ? (
-              <Badge tone="blue">
-                EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}
-              </Badge>
-            ) : (
-              <Badge tone="neutral">ORIGINAL</Badge>
-            )}
-
-            <Link href={logisticsHref}>
-              <SecondaryActionButton>Ir para logística</SecondaryActionButton>
-            </Link>
-
-            <Link href={fiscalHref}>
-              <SecondaryActionButton>Ir para emissão fiscal</SecondaryActionButton>
-            </Link>
-
-            <SecondaryActionButton onClick={() => router.push("/adm/pedidos")}>
-              Voltar
-            </SecondaryActionButton>
-
-            <SecondaryActionButton onClick={() => loadAll(order.id)} disabled={saving}>
-              Recarregar
-            </SecondaryActionButton>
-
-            <SecondaryActionButton onClick={handlePrint}>
-              Imprimir
-            </SecondaryActionButton>
-
-            <SecondaryActionButton
-              onClick={openSplitModal}
-              disabled={saving || editMode || lockedByLogistics}
-            >
-              Gerar pedido parcial
-            </SecondaryActionButton>
-
-            {!editMode ? (
-              <PrimaryActionButton
-                onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)}
-                disabled={saving || lockedByLogistics}
-              >
-                Editar itens
-              </PrimaryActionButton>
-            ) : (
-              <>
-                <SecondaryActionButton onClick={cancelEdits} disabled={saving}>
-                  Cancelar
-                </SecondaryActionButton>
-                <PrimaryActionButton onClick={saveEdits} disabled={saving || lockedByLogistics}>
-                  {saving ? "Salvando..." : "Salvar alterações"}
-                </PrimaryActionButton>
-              </>
-            )}
-
-            <SecondaryActionButton danger onClick={deleteThisOrder} disabled={saving}>
-              Excluir
-            </SecondaryActionButton>
-          </div>
+    <div className="space-y-4 sm:space-y-6">
+      <style jsx global>{`
+        @page {
+          size: A4 portrait;
+          margin: 10mm;
         }
-      />
 
-      {msg ? (
-        <Card>
-          <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
-        </Card>
-      ) : null}
+        .print-only {
+          display: none;
+        }
 
-      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
-        <SectionTitle
-          title="Resumo do pedido"
-          subtitle="Visão rápida para operação, financeiro e expedição"
-          right={<Badge tone={statusBadgeTone(order.status) as any}>{order.status}</Badge>}
-        />
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Badge tone={logisticTone(order.logistic_status)}>
-            {logisticLabel(order.logistic_status)}
-          </Badge>
-
-          {lockedByLogistics ? (
-            <Badge tone="green">Fluxo concluído</Badge>
-          ) : order.logistic_status === "SAIU_PARA_ENTREGA" ? (
-            <Badge tone="blue">Em rota</Badge>
-          ) : order.logistic_status === "EM_SEPARACAO" ? (
-            <Badge tone="yellow">Operação em andamento</Badge>
-          ) : (
-            <Badge tone="neutral">Aguardando operação</Badge>
-          )}
-        </div>
-
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <SummaryBox title="Itens" value={fmtBRL(totalItens)} />
-          <SummaryBox title="Frete" value={fmtBRL(frete)} />
-          <SummaryBox title="Crédito abatido" value={`- ${fmtBRL(creditApplied)}`} />
-          <SummaryBox title="Total líquido" value={fmtBRL(totalLiquido)} />
-          <SummaryBox
-            title="Saldo da loja"
-            value={fmtBRL(creditBalance)}
-            subtitle="Disponível para abatimento"
-          />
-        </div>
-      </div>
-
-      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <SectionTitle
-          title="NF-e / Focus"
-          subtitle="Acompanhe a emissão já iniciada e navegue para a área fiscal"
-          right={
-            <div className="flex flex-wrap items-center gap-2">
-              {focusDoc ? (
-                <Badge tone={toneForNfeStatus(focusDoc.status) as any}>
-                  {focusDoc.status || "Sem status"}
-                </Badge>
-              ) : (
-                <Badge tone="neutral">Sem NF-e</Badge>
-              )}
-
-              <SecondaryActionButton
-                onClick={refreshFocusStatus}
-                disabled={!focusDoc?.reference || focusRefreshing}
-              >
-                {focusRefreshing ? "Consultando..." : "Consultar status"}
-              </SecondaryActionButton>
-
-              <Link href={fiscalHref}>
-                <PrimaryActionButton>Ir para emissão fiscal</PrimaryActionButton>
-              </Link>
-            </div>
+        @media print {
+          html,
+          body {
+            background: #ffffff !important;
           }
-        />
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-2">
-          <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-            <div className="space-y-3">
-              <InfoPair label="Status" value={focusDoc?.status || "-"} />
-              <InfoPair label="Referência" value={focusDoc?.reference || `PED-${order.id}`} />
-              <InfoPair label="Número" value={focusDoc?.numero || "-"} />
-              <InfoPair label="Série" value={focusDoc?.serie || "-"} />
-              <InfoPair label="Chave" value={focusDoc?.chave || "-"} />
-              <InfoPair label="Protocolo" value={focusDoc?.protocolo || "-"} />
-              <InfoPair label="Criado em" value={fmtDT(focusDoc?.created_at)} />
-              <InfoPair label="Atualizado em" value={fmtDT(focusDoc?.updated_at)} />
-            </div>
-          </div>
+          body * {
+            visibility: hidden;
+          }
 
-          <div className="rounded-[22px] border border-slate-200 bg-white p-4">
-            <div className="space-y-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Links do documento
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {focusDoc?.url_danfe ? (
-                    <a
-                      href={focusDoc.url_danfe}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
-                    >
-                      Abrir DANFE
-                    </a>
-                  ) : (
-                    <Badge tone="neutral">DANFE indisponível</Badge>
-                  )}
+          #print-area,
+          #print-area * {
+            visibility: visible;
+          }
 
-                  {focusDoc?.url_xml ? (
-                    <a
-                      href={focusDoc.url_xml}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
-                    >
-                      Abrir XML
-                    </a>
-                  ) : (
-                    <Badge tone="neutral">XML indisponível</Badge>
-                  )}
-                </div>
-              </div>
+          #print-area {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            background: #ffffff !important;
+          }
 
-              <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Erro / retorno Focus
-                </div>
-                <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
-                  {focusDoc?.error_message || "Sem mensagem de erro."}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+          .no-print {
+            display: none !important;
+          }
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <SectionTitle title="Status e operação" subtitle="Controle rápido do fluxo do pedido" />
+          .print-only {
+            display: block !important;
+          }
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <Select
-              label="Status"
-              value={order.status}
-              onChange={(v) => updateOrder({ status: v })}
-              options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
-            />
+          .print-section {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            border: 1px solid #000 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            background: #fff !important;
+            margin-bottom: 10px !important;
+            padding: 10px !important;
+          }
 
-            <Select
-              label="Entrega"
-              value={(order.delivery_mode ?? "RETIRADA") as any}
-              onChange={(v) => updateOrder({ delivery_mode: v as any })}
-              options={DELIVERY_OPTIONS.map((s) => ({ value: s, label: s }))}
-            />
+          .print-grid-2 {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+          }
 
-            <Input
-              label="Frete (R$)"
-              value={String(Number(order.freight_fee ?? 0))}
-              onChange={(v) => updateOrder({ freight_fee: Number(v) })}
-              type="number"
-            />
+          .print-grid-3 {
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 8px !important;
+          }
 
-            <div className="grid gap-2">
-              <Input
-                label="Data pagamento"
-                type="date"
-                value={isoToDateInput(order.paid_at)}
-                onChange={(v) =>
-                  updateOrder({
-                    paid_at: v ? dateInputToISO(v) : null,
-                    is_paid: v ? true : false,
-                  })
-                }
-              />
+          .print-grid-4 {
+            display: grid !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 8px !important;
+          }
 
-              <Select
-                label="Forma"
-                value={order.payment_method ?? "PIX"}
-                onChange={(v) => updateOrder({ payment_method: v as any })}
-                options={PAY_METHODS.map((m) => ({ value: m, label: m }))}
-              />
-            </div>
+          .print-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 11px;
+          }
 
-            <div className="space-y-2 md:col-span-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Pagamento
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={paymentTone(order)}>
-                  {order.is_paid ? "Pago" : overdue ? "Pendente vencido" : "Pendente"}
-                </Badge>
+          .print-table th,
+          .print-table td {
+            border: 1px solid #000;
+            padding: 6px 7px;
+            vertical-align: top;
+            text-align: left;
+            word-break: break-word;
+          }
 
-                <PrimaryActionButton onClick={onTogglePaid} disabled={saving}>
-                  {order.is_paid ? "Marcar como não pago" : "Marcar como pago"}
-                </PrimaryActionButton>
-              </div>
-              <div className="text-xs text-slate-500">
-                {order.paid_at ? `Pago em: ${fmtDT(order.paid_at)}` : "Não pago"}
-              </div>
-            </div>
-          </div>
-        </div>
+          .print-table th {
+            background: #f1f5f9 !important;
+            font-weight: 700;
+          }
 
-        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-          <SectionTitle
-            title="Prazos, crédito e logística"
-            subtitle="Vencimento, previsão de entrega e atalho da operação logística"
-            right={
-              <div className="flex flex-wrap items-center gap-2">
-                {order.due_date ? (
-                  overdue ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">Financeiro OK</Badge>
-                ) : (
-                  <Badge tone="neutral">Sem vencimento</Badge>
-                )}
+          .print-label {
+            font-size: 10px;
+            line-height: 1.2;
+            font-weight: 700;
+            color: #475569 !important;
+            text-transform: uppercase;
+          }
 
-                {!order.delivery_forecast ? (
-                  <Badge tone="neutral">Sem previsão</Badge>
-                ) : forecastOverdue ? (
-                  <Badge tone="red">Entrega atrasada</Badge>
-                ) : (
-                  <Badge tone="green">Previsão OK</Badge>
-                )}
+          .print-value {
+            margin-top: 2px;
+            font-size: 12px;
+            line-height: 1.35;
+            color: #0f172a !important;
+            font-weight: 600;
+            word-break: break-word;
+          }
 
-                <Badge tone={logisticTone(order.logistic_status)}>
-                  {logisticLabel(order.logistic_status)}
-                </Badge>
-              </div>
-            }
-          />
+          .print-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: #000 !important;
+            letter-spacing: 0.02em;
+          }
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Data de vencimento
-              </label>
-              <input
-                className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-300 disabled:bg-slate-50"
-                type="date"
-                value={order.due_date ?? ""}
-                disabled={saving}
-                onChange={(e) => updateOrder({ due_date: e.target.value || null })}
-              />
-            </div>
+          .print-subtitle {
+            font-size: 11px;
+            color: #334155 !important;
+          }
 
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Previsão de entrega
-              </label>
-              <input
-                className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-300 disabled:bg-slate-50"
-                type="date"
-                value={order.delivery_forecast ?? ""}
-                disabled={saving}
-                onChange={(e) => updateOrder({ delivery_forecast: e.target.value || null })}
-              />
-            </div>
-          </div>
+          .print-box {
+            border: 1px solid #000;
+            padding: 8px;
+            min-height: 54px;
+          }
 
-          <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Crédito da loja
-                </div>
-                <div className="mt-1 text-lg font-semibold text-slate-900">
-                  {fmtBRL(creditBalance)}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  Abatido neste pedido: {fmtBRL(Number(order.credit_applied ?? 0))}
-                </div>
-              </div>
+          .print-total-box {
+            border: 1.5px solid #000;
+            padding: 8px;
+            background: #fff !important;
+          }
 
-              <PrimaryActionButton onClick={openCreditModal} disabled={saving || creditBalance <= 0}>
-                Abater crédito
-              </PrimaryActionButton>
-            </div>
-          </div>
+          .print-total-label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #334155 !important;
+          }
 
-          <div className="mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Operação logística
-            </div>
+          .print-total-value {
+            margin-top: 4px;
+            font-size: 16px;
+            font-weight: 800;
+            color: #000 !important;
+          }
 
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <Select
-                label="Status logístico"
-                value={(order.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus}
-                onChange={(v) => updateOrder({ logistic_status: v as UnifiedLogisticStatus })}
-                options={LOG_OPTIONS.map((s) => ({
-                  value: s,
-                  label:
-                    s === "RECEBIDO"
-                      ? "Recebido"
-                      : s === "EM_SEPARACAO"
-                      ? "Em separação"
-                      : s === "SAIU_PARA_ENTREGA"
-                      ? "Saiu para entrega"
-                      : "Entregue",
-                }))}
-              />
+          .print-note-box {
+            min-height: 58px;
+            border: 1px solid #000;
+            padding: 8px;
+            white-space: pre-wrap;
+            font-size: 11px;
+          }
 
-              <div className="grid gap-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Ações
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Link href={logisticsHref}>
-                    <SecondaryActionButton>Ir para logística</SecondaryActionButton>
+          .screen-table-wrap {
+            display: none !important;
+          }
+        }
+      `}</style>
+
+      <div className="no-print">
+        <PageHeader
+          title="Detalhe do pedido"
+          subtitle={`ID: ${order.id}`}
+          right={
+            <div className="w-full lg:min-w-[860px] xl:min-w-[980px]">
+              <div className="grid gap-3 lg:grid-cols-2">
+                <HeaderActionPanel title="Navegação e utilidades">
+                  <div className="flex items-center">
+                    {edited ? (
+                      <Badge tone="blue">
+                        EDITADO {order.edited_at ? `• ${fmtDT(order.edited_at)}` : ""}
+                      </Badge>
+                    ) : (
+                      <Badge tone="neutral">ORIGINAL</Badge>
+                    )}
+                  </div>
+
+                  <Link href={logisticsHref} className="block">
+                    <SecondaryActionButton fullWidth={false}>
+                      Ir para logística
+                    </SecondaryActionButton>
+                  </Link>
+
+                  <Link href={fiscalHref} className="block">
+                    <SecondaryActionButton fullWidth={false}>
+                      Ir para emissão fiscal
+                    </SecondaryActionButton>
                   </Link>
 
                   <SecondaryActionButton
-                    onClick={() => updateOrder({ logistic_status: "EM_SEPARACAO" })}
-                    disabled={saving || order.logistic_status === "EM_SEPARACAO"}
+                    fullWidth={false}
+                    onClick={() => router.push("/adm/pedidos")}
                   >
-                    Marcar em separação
+                    Voltar
                   </SecondaryActionButton>
 
                   <SecondaryActionButton
-                    onClick={() => updateOrder({ logistic_status: "SAIU_PARA_ENTREGA" })}
-                    disabled={saving || order.logistic_status === "SAIU_PARA_ENTREGA"}
+                    fullWidth={false}
+                    onClick={() => loadAll(order.id)}
+                    disabled={saving}
                   >
-                    Marcar saída
+                    Recarregar
                   </SecondaryActionButton>
 
-                  <SecondaryActionButton
-                    onClick={() => updateOrder({ logistic_status: "ENTREGUE" })}
-                    disabled={saving || order.logistic_status === "ENTREGUE"}
-                  >
-                    Marcar entregue
+                  <SecondaryActionButton fullWidth={false} onClick={handlePrint}>
+                    Imprimir
                   </SecondaryActionButton>
+                </HeaderActionPanel>
+
+                <HeaderActionPanel
+                  title={editMode ? "Edição do pedido" : "Ações do pedido"}
+                  accent="cyan"
+                >
+                  <SecondaryActionButton
+                    fullWidth={false}
+                    onClick={openSplitModal}
+                    disabled={saving || editMode || lockedByLogistics}
+                  >
+                    Gerar pedido parcial
+                  </SecondaryActionButton>
+
+                  {!editMode ? (
+                    <PrimaryActionButton
+                      fullWidth={false}
+                      onClick={() => router.push(`/adm/pedidos/${order.id}?edit=1`)}
+                      disabled={saving || lockedByLogistics}
+                    >
+                      Editar itens
+                    </PrimaryActionButton>
+                  ) : (
+                    <>
+                      <SecondaryActionButton
+                        fullWidth={false}
+                        onClick={cancelEdits}
+                        disabled={saving}
+                      >
+                        Cancelar
+                      </SecondaryActionButton>
+
+                      <PrimaryActionButton
+                        fullWidth={false}
+                        onClick={saveEdits}
+                        disabled={saving || lockedByLogistics}
+                      >
+                        {saving ? "Salvando..." : "Salvar alterações"}
+                      </PrimaryActionButton>
+                    </>
+                  )}
+
+                  <SecondaryActionButton
+                    fullWidth={false}
+                    danger
+                    onClick={deleteThisOrder}
+                    disabled={saving}
+                  >
+                    Excluir
+                  </SecondaryActionButton>
+                </HeaderActionPanel>
+              </div>
+            </div>
+          }
+        />
+      </div>
+
+      {msg ? (
+        <div className="no-print">
+          <Card>
+            <div className="whitespace-pre-wrap text-sm text-red-600">{msg}</div>
+          </Card>
+        </div>
+      ) : null}
+
+      <div id="print-area" className={printMode ? "print-mode" : ""}>
+        <div className="print-only">
+          <div className="print-section">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="print-title">ESPELHO DO PEDIDO</div>
+                <div className="print-subtitle">
+                  Documento interno para conferência operacional, financeira e logística
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="print-label">Pedido</div>
+                <div className="print-value">{order.id}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 print-grid-4">
+              <div className="print-box">
+                <div className="print-label">Status</div>
+                <div className="print-value">{order.status || "-"}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Status logístico</div>
+                <div className="print-value">{logisticLabel(order.logistic_status)}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Pagamento</div>
+                <div className="print-value">
+                  {order.is_paid ? "Pago" : overdue ? "Pendente vencido" : "Pendente"}
+                </div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Forma / Entrega</div>
+                <div className="print-value">
+                  {(order.payment_method ?? "-") + " / " + (order.delivery_mode ?? "-")}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="print-section">
+            <div className="print-grid-2">
+              <div>
+                <div className="print-label">Destinatário / Loja</div>
+                <div className="print-value">{storeInfo?.name ?? "-"}</div>
+
+                <div className="mt-2 print-label">Razão social</div>
+                <div className="print-value">{storeInfo?.legal_name ?? "-"}</div>
+
+                <div className="mt-2 print-label">CNPJ / IE</div>
+                <div className="print-value">
+                  {fmtCNPJ(storeInfo?.cnpj)} {storeInfo?.ie ? ` • IE ${storeInfo.ie}` : ""}
+                </div>
+              </div>
+
+              <div>
+                <div className="print-label">Endereço</div>
+                <div className="print-value">
+                  {[
+                    storeInfo?.address_street,
+                    storeInfo?.address_number,
+                    storeInfo?.address_complement,
+                    storeInfo?.address_neighborhood,
+                    storeInfo?.city,
+                    storeInfo?.state,
+                    storeInfo?.address_zip ? `CEP ${storeInfo.address_zip}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "-"}
+                </div>
+
+                <div className="mt-2 print-label">Contato NF-e</div>
+                <div className="print-value">
+                  {[storeInfo?.email_nf, storeInfo?.phone_nf].filter(Boolean).join(" • ") || "-"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="print-section">
+            <table className="print-table">
+              <thead>
+                <tr>
+                  <th style={{ width: "12%" }}>SKU</th>
+                  <th style={{ width: "34%" }}>Produto</th>
+                  <th style={{ width: "8%" }}>Unid.</th>
+                  <th style={{ width: "11%" }}>Preço</th>
+                  <th style={{ width: "8%" }}>Qtd</th>
+                  <th style={{ width: "13%" }}>Qtd/Caixa</th>
+                  <th style={{ width: "14%" }}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it) => {
+                  const sku = it.products?.sku ?? "-";
+                  const name = it.products?.name ?? "-";
+                  const unit = it.products?.unit ?? it.unit ?? "-";
+                  const unitCost = Number(it.unit_cost ?? 0);
+
+                  const edit = itemEdits[it.id];
+                  const removed = editMode ? (edit?.removed ?? false) : false;
+                  const qtyStr = editMode ? (edit?.qty ?? String(it.qty ?? 0)) : String(it.qty ?? 0);
+                  const qtyNum = Number(qtyStr.replace(",", ".")) || 0;
+                  const line = removed ? 0 : qtyNum * unitCost;
+
+                  const pack = getPackInfo(name);
+                  const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+
+                  return (
+                    <tr key={it.id}>
+                      <td>{sku}</td>
+                      <td>
+                        <div>{name}</div>
+                        {removed ? <div style={{ fontSize: "10px", marginTop: 2 }}>REMOVIDO</div> : null}
+                      </td>
+                      <td>{unit}</td>
+                      <td>{fmtBRL(unitCost)}</td>
+                      <td>{fmtNumBR(qtyNum)}</td>
+                      <td>
+                        {!pack
+                          ? "-"
+                          : `${packBaseText(pack)} • ${pack.packLabel.toUpperCase()}: ${fmtNumBR(
+                              packsQty ?? 0
+                            )}`}
+                      </td>
+                      <td>{fmtBRL(line)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {originalItems && originalItems.length > 0 ? (
+            <div className="print-section">
+              <div className="mb-2 print-label">Pedido original do franqueado</div>
+              <table className="print-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: "12%" }}>SKU</th>
+                    <th style={{ width: "34%" }}>Produto</th>
+                    <th style={{ width: "8%" }}>Unid.</th>
+                    <th style={{ width: "11%" }}>Preço</th>
+                    <th style={{ width: "8%" }}>Qtd</th>
+                    <th style={{ width: "13%" }}>Qtd/Caixa</th>
+                    <th style={{ width: "14%" }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {originalItems.map((it) => {
+                    const unitCost = Number(it.unit_cost ?? 0);
+                    const line = Number(it.qty ?? 0) * unitCost;
+
+                    const name = it.name ?? "-";
+                    const pack = getPackInfo(name);
+                    const qtyNum = Number(it.qty ?? 0);
+                    const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+
+                    return (
+                      <tr key={it.id}>
+                        <td>{it.sku ?? "-"}</td>
+                        <td>{it.name ?? "-"}</td>
+                        <td>{it.product_unit ?? it.unit ?? "-"}</td>
+                        <td>{fmtBRL(unitCost)}</td>
+                        <td>{fmtNumBR(qtyNum)}</td>
+                        <td>
+                          {!pack
+                            ? "-"
+                            : `${packBaseText(pack)} • ${pack.packLabel.toUpperCase()}: ${fmtNumBR(
+                                packsQty ?? 0
+                              )}`}
+                        </td>
+                        <td>{fmtBRL(line)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          <div className="print-section">
+            <div className="print-grid-4">
+              <div className="print-total-box">
+                <div className="print-total-label">Itens</div>
+                <div className="print-total-value">{fmtBRL(totalItens)}</div>
+              </div>
+              <div className="print-total-box">
+                <div className="print-total-label">Frete</div>
+                <div className="print-total-value">{fmtBRL(frete)}</div>
+              </div>
+              <div className="print-total-box">
+                <div className="print-total-label">Crédito abatido</div>
+                <div className="print-total-value">- {fmtBRL(creditApplied)}</div>
+              </div>
+              <div className="print-total-box">
+                <div className="print-total-label">Total líquido</div>
+                <div className="print-total-value">{fmtBRL(totalLiquido)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="print-section">
+            <div className="print-grid-3">
+              <div className="print-box">
+                <div className="print-label">Criado em</div>
+                <div className="print-value">{fmtDT(order.created_at)}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Enviado em</div>
+                <div className="print-value">{fmtDT(order.submitted_at)}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Aprovado em</div>
+                <div className="print-value">{fmtDT(order.approved_at)}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Data de vencimento</div>
+                <div className="print-value">{order.due_date || "-"}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Previsão de entrega</div>
+                <div className="print-value">{order.delivery_forecast || "-"}</div>
+              </div>
+              <div className="print-box">
+                <div className="print-label">Pago em</div>
+                <div className="print-value">{fmtDT(order.paid_at)}</div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 10 }}>
+              <div className="print-label">Observações</div>
+              <div className="print-note-box">{order.notes || "-"}</div>
+            </div>
+          </div>
+
+          {(focusDoc?.status || focusDoc?.numero || focusDoc?.serie || focusDoc?.chave) ? (
+            <div className="print-section">
+              <div className="mb-2 print-label">Informações fiscais / NF-e</div>
+              <div className="print-grid-4">
+                <div className="print-box">
+                  <div className="print-label">Status</div>
+                  <div className="print-value">{focusDoc?.status || "-"}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Número</div>
+                  <div className="print-value">{focusDoc?.numero || "-"}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Série</div>
+                  <div className="print-value">{focusDoc?.serie || "-"}</div>
+                </div>
+                <div className="print-box">
+                  <div className="print-label">Protocolo</div>
+                  <div className="print-value">{focusDoc?.protocolo || "-"}</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <div className="print-label">Chave</div>
+                <div className="print-note-box">{focusDoc?.chave || "-"}</div>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
+          <SectionTitle
+            title="Resumo do pedido"
+            subtitle="Visão rápida para operação, financeiro e expedição"
+            right={
+              <div className="no-print">
+                <Badge tone={statusBadgeTone(order.status) as any}>{order.status}</Badge>
+              </div>
+            }
+          />
+
+          <div className="no-print mt-4 flex flex-wrap gap-2">
+            <Badge tone={logisticTone(order.logistic_status)}>
+              {logisticLabel(order.logistic_status)}
+            </Badge>
+
+            {lockedByLogistics ? (
+              <Badge tone="green">Fluxo concluído</Badge>
+            ) : order.logistic_status === "SAIU_PARA_ENTREGA" ? (
+              <Badge tone="blue">Em rota</Badge>
+            ) : order.logistic_status === "EM_SEPARACAO" ? (
+              <Badge tone="yellow">Operação em andamento</Badge>
+            ) : (
+              <Badge tone="neutral">Aguardando operação</Badge>
+            )}
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <SummaryBox title="Itens" value={fmtBRL(totalItens)} />
+            <SummaryBox title="Frete" value={fmtBRL(frete)} />
+            <SummaryBox title="Crédito abatido" value={`- ${fmtBRL(creditApplied)}`} />
+            <SummaryBox title="Total líquido" value={fmtBRL(totalLiquido)} />
+            <SummaryBox
+              title="Saldo da loja"
+              value={fmtBRL(creditBalance)}
+              subtitle="Disponível para abatimento"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
+          <SectionTitle
+            title="NF-e / Focus"
+            subtitle="Acompanhe a emissão já iniciada e navegue para a área fiscal"
+            right={
+              <div className="no-print flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                {focusDoc ? (
+                  <Badge tone={toneForNfeStatus(focusDoc.status) as any}>
+                    {focusDoc.status || "Sem status"}
+                  </Badge>
+                ) : (
+                  <Badge tone="neutral">Sem NF-e</Badge>
+                )}
+
+                <SecondaryActionButton
+                  fullWidth
+                  onClick={refreshFocusStatus}
+                  disabled={!focusDoc?.reference || focusRefreshing}
+                >
+                  {focusRefreshing ? "Consultando..." : "Consultar status"}
+                </SecondaryActionButton>
+
+                <Link href={fiscalHref} className="w-full sm:w-auto">
+                  <PrimaryActionButton fullWidth>Ir para emissão fiscal</PrimaryActionButton>
+                </Link>
+              </div>
+            }
+          />
+
+          <div className="mt-6 grid gap-6 xl:grid-cols-2">
+            <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+              <div className="space-y-3">
+                <InfoPair label="Status" value={focusDoc?.status || "-"} />
+                <InfoPair label="Referência" value={focusDoc?.reference || `PED-${order.id}`} />
+                <InfoPair label="Número" value={focusDoc?.numero || "-"} />
+                <InfoPair label="Série" value={focusDoc?.serie || "-"} />
+                <InfoPair label="Chave" value={focusDoc?.chave || "-"} />
+                <InfoPair label="Protocolo" value={focusDoc?.protocolo || "-"} />
+                <InfoPair label="Criado em" value={fmtDT(focusDoc?.created_at)} />
+                <InfoPair label="Atualizado em" value={fmtDT(focusDoc?.updated_at)} />
+              </div>
+            </div>
+
+            <div className="rounded-[22px] border border-slate-200 bg-white p-4">
+              <div className="space-y-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Links do documento
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    {focusDoc?.url_danfe ? (
+                      <a
+                        href={focusDoc.url_danfe}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="no-print inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
+                      >
+                        Abrir DANFE
+                      </a>
+                    ) : (
+                      <Badge tone="neutral">DANFE indisponível</Badge>
+                    )}
+
+                    {focusDoc?.url_xml ? (
+                      <a
+                        href={focusDoc.url_xml}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="no-print inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
+                      >
+                        Abrir XML
+                      </a>
+                    ) : (
+                      <Badge tone="neutral">XML indisponível</Badge>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Erro / retorno Focus
+                  </div>
+                  <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
+                    {focusDoc?.error_message || "Sem mensagem de erro."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-2">
+          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
+            <SectionTitle title="Status e operação" subtitle="Controle rápido do fluxo do pedido" />
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <Select
+                label="Status"
+                value={order.status}
+                onChange={(v) => updateOrder({ status: v })}
+                options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+              />
+
+              <Select
+                label="Entrega"
+                value={(order.delivery_mode ?? "RETIRADA") as any}
+                onChange={(v) => updateOrder({ delivery_mode: v as any })}
+                options={DELIVERY_OPTIONS.map((s) => ({ value: s, label: s }))}
+              />
+
+              <Input
+                label="Frete (R$)"
+                value={String(Number(order.freight_fee ?? 0))}
+                onChange={(v) => updateOrder({ freight_fee: Number(v) })}
+                type="number"
+              />
+
+              <div className="grid gap-2">
+                <Input
+                  label="Data pagamento"
+                  type="date"
+                  value={isoToDateInput(order.paid_at)}
+                  onChange={(v) =>
+                    updateOrder({
+                      paid_at: v ? dateInputToISO(v) : null,
+                      is_paid: v ? true : false,
+                    })
+                  }
+                />
+
+                <Select
+                  label="Forma"
+                  value={order.payment_method ?? "PIX"}
+                  onChange={(v) => updateOrder({ payment_method: v as any })}
+                  options={PAY_METHODS.map((m) => ({ value: m, label: m }))}
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Pagamento
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <Badge tone={paymentTone(order)}>
+                    {order.is_paid ? "Pago" : overdue ? "Pendente vencido" : "Pendente"}
+                  </Badge>
+
+                  <div className="no-print">
+                    <PrimaryActionButton fullWidth onClick={onTogglePaid} disabled={saving}>
+                      {order.is_paid ? "Marcar como não pago" : "Marcar como pago"}
+                    </PrimaryActionButton>
+                  </div>
+                </div>
+                <div className="text-xs text-slate-500">
+                  {order.paid_at ? `Pago em: ${fmtDT(order.paid_at)}` : "Não pago"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
+            <SectionTitle
+              title="Prazos, crédito e logística"
+              subtitle="Vencimento, previsão de entrega e atalho da operação logística"
+              right={
+                <div className="no-print flex flex-wrap items-center gap-2">
+                  {order.due_date ? (
+                    overdue ? <Badge tone="red">Vencido</Badge> : <Badge tone="green">Financeiro OK</Badge>
+                  ) : (
+                    <Badge tone="neutral">Sem vencimento</Badge>
+                  )}
+
+                  {!order.delivery_forecast ? (
+                    <Badge tone="neutral">Sem previsão</Badge>
+                  ) : forecastOverdue ? (
+                    <Badge tone="red">Entrega atrasada</Badge>
+                  ) : (
+                    <Badge tone="green">Previsão OK</Badge>
+                  )}
+
+                  <Badge tone={logisticTone(order.logistic_status)}>
+                    {logisticLabel(order.logistic_status)}
+                  </Badge>
+                </div>
+              }
+            />
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Data de vencimento
+                </label>
+                <input
+                  className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-300 disabled:bg-slate-50"
+                  type="date"
+                  value={order.due_date ?? ""}
+                  disabled={saving}
+                  onChange={(e) => updateOrder({ due_date: e.target.value || null })}
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Previsão de entrega
+                </label>
+                <input
+                  className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-300 disabled:bg-slate-50"
+                  type="date"
+                  value={order.delivery_forecast ?? ""}
+                  disabled={saving}
+                  onChange={(e) => updateOrder({ delivery_forecast: e.target.value || null })}
+                />
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Crédito da loja
+                  </div>
+                  <div className="mt-1 text-lg font-semibold text-slate-900">
+                    {fmtBRL(creditBalance)}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    Abatido neste pedido: {fmtBRL(Number(order.credit_applied ?? 0))}
+                  </div>
+                </div>
+
+                <div className="no-print w-full sm:w-auto">
+                  <PrimaryActionButton fullWidth onClick={openCreditModal} disabled={saving || creditBalance <= 0}>
+                    Abater crédito
+                  </PrimaryActionButton>
                 </div>
               </div>
             </div>
 
-            <div className="mt-3 text-xs text-slate-500">
-              Esta página e a tela de logística devem usar o mesmo status operacional do pedido.
+            <div className="mt-5 rounded-[22px] border border-slate-200 bg-white p-4">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Operação logística
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <Select
+                  label="Status logístico"
+                  value={(order.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus}
+                  onChange={(v) => updateOrder({ logistic_status: v as UnifiedLogisticStatus })}
+                  options={LOG_OPTIONS.map((s) => ({
+                    value: s,
+                    label:
+                      s === "RECEBIDO"
+                        ? "Recebido"
+                        : s === "EM_SEPARACAO"
+                        ? "Em separação"
+                        : s === "SAIU_PARA_ENTREGA"
+                        ? "Saiu para entrega"
+                        : "Entregue",
+                  }))}
+                />
+
+                <div className="grid gap-2">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Ações
+                  </div>
+                  <div className="no-print flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    <Link href={logisticsHref} className="w-full sm:w-auto">
+                      <SecondaryActionButton fullWidth>Ir para logística</SecondaryActionButton>
+                    </Link>
+
+                    <SecondaryActionButton
+                      fullWidth
+                      onClick={() => updateOrder({ logistic_status: "EM_SEPARACAO" })}
+                      disabled={saving || order.logistic_status === "EM_SEPARACAO"}
+                    >
+                      Marcar em separação
+                    </SecondaryActionButton>
+
+                    <SecondaryActionButton
+                      fullWidth
+                      onClick={() => updateOrder({ logistic_status: "SAIU_PARA_ENTREGA" })}
+                      disabled={saving || order.logistic_status === "SAIU_PARA_ENTREGA"}
+                    >
+                      Marcar saída
+                    </SecondaryActionButton>
+
+                    <SecondaryActionButton
+                      fullWidth
+                      onClick={() => updateOrder({ logistic_status: "ENTREGUE" })}
+                      disabled={saving || order.logistic_status === "ENTREGUE"}
+                    >
+                      Marcar entregue
+                    </SecondaryActionButton>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 text-xs text-slate-500">
+                Esta página e a tela de logística devem usar o mesmo status operacional do pedido.
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <SectionTitle
-          title="Informações da loja"
-          subtitle="Dados do destinatário para conferência e emissão"
-        />
-
-        <div className="mt-6 grid gap-3 md:grid-cols-2">
-          <InfoPair label="Loja" value={storeInfo?.name ?? "-"} />
-          <InfoPair label="Razão social" value={storeInfo?.legal_name ?? "-"} />
-          <InfoPair label="CNPJ" value={fmtCNPJ(storeInfo?.cnpj)} />
-          <InfoPair label="IE" value={storeInfo?.ie ?? "-"} />
-          <InfoPair label="Indicador IE destinatário" value={storeInfo?.ind_ie_dest ?? "-"} />
-          <InfoPair label="E-mail NF-e" value={storeInfo?.email_nf ?? "-"} />
-          <InfoPair label="Telefone NF-e" value={storeInfo?.phone_nf ?? "-"} />
-          <InfoPair label="CEP" value={storeInfo?.address_zip ?? "-"} />
-          <InfoPair
-            label="Endereço"
-            value={
-              [storeInfo?.address_street, storeInfo?.address_number, storeInfo?.address_complement]
-                .filter(Boolean)
-                .join(", ") || "-"
-            }
-          />
-          <InfoPair
-            label="Cidade/UF"
-            value={[storeInfo?.city, storeInfo?.state].filter(Boolean).join("/") || "-"}
-          />
-        </div>
-      </div>
-
-      <Card title="Observações">
-        <textarea
-          className="w-full min-h-[110px] rounded-[18px] border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
-          value={order.notes ?? ""}
-          disabled={saving}
-          onChange={(e) => updateOrder({ notes: e.target.value })}
-          placeholder="Observações do pedido..."
-        />
-        <div className="mt-3 text-xs text-slate-500">
-          Criado: {fmtDT(order.created_at)} · Enviado: {fmtDT(order.submitted_at)} · Aprovado:{" "}
-          {fmtDT(order.approved_at)}
-        </div>
-      </Card>
-
-      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-        <SectionTitle
-          title="Itens do pedido (atual)"
-          subtitle={
-            editMode
-              ? "Modo edição: ajuste quantidades e remova itens. Depois clique em Salvar alterações."
-              : `${items.length} item(ns)`
-          }
-          right={
-            lockedByLogistics ? (
-              <Badge tone="red">ENTREGUE (itens bloqueados)</Badge>
-            ) : editMode ? (
-              <Badge tone="blue">EDITANDO</Badge>
-            ) : null
-          }
-        />
-
-        <div className="mt-6">
-          <Table
-            headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
-            rows={itemsRows}
-          />
-        </div>
-      </div>
-
-      {originalItems && originalItems.length > 0 ? (
-        <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
           <SectionTitle
-            title="Pedido original do franqueado"
-            subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"}
-            right={<Badge tone="neutral">ORIGINAL</Badge>}
+            title="Informações da loja"
+            subtitle="Dados do destinatário para conferência e emissão"
           />
-          <div className="mt-6">
-            <Table
-              headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
-              rows={originalRows}
+
+          <div className="mt-6 grid gap-3 md:grid-cols-2">
+            <InfoPair label="Loja" value={storeInfo?.name ?? "-"} />
+            <InfoPair label="Razão social" value={storeInfo?.legal_name ?? "-"} />
+            <InfoPair label="CNPJ" value={fmtCNPJ(storeInfo?.cnpj)} />
+            <InfoPair label="IE" value={storeInfo?.ie ?? "-"} />
+            <InfoPair label="Indicador IE destinatário" value={storeInfo?.ind_ie_dest ?? "-"} />
+            <InfoPair label="E-mail NF-e" value={storeInfo?.email_nf ?? "-"} />
+            <InfoPair label="Telefone NF-e" value={storeInfo?.phone_nf ?? "-"} />
+            <InfoPair label="CEP" value={storeInfo?.address_zip ?? "-"} />
+            <InfoPair
+              label="Endereço"
+              value={
+                [storeInfo?.address_street, storeInfo?.address_number, storeInfo?.address_complement]
+                  .filter(Boolean)
+                  .join(", ") || "-"
+              }
+            />
+            <InfoPair
+              label="Cidade/UF"
+              value={[storeInfo?.city, storeInfo?.state].filter(Boolean).join("/") || "-"}
             />
           </div>
         </div>
-      ) : null}
+
+        <div className="print-section">
+          <Card title="Observações">
+            <textarea
+              className="min-h-[110px] w-full rounded-[18px] border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              value={order.notes ?? ""}
+              disabled={saving}
+              onChange={(e) => updateOrder({ notes: e.target.value })}
+              placeholder="Observações do pedido..."
+            />
+            <div className="mt-3 text-xs text-slate-500">
+              Criado: {fmtDT(order.created_at)} · Enviado: {fmtDT(order.submitted_at)} · Aprovado:{" "}
+              {fmtDT(order.approved_at)}
+            </div>
+          </Card>
+        </div>
+
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
+          <SectionTitle
+            title="Itens do pedido (atual)"
+            subtitle={
+              editMode
+                ? "Modo edição: ajuste quantidades e remova itens. Depois clique em Salvar alterações."
+                : `${items.length} item(ns)`
+            }
+            right={
+              <div className="no-print">
+                {lockedByLogistics ? (
+                  <Badge tone="red">ENTREGUE (itens bloqueados)</Badge>
+                ) : editMode ? (
+                  <Badge tone="blue">EDITANDO</Badge>
+                ) : null}
+              </div>
+            }
+          />
+
+          <div className="screen-table-wrap mt-6">
+            <Table
+              headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
+              rows={itemsRows}
+            />
+          </div>
+        </div>
+
+        {originalItems && originalItems.length > 0 ? (
+          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
+            <SectionTitle
+              title="Pedido original do franqueado"
+              subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"}
+              right={
+                <div className="no-print">
+                  <Badge tone="neutral">ORIGINAL</Badge>
+                </div>
+              }
+            />
+            <div className="screen-table-wrap mt-6">
+              <Table
+                headers={["SKU", "Produto", "Unid.", "Preço", "Qtd", "Qtd/Caixa", "Total"]}
+                rows={originalRows}
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       {creditModalOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCreditModal}>
+        <div className="no-print fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCreditModal}>
           <div
             className="w-full max-w-xl rounded-[28px] border border-slate-200 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-base font-semibold text-slate-900">Abater crédito</div>
                 <div className="mt-1 text-xs text-slate-500">
                   Saldo: <b>{fmtBRL(creditBalance)}</b> · Já abatido: <b>{fmtBRL(creditApplied)}</b>
                 </div>
               </div>
-              <SecondaryActionButton onClick={closeCreditModal} disabled={saving}>
+              <SecondaryActionButton fullWidth onClick={closeCreditModal} disabled={saving}>
                 Fechar
               </SecondaryActionButton>
             </div>
@@ -1654,29 +2182,29 @@ export default function AdmPedidoDetalhePage() {
       ) : null}
 
       {splitModalOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeSplitModal}>
+        <div className="no-print fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeSplitModal}>
           <div
             className="w-full max-w-3xl rounded-[28px] border border-slate-200 bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="text-base font-semibold text-slate-900">Gerar pedido parcial</div>
                 <div className="mt-1 text-xs text-slate-500">
                   Selecione os itens e informe a quantidade que será enviada nesta remessa.
                 </div>
               </div>
-              <SecondaryActionButton onClick={closeSplitModal} disabled={splitCreating}>
+              <SecondaryActionButton fullWidth onClick={closeSplitModal} disabled={splitCreating}>
                 Fechar
               </SecondaryActionButton>
             </div>
 
             <div className="mt-4 space-y-3">
-              <div className="rounded-xl border border-slate-200">
+              <div className="overflow-hidden rounded-xl border border-slate-200">
                 <div className="grid grid-cols-12 gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
-                  <div className="col-span-1">OK</div>
-                  <div className="col-span-6">Produto</div>
-                  <div className="col-span-2 text-right">Qtd pedido</div>
+                  <div className="col-span-2 sm:col-span-1">OK</div>
+                  <div className="col-span-5 sm:col-span-6">Produto</div>
+                  <div className="col-span-2 text-right sm:col-span-2">Qtd pedido</div>
                   <div className="col-span-3 text-right">Qtd remessa</div>
                 </div>
 
@@ -1686,21 +2214,21 @@ export default function AdmPedidoDetalhePage() {
                     const name = it.products?.name ?? "-";
                     return (
                       <div key={it.id} className="grid grid-cols-12 items-center gap-2 px-3 py-2 text-sm">
-                        <div className="col-span-1">
+                        <div className="col-span-2 sm:col-span-1">
                           <input
                             type="checkbox"
                             checked={!!st.include}
                             onChange={(e) => setSplitInclude(it.id, e.target.checked)}
                           />
                         </div>
-                        <div className="col-span-6">
+                        <div className="col-span-5 sm:col-span-6">
                           <div className="text-slate-900">{name}</div>
-                          <div className="text-xs text-slate-500">{it.products?.sku ?? "-"}</div>
+                          <div className="break-all text-xs text-slate-500">{it.products?.sku ?? "-"}</div>
                         </div>
                         <div className="col-span-2 text-right font-semibold">{Number(it.qty ?? 0)}</div>
                         <div className="col-span-3 text-right">
                           <input
-                            className="w-28 rounded-md border border-slate-200 bg-white px-2 py-1 text-right text-sm outline-none focus:border-slate-300 disabled:bg-slate-50"
+                            className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-right text-sm outline-none focus:border-slate-300 disabled:bg-slate-50 sm:w-28"
                             type="number"
                             min={0}
                             step={1}
@@ -1721,7 +2249,7 @@ export default function AdmPedidoDetalhePage() {
                     Observação da remessa (opcional)
                   </label>
                   <textarea
-                    className="w-full min-h-[90px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+                    className="min-h-[90px] w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
                     value={splitNotes}
                     disabled={splitCreating}
                     onChange={(e) => setSplitNotes(e.target.value)}

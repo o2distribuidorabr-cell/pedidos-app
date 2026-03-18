@@ -163,7 +163,7 @@ function PrimaryActionButton({
         "inline-flex h-11 items-center justify-center rounded-[18px] px-4 text-sm font-semibold text-white transition",
         "bg-cyan-600 shadow-[0_14px_34px_rgba(8,145,178,0.22)] hover:bg-cyan-700",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        fullWidth ? "w-full" : "",
+        fullWidth ? "w-full" : "w-full sm:w-auto",
       ].join(" ")}
     >
       {children}
@@ -195,7 +195,7 @@ function SecondaryActionButton({
           ? "border border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
           : "border border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        fullWidth ? "w-full" : "",
+        fullWidth ? "w-full" : "w-full sm:w-auto",
       ].join(" ")}
     >
       {children}
@@ -214,11 +214,13 @@ function SectionTitle({
 }) {
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <div className="text-sm font-semibold text-slate-900">{title}</div>
-        {subtitle ? <div className="mt-1 text-sm text-slate-600">{subtitle}</div> : null}
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-slate-900 sm:text-base">{title}</div>
+        {subtitle ? (
+          <div className="mt-1 text-sm leading-6 text-slate-600">{subtitle}</div>
+        ) : null}
       </div>
-      {right ? <div>{right}</div> : null}
+      {right ? <div className="w-full sm:w-auto">{right}</div> : null}
     </div>
   );
 }
@@ -231,9 +233,9 @@ function InfoLine({
   value: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3">
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
       <span className="text-sm text-slate-500">{label}</span>
-      <span className="text-right text-sm font-semibold text-slate-900">{value}</span>
+      <span className="text-sm font-semibold text-slate-900 sm:text-right">{value}</span>
     </div>
   );
 }
@@ -371,34 +373,35 @@ export default function AdmPedidosPage() {
   }, [ordersByTab, tab]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <PageHeader
         title="Pedidos"
         subtitle="Gerencie pedidos, pagamentos, logística e vencimentos"
         right={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
             <SecondaryActionButton
               danger
+              fullWidth
               disabled={selected.size === 0 || deleting}
               onClick={deleteSelected}
             >
               Excluir ({selected.size})
             </SecondaryActionButton>
 
-            <SecondaryActionButton onClick={loadOrders}>
+            <SecondaryActionButton fullWidth onClick={loadOrders}>
               Atualizar
             </SecondaryActionButton>
           </div>
         }
       />
 
-      <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-5 shadow-sm md:p-6">
+      <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6">
         <SectionTitle
           title="Visão geral"
           subtitle={`Acompanhamento da aba ${tab === "OPEN" ? "Em aberto" : "Entregues"}`}
         />
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-5 grid gap-3 sm:mt-6 sm:gap-4 md:grid-cols-2 xl:grid-cols-5">
           <StatCard label="Pedidos" value={summary.totalOrders} />
           <StatCard label="Valor total" value={fmtBRL(summary.totalValue)} />
           <StatCard label="Pagos" value={summary.paid} />
@@ -407,29 +410,29 @@ export default function AdmPedidosPage() {
         </div>
       </div>
 
-      <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6">
         <SectionTitle
           title="Navegação e busca"
           subtitle="Troque a aba e filtre rapidamente por pedido ou loja"
         />
 
-        <div className="mt-6 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-          <div className="flex flex-wrap gap-2">
+        <div className="mt-5 flex flex-col gap-4 xl:mt-6 xl:flex-row xl:items-end xl:justify-between">
+          <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
             {tab === "OPEN" ? (
               <>
-                <PrimaryActionButton onClick={() => setTab("OPEN")}>
+                <PrimaryActionButton fullWidth onClick={() => setTab("OPEN")}>
                   Em aberto ({counts.open})
                 </PrimaryActionButton>
-                <SecondaryActionButton onClick={() => setTab("DELIVERED")}>
+                <SecondaryActionButton fullWidth onClick={() => setTab("DELIVERED")}>
                   Entregues ({counts.delivered})
                 </SecondaryActionButton>
               </>
             ) : (
               <>
-                <SecondaryActionButton onClick={() => setTab("OPEN")}>
+                <SecondaryActionButton fullWidth onClick={() => setTab("OPEN")}>
                   Em aberto ({counts.open})
                 </SecondaryActionButton>
-                <PrimaryActionButton onClick={() => setTab("DELIVERED")}>
+                <PrimaryActionButton fullWidth onClick={() => setTab("DELIVERED")}>
                   Entregues ({counts.delivered})
                 </PrimaryActionButton>
               </>
@@ -446,7 +449,7 @@ export default function AdmPedidosPage() {
           </div>
         </div>
 
-        <div className="mt-3 text-xs text-slate-500">
+        <div className="mt-3 text-xs leading-5 text-slate-500">
           Regra: o fluxo logístico unificado é <b>Recebido → Em separação → Saiu para entrega → Entregue</b>. Apenas <b>Entregue</b> vai para a aba final.
         </div>
       </div>
@@ -475,24 +478,24 @@ export default function AdmPedidosPage() {
             return (
               <div
                 key={o.id}
-                className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm md:p-5"
+                className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[28px] sm:p-5"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-start gap-3">
                       <input
                         type="checkbox"
                         checked={selected.has(o.id)}
                         onChange={() => toggleSelect(o.id)}
-                        className="mt-1 h-4 w-4 rounded border-slate-300"
+                        className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300"
                       />
 
-                      <div className="min-w-0">
-                        <div className="truncate text-base font-semibold text-slate-900">
+                      <div className="min-w-0 flex-1">
+                        <div className="break-words text-base font-semibold text-slate-900">
                           {o.store_name ?? "Loja não vinculada"}
                         </div>
 
-                        <div className="mt-1 font-mono text-xs text-slate-500 break-all">
+                        <div className="mt-1 break-all font-mono text-[11px] text-slate-500 sm:text-xs">
                           {o.id}
                         </div>
 
@@ -513,7 +516,7 @@ export default function AdmPedidosPage() {
                     </div>
                   </div>
 
-                  <div className="text-right shrink-0">
+                  <div className="shrink-0 rounded-[18px] bg-slate-50 px-3 py-2 text-left sm:min-w-[140px] sm:bg-transparent sm:px-0 sm:py-0 sm:text-right">
                     <div className="text-lg font-semibold text-slate-900">
                       {fmtBRL(o.total_with_freight)}
                     </div>
@@ -523,8 +526,8 @@ export default function AdmPedidosPage() {
                   </div>
                 </div>
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                <div className="mt-5 grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-4 sm:rounded-[22px]">
                     <div className="space-y-3">
                       <InfoLine label="Criado em" value={fmtDT(o.created_at)} />
                       <InfoLine
@@ -533,7 +536,11 @@ export default function AdmPedidosPage() {
                       />
                       <InfoLine
                         label="Logística"
-                        value={<Badge tone={getLogisticTone(o.logistic_status)}>{getLogisticLabel(o.logistic_status)}</Badge>}
+                        value={
+                          <Badge tone={getLogisticTone(o.logistic_status)}>
+                            {getLogisticLabel(o.logistic_status)}
+                          </Badge>
+                        }
                       />
                       <InfoLine label="Pagamento" value={o.payment_method ?? "—"} />
                       <InfoLine label="Entrega" value={getDeliveryLabel(o.delivery_mode)} />
@@ -576,9 +583,10 @@ export default function AdmPedidosPage() {
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="flex flex-wrap gap-2">
+                <div className="mt-5 flex flex-col gap-3">
+                  <div className="w-full">
                     <PrimaryActionButton
+                      fullWidth
                       onClick={() =>
                         updateOrder(o.id, {
                           is_paid: !o.is_paid,
@@ -590,21 +598,24 @@ export default function AdmPedidosPage() {
                     </PrimaryActionButton>
                   </div>
 
-                  <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
-                    <Link href={`/adm/pedidos/${o.id}?edit=1`} className="block">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap">
+                    <Link href={`/adm/pedidos/${o.id}?edit=1`} className="block w-full lg:w-auto">
                       <SecondaryActionButton fullWidth>
                         Editar
                       </SecondaryActionButton>
                     </Link>
 
-                    <Link href={`/adm/pedidos/${o.id}`} className="block">
+                    <Link href={`/adm/pedidos/${o.id}`} className="block w-full lg:w-auto">
                       <SecondaryActionButton fullWidth>
                         Abrir pedido
                       </SecondaryActionButton>
                     </Link>
 
                     {o.parent_order_id ? (
-                      <Link href={`/adm/pedidos/${o.parent_order_id}`} className="block">
+                      <Link
+                        href={`/adm/pedidos/${o.parent_order_id}`}
+                        className="block w-full lg:w-auto"
+                      >
                         <SecondaryActionButton fullWidth>
                           Abrir original
                         </SecondaryActionButton>
