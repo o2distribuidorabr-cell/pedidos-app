@@ -91,8 +91,8 @@ export async function POST(request: NextRequest) {
         },
         recipients,
         metadata: {
-          routeId: body.routeId ?? null,
-          localOrderId: body.orderId ?? null,
+          ...(body.routeId ? { routeId: body.routeId } : {}),
+          ...(body.orderId ? { localOrderId: body.orderId } : {}),
           source: "portal-american-burger",
         },
       },
