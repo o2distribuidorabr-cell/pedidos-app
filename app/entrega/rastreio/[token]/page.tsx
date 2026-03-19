@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import {
   PageHeader,
   Card,
@@ -32,6 +32,9 @@ type PublicSessionPayload = {
   lastSeenAt: string | null;
   confirmationStatus: ConfirmationStatus | null;
   codeExpiresAt: string | null;
+  dropoffAddress: string | null;
+  dropoffLat: number | null;
+  dropoffLng: number | null;
 };
 
 type Props = {
@@ -42,7 +45,6 @@ function formatDateTime(value: string | null | undefined) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
     timeStyle: "short",
@@ -51,96 +53,86 @@ function formatDateTime(value: string | null | undefined) {
 
 function deliveryTone(status: DeliveryStatus) {
   switch (status) {
-    case "PENDENTE":
-      return "neutral" as const;
-    case "EM_SEPARACAO":
-      return "yellow" as const;
-    case "SAIU_PARA_ENTREGA":
-      return "blue" as const;
-    case "ENTREGUE":
-      return "green" as const;
-    case "OCORRENCIA":
-      return "red" as const;
-    default:
-      return "neutral" as const;
+    case "PENDENTE": return "neutral" as const;
+    case "EM_SEPARACAO": return "yellow" as const;
+    case "SAIU_PARA_ENTREGA": return "blue" as const;
+    case "ENTREGUE": return "green" as const;
+    case "OCORRENCIA": return "red" as const;
+    default: return "neutral" as const;
   }
 }
 
 function trackingTone(status: TrackingStatus) {
   switch (status) {
-    case "PENDENTE":
-      return "blue" as const;
-    case "ATIVO":
-      return "green" as const;
-    case "PAUSADO":
-      return "yellow" as const;
-    case "ENCERRADO":
-      return "neutral" as const;
-    default:
-      return "neutral" as const;
+    case "PENDENTE": return "blue" as const;
+    case "ATIVO": return "green" as const;
+    case "PAUSADO": return "yellow" as const;
+    case "ENCERRADO": return "neutral" as const;
+    default: return "neutral" as const;
   }
 }
 
 function confirmationTone(status: ConfirmationStatus | null) {
   switch (status) {
-    case "PENDENTE":
-      return "yellow" as const;
-    case "CONFIRMADO":
-      return "green" as const;
-    case "EXPIRADO":
-      return "red" as const;
-    case "BLOQUEADO":
-      return "red" as const;
-    default:
-      return "neutral" as const;
+    case "PENDENTE": return "yellow" as const;
+    case "CONFIRMADO": return "green" as const;
+    case "EXPIRADO": return "red" as const;
+    case "BLOQUEADO": return "red" as const;
+    default: return "neutral" as const;
   }
 }
 
 function getDeliveryLabel(status: DeliveryStatus) {
   switch (status) {
-    case "PENDENTE":
-      return "Pendente";
-    case "EM_SEPARACAO":
-      return "Em separação";
-    case "SAIU_PARA_ENTREGA":
-      return "Saiu para entrega";
-    case "ENTREGUE":
-      return "Entregue";
-    case "OCORRENCIA":
-      return "Ocorrência";
-    default:
-      return status;
+    case "PENDENTE": return "Pendente";
+    case "EM_SEPARACAO": return "Em separação";
+    case "SAIU_PARA_ENTREGA": return "Saiu para entrega";
+    case "ENTREGUE": return "Entregue";
+    case "OCORRENCIA": return "Ocorrência";
+    default: return status;
   }
 }
 
 function getTrackingLabel(status: TrackingStatus) {
   switch (status) {
-    case "PENDENTE":
-      return "Pendente";
-    case "ATIVO":
-      return "Ativo";
-    case "PAUSADO":
-      return "Pausado";
-    case "ENCERRADO":
-      return "Encerrado";
-    default:
-      return status;
+    case "PENDENTE": return "Pendente";
+    case "ATIVO": return "Ativo";
+    case "PAUSADO": return "Pausado";
+    case "ENCERRADO": return "Encerrado";
+    default: return status;
   }
 }
 
 function getConfirmationLabel(status: ConfirmationStatus | null) {
   switch (status) {
-    case "PENDENTE":
-      return "Pendente";
-    case "CONFIRMADO":
-      return "Confirmado";
-    case "EXPIRADO":
-      return "Expirado";
-    case "BLOQUEADO":
-      return "Bloqueado";
-    default:
-      return "—";
+    case "PENDENTE": return "Pendente";
+    case "CONFIRMADO": return "Confirmado";
+    case "EXPIRADO": return "Expirado";
+    case "BLOQUEADO": return "Bloqueado";
+    default: return "—";
   }
+}
+
+// Detecta se está rodando no Chrome Android
+function isChrome(): boolean {
+  if (typeof navigator === "undefined") return true;
+  const ua = navigator.userAgent;
+  const isAndroid = /Android/i.test(ua);
+  const isChromeBrowser = /Chrome/i.test(ua) && !/EdgA|OPR|Samsung/i.test(ua);
+  return !isAndroid || isChromeBrowser;
+}
+
+// Monta URL do Waze com destino
+function buildWazeUrl(lat: number, lng: number): string {
+  return `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
+}
+
+// Monta URL do Google Maps com destino
+function buildGoogleMapsUrl(lat: number, lng: number, address: string): string {
+  const dest = address
+    ? encodeURIComponent(address)
+    : `${lat},${lng}`;
+  return `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
 }
 
 export default function EntregaRastreioTokenPage({ params }: Props) {
@@ -166,62 +158,114 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
   } | null>(null);
 
   const [watching, setWatching] = useState(false);
+  const [swActive, setSwActive] = useState(false);
+  const [isChromeBrowser, setIsChromeBrowser] = useState(true);
+
+  // PWA install
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
 
   const [message, setMessage] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"green" | "red" | null>(null);
 
   const watchIdRef = useRef<number | null>(null);
   const heartbeatRef = useRef<number | null>(null);
-  const lastCoordsRef = useRef<{
-    lat: number;
-    lng: number;
-    accuracy: number | null;
-  } | null>(null);
+  const lastCoordsRef = useRef<{ lat: number; lng: number; accuracy: number | null } | null>(null);
+  const swRef = useRef<ServiceWorker | null>(null);
 
-  const showSuccess = (text: string) => {
-    setMessage(text);
-    setMessageTone("green");
-  };
+  const showSuccess = (text: string) => { setMessage(text); setMessageTone("green"); };
+  const showError = (text: string) => { setMessage(text); setMessageTone("red"); };
+  const clearMessage = () => { setMessage(null); setMessageTone(null); };
 
-  const showError = (text: string) => {
-    setMessage(text);
-    setMessageTone("red");
-  };
+  useEffect(() => {
+    if (typeof window === "undefined") return;
 
-  const clearMessage = () => {
-    setMessage(null);
-    setMessageTone(null);
-  };
+    // Detecta navegador
+    setIsChromeBrowser(isChrome());
 
-  const loadSession = useCallback(
-    async (isRefresh = false) => {
-      try {
-        if (isRefresh) setRefreshing(true);
-        else setLoading(true);
+    // Captura prompt de instalação PWA
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      setShowInstallBanner(true);
+    };
 
-        const response = await fetch(`/api/logistica/public/session/${token}`, {
-          method: "GET",
-          cache: "no-store",
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      setIsInstalled(true);
+    }
+
+    // Registra Service Worker para background tracking
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker
+        .register("/sw-tracking.js")
+        .then((registration) => {
+          const sw = registration.active || registration.waiting || registration.installing;
+          if (sw) swRef.current = sw;
+
+          navigator.serviceWorker.addEventListener("message", (event) => {
+            const { type, payload } = event.data || {};
+            if (type === "LOCATION_UPDATE" && payload?.lat && payload?.lng) {
+              const nextCoords = {
+                lat: payload.lat,
+                lng: payload.lng,
+                accuracy: payload.accuracy ?? null,
+              };
+              lastCoordsRef.current = nextCoords;
+              setCoords(nextCoords);
+            }
+          });
+
+          setSwActive(true);
+        })
+        .catch(() => {
+          // Service Worker não disponível — continua com watchPosition normal
         });
+    }
 
-        const data = await response.json();
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    };
+  }, []);
 
-        if (!response.ok || !data.ok) {
-          throw new Error(data.message || "Não foi possível carregar a entrega.");
-        }
+  async function handleInstallPWA() {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === "accepted") {
+      setIsInstalled(true);
+      setShowInstallBanner(false);
+      setInstallPrompt(null);
+    }
+  }
 
-        setSession(data.session as PublicSessionPayload);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Erro ao carregar entrega.";
-        showError(message);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
+  const loadSession = useCallback(async (isRefresh = false) => {
+    try {
+      if (isRefresh) setRefreshing(true);
+      else setLoading(true);
+
+      const response = await fetch(`/api/logistica/public/session/${token}`, {
+        method: "GET",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message || "Não foi possível carregar a entrega.");
       }
-    },
-    [token]
-  );
+
+      setSession(data.session as PublicSessionPayload);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Erro ao carregar entrega.";
+      showError(msg);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token]);
 
   const stopWatcher = useCallback(() => {
     if (watchIdRef.current !== null && typeof navigator !== "undefined") {
@@ -234,43 +278,37 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
       heartbeatRef.current = null;
     }
 
+    if (swRef.current) {
+      swRef.current.postMessage({ type: "STOP_TRACKING" });
+    }
+
     setWatching(false);
   }, []);
 
-  const sendLocation = useCallback(
-    async (lat: number, lng: number, accuracy?: number | null) => {
-      const response = await fetch(
-        `/api/logistica/public/session/${token}/location`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            lat,
-            lng,
-            accuracy: accuracy ?? null,
-          }),
-        }
-      );
+  const sendLocation = useCallback(async (lat: number, lng: number, accuracy?: number | null) => {
+    const response = await fetch(`/api/logistica/public/session/${token}/location`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat, lng, accuracy: accuracy ?? null }),
+    });
 
-      const data = await response.json();
+    const data = await response.json();
 
-      if (!response.ok || !data.ok) {
-        throw new Error(data.message || "Erro ao enviar localização.");
-      }
+    if (!response.ok || !data.ok) {
+      throw new Error(data.message || "Erro ao enviar localização.");
+    }
 
-      setSession((current) =>
-        current
-          ? {
-              ...current,
-              trackingStatus: data.session.status,
-              startedAt: data.session.started_at,
-              lastSeenAt: data.session.last_seen_at,
-            }
-          : current
-      );
-    },
-    [token]
-  );
+    setSession((current) =>
+      current
+        ? {
+            ...current,
+            trackingStatus: data.session.status,
+            startedAt: data.session.started_at,
+            lastSeenAt: data.session.last_seen_at,
+          }
+        : current
+    );
+  }, [token]);
 
   const requestBrowserLocation = useCallback(async () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -287,24 +325,20 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
     });
   }, []);
 
-  const pushCoords = useCallback(
-    async (nextCoords: { lat: number; lng: number; accuracy: number | null }) => {
-      lastCoordsRef.current = nextCoords;
-      setCoords(nextCoords);
-      await sendLocation(nextCoords.lat, nextCoords.lng, nextCoords.accuracy);
-    },
-    [sendLocation]
-  );
+  const pushCoords = useCallback(async (nextCoords: { lat: number; lng: number; accuracy: number | null }) => {
+    lastCoordsRef.current = nextCoords;
+    setCoords(nextCoords);
+    await sendLocation(nextCoords.lat, nextCoords.lng, nextCoords.accuracy);
+  }, [sendLocation]);
 
   const startTracking = useCallback(async () => {
     try {
       setStartingTracking(true);
       clearMessage();
 
-      const response = await fetch(
-        `/api/logistica/public/session/${token}/start`,
-        { method: "POST" }
-      );
+      const response = await fetch(`/api/logistica/public/session/${token}/start`, {
+        method: "POST",
+      });
 
       const data = await response.json();
 
@@ -323,6 +357,17 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
 
       await pushCoords(initialCoords);
 
+      // Ativa o Service Worker para rastreio em background (Android Chrome)
+      if (swActive && "serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.ready;
+        const sw = registration.active;
+        if (sw) {
+          swRef.current = sw;
+          sw.postMessage({ type: "START_TRACKING", payload: { token } });
+        }
+      }
+
+      // watchPosition como complemento quando tela estiver aberta
       if (typeof navigator !== "undefined" && navigator.geolocation) {
         const watchId = navigator.geolocation.watchPosition(
           async (position) => {
@@ -331,62 +376,55 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
               lng: position.coords.longitude,
               accuracy: position.coords.accuracy ?? null,
             };
-
             try {
               await pushCoords(nextCoords);
             } catch {
-              // evita poluição visual a cada falha pontual
+              // sem poluição visual
             }
           },
-          () => {
-            setLocationPermission("denied");
-          },
-          {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 0,
-          }
+          () => { setLocationPermission("denied"); },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
         );
 
         watchIdRef.current = watchId;
         setWatching(true);
       }
 
+      // Heartbeat a cada 5s de segurança
       if (typeof window !== "undefined") {
         heartbeatRef.current = window.setInterval(async () => {
           const last = lastCoordsRef.current;
           if (!last) return;
-
           try {
             await sendLocation(last.lat, last.lng, last.accuracy);
           } catch {
-            // evita ruído excessivo
+            // sem ruído
           }
         }, 5000);
       }
 
       await loadSession(true);
-      showSuccess("Rastreio iniciado com sucesso.");
+      showSuccess(
+        swActive
+          ? "Rastreio iniciado. Pode abrir o Waze ou Maps normalmente."
+          : "Rastreio iniciado. Mantenha esta tela aberta durante a rota."
+      );
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Erro ao iniciar rastreio.";
-      showError(message);
+      const msg = error instanceof Error ? error.message : "Erro ao iniciar rastreio.";
+      showError(msg);
     } finally {
       setStartingTracking(false);
     }
-  }, [loadSession, pushCoords, requestBrowserLocation, sendLocation, token]);
+  }, [loadSession, pushCoords, requestBrowserLocation, sendLocation, swActive, token]);
 
   const pauseTracking = useCallback(async () => {
     try {
       setPausingTracking(true);
       clearMessage();
 
-      const response = await fetch(
-        `/api/logistica/public/session/${token}/pause`,
-        {
-          method: "POST",
-        }
-      );
+      const response = await fetch(`/api/logistica/public/session/${token}/pause`, {
+        method: "POST",
+      });
 
       const data = await response.json();
 
@@ -398,9 +436,8 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
       await loadSession(true);
       showSuccess("Rastreio pausado.");
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Erro ao pausar rastreio.";
-      showError(message);
+      const msg = error instanceof Error ? error.message : "Erro ao pausar rastreio.";
+      showError(msg);
     } finally {
       setPausingTracking(false);
     }
@@ -416,17 +453,11 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
       setSendingCode(true);
       clearMessage();
 
-      const response = await fetch(
-        `/api/logistica/public/session/${token}/finish`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code: code.trim(),
-            confirmedBy: "motorista",
-          }),
-        }
-      );
+      const response = await fetch(`/api/logistica/public/session/${token}/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code.trim(), confirmedBy: "motorista" }),
+      });
 
       const data = await response.json();
 
@@ -439,9 +470,8 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
       await loadSession(true);
       showSuccess("Entrega finalizada com sucesso.");
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Erro ao finalizar entrega.";
-      showError(message);
+      const msg = error instanceof Error ? error.message : "Erro ao finalizar entrega.";
+      showError(msg);
     } finally {
       setSendingCode(false);
     }
@@ -449,10 +479,7 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
 
   useEffect(() => {
     loadSession(false);
-
-    return () => {
-      stopWatcher();
-    };
+    return () => { stopWatcher(); };
   }, [loadSession, stopWatcher]);
 
   const canStart =
@@ -465,14 +492,22 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
 
   const canFinish = session?.deliveryStatus !== "ENTREGUE";
 
+  const hasDropoff =
+    session?.dropoffLat != null && session?.dropoffLng != null;
+
+  const wazeUrl = hasDropoff
+    ? buildWazeUrl(session!.dropoffLat!, session!.dropoffLng!)
+    : null;
+
+  const mapsUrl = hasDropoff
+    ? buildGoogleMapsUrl(session!.dropoffLat!, session!.dropoffLng!, session?.dropoffAddress ?? "")
+    : null;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50">
         <div className="mx-auto max-w-3xl px-4 py-6 md:px-6 md:py-8">
-          <PageHeader
-            title="Entrega em andamento"
-            subtitle="Carregando dados da entrega."
-          />
+          <PageHeader title="Entrega em andamento" subtitle="Carregando dados da entrega." />
           <div className="mt-6">
             <Card>
               <div className="text-sm text-slate-500">Carregando...</div>
@@ -510,26 +545,82 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
           title={`Entrega ${session.orderId.slice(0, 8)}`}
           subtitle="Compartilhe sua localização durante a rota e confirme a entrega com o código do cliente."
           right={
-            <Button
-              variant="secondary"
-              onClick={() => loadSession(true)}
-              disabled={refreshing}
-            >
+            <Button variant="secondary" onClick={() => loadSession(true)} disabled={refreshing}>
               {refreshing ? "Atualizando..." : "Atualizar"}
             </Button>
           }
         />
 
         <div className="mt-6 space-y-6">
+
+          {/* Alerta: não está no Chrome */}
+          {!isChromeBrowser ? (
+            <div className="rounded-[20px] border border-amber-200 bg-amber-50 p-4">
+              <div className="text-sm font-semibold text-amber-900">
+                ⚠️ Use o Google Chrome para melhor rastreio
+              </div>
+              <div className="mt-1 text-sm text-amber-700">
+                Você está usando outro navegador. Para o rastreio continuar funcionando
+                enquanto usa o Waze ou Maps, abra este link no <b>Google Chrome</b>.
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (navigator.clipboard) {
+                      navigator.clipboard.writeText(window.location.href);
+                    }
+                  }}
+                  className="inline-flex h-9 items-center justify-center rounded-[12px] bg-amber-600 px-4 text-sm font-semibold text-white transition hover:bg-amber-700"
+                >
+                  Copiar link para abrir no Chrome
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Banner de instalação PWA */}
+          {showInstallBanner && !isInstalled && isChromeBrowser ? (
+            <div className="rounded-[20px] border border-cyan-200 bg-cyan-50 p-4">
+              <div className="text-sm font-semibold text-cyan-900">
+                📱 Instale o app de rastreio
+              </div>
+              <div className="mt-1 text-sm text-cyan-700">
+                Instale para continuar enviando sua localização mesmo com o Waze ou Maps aberto.
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleInstallPWA}
+                  className="inline-flex h-10 items-center justify-center rounded-[14px] bg-cyan-600 px-4 text-sm font-semibold text-white transition hover:bg-cyan-700"
+                >
+                  Instalar agora
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowInstallBanner(false)}
+                  className="inline-flex h-10 items-center justify-center rounded-[14px] border border-cyan-200 bg-white px-4 text-sm font-semibold text-cyan-700 transition hover:bg-cyan-50"
+                >
+                  Agora não
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Badge de background ativo */}
+          {swActive && watching ? (
+            <div className="rounded-[20px] border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+              ✅ Rastreio em background ativo — pode abrir o Waze ou Maps normalmente.
+            </div>
+          ) : null}
+
           {message ? (
             <Card>
-              <div
-                className={`rounded-xl border p-4 text-sm ${
-                  messageTone === "green"
-                    ? "border-green-200 bg-green-50 text-green-700"
-                    : "border-red-200 bg-red-50 text-red-700"
-                }`}
-              >
+              <div className={`rounded-xl border p-4 text-sm ${
+                messageTone === "green"
+                  ? "border-green-200 bg-green-50 text-green-700"
+                  : "border-red-200 bg-red-50 text-red-700"
+              }`}>
                 {message}
               </div>
             </Card>
@@ -557,12 +648,9 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
               </div>
               <div className="mt-1 text-sm text-slate-500">
                 Permissão:{" "}
-                {locationPermission === "unknown"
-                  ? "Não verificada"
-                  : locationPermission === "granted"
-                  ? "Permitida"
-                  : locationPermission === "denied"
-                  ? "Negada"
+                {locationPermission === "unknown" ? "Não verificada"
+                  : locationPermission === "granted" ? "Permitida"
+                  : locationPermission === "denied" ? "Negada"
                   : "Não suportada"}
               </div>
             </Card>
@@ -576,6 +664,38 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
               </div>
             </Card>
           </div>
+
+          {/* Navegar até o destino */}
+          {hasDropoff ? (
+            <Card
+              title="Navegar até o destino"
+              subtitle={session.dropoffAddress ?? "Endereço de entrega"}
+            >
+              <div className="mt-2 flex flex-wrap gap-3">
+                {wazeUrl ? (
+                  <a
+                    href={wazeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-[18px] bg-[#33CCFF] px-5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
+                  >
+                    🚗 Abrir no Waze
+                  </a>
+                ) : null}
+
+                {mapsUrl ? (
+                  <a
+                    href={mapsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-12 items-center justify-center gap-2 rounded-[18px] bg-[#4285F4] px-5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
+                  >
+                    🗺️ Abrir no Google Maps
+                  </a>
+                ) : null}
+              </div>
+            </Card>
+          ) : null}
 
           <Card
             title="Sua localização"
@@ -619,7 +739,9 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
             </div>
 
             <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-700">
-              Mantenha esta página aberta durante a rota para enviar a localização continuamente.
+              {swActive
+                ? "✅ Rastreio em background disponível. Após iniciar, pode abrir o Waze ou Maps normalmente."
+                : "Mantenha esta página aberta durante a rota para enviar a localização continuamente."}
             </div>
           </Card>
 
@@ -647,10 +769,7 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
             ) : null}
           </Card>
 
-          <Card
-            title="Informações da sessão"
-            subtitle="Resumo simples da operação."
-          >
+          <Card title="Informações da sessão" subtitle="Resumo simples da operação.">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="rounded-2xl border border-slate-200 p-4">
                 <div className="text-xs font-semibold text-slate-500">Pedido</div>
@@ -670,6 +789,7 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
               </div>
             </div>
           </Card>
+
         </div>
       </div>
     </div>

@@ -4,18 +4,21 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
 
+type StopContact = {
+  stopId: string;
+  name: string;
+  phone: string;
+  remarks?: string;
+};
+
 type CreateOrderRequest = {
-  orderId: string;
+  // Pedido único (fluxo original)
+  orderId?: string;
+  // Rota com múltiplas paradas
+  routeId?: string;
   quotationId: string;
-  sender: {
-    name: string;
-    phone: string;
-  };
-  recipient: {
-    name: string;
-    phone: string;
-    remarks?: string;
-  };
+  sender: { name: string; phone: string };
+  recipients: StopContact[];
   partnerName?: string;
   isPODEnabled?: boolean;
 };
@@ -24,13 +27,21 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as CreateOrderRequest;
 
-    if (!body.orderId || !body.quotationId) {
+    if (!body.orderId && !body.routeId) {
       return NextResponse.json(
-        { error: "orderId e quotationId são obrigatórios." },
+        { error: "orderId ou routeId é obrigatório." },
         { status: 400 }
       );
     }
 
+    if (!body.quotationId) {
+      return NextResponse.json(
+        { error: "quotationId é obrigatório." },
+        { status: 400 }
+      );
+    }
+
+    // Busca a cotação para pegar os stopIds
     const quotationResult = await lalamoveFetch<any>({
       path: `/v3/quotations/${body.quotationId}`,
       method: "GET",
@@ -38,15 +49,35 @@ export async function POST(request: NextRequest) {
     });
 
     const quotation = quotationResult.data?.data;
-    const pickupStop = quotation?.stops?.[0];
-    const dropoffStop = quotation?.stops?.[1];
+    const stops = quotation?.stops ?? [];
 
-    if (!pickupStop?.stopId || !dropoffStop?.stopId) {
+    if (stops.length < 2) {
       return NextResponse.json(
-        { error: "Não foi possível localizar os stopIds da cotação." },
+        { error: "Cotação inválida — sem stops suficientes." },
         { status: 400 }
       );
     }
+
+    const pickupStop = stops[0];
+    const dropoffStops = stops.slice(1);
+
+    if (!pickupStop?.stopId) {
+      return NextResponse.json(
+        { error: "Não foi possível localizar o stopId da coleta." },
+        { status: 400 }
+      );
+    }
+
+    // Monta os recipients — um por parada de entrega
+    const recipients = dropoffStops.map((stop: any, index: number) => {
+      const contact = body.recipients[index] ?? body.recipients[body.recipients.length - 1];
+      return {
+        stopId: stop.stopId,
+        name: contact?.name ?? "Destinatário",
+        phone: contact?.phone ?? "",
+        ...(contact?.remarks ? { remarks: contact.remarks } : {}),
+      };
+    });
 
     const payload = {
       data: {
@@ -58,18 +89,10 @@ export async function POST(request: NextRequest) {
           name: body.sender.name,
           phone: body.sender.phone,
         },
-        recipients: [
-          {
-            stopId: dropoffStop.stopId,
-            name: body.recipient.name,
-            phone: body.recipient.phone,
-            ...(body.recipient.remarks
-              ? { remarks: body.recipient.remarks }
-              : {}),
-          },
-        ],
+        recipients,
         metadata: {
-          localOrderId: body.orderId,
+          routeId: body.routeId ?? null,
+          localOrderId: body.orderId ?? null,
           source: "portal-american-burger",
         },
       },
@@ -83,32 +106,67 @@ export async function POST(request: NextRequest) {
     });
 
     const order = result.data?.data;
+    const now = new Date().toISOString();
 
-    const { error } = await supabaseAdmin.from("order_shipments").upsert(
-      {
-        local_order_id: body.orderId,
-        provider: "LALAMOVE",
-        provider_market: getLalamoveConfig().market,
-        provider_quote_id: body.quotationId,
-        provider_order_id: order?.orderId ?? null,
-        provider_driver_id: order?.driverId ?? null,
-        provider_status: order?.status ?? null,
-        share_link: order?.shareLink ?? null,
-        sender_name: body.sender.name,
-        sender_phone: body.sender.phone,
-        recipient_name: body.recipient.name,
-        recipient_phone: body.recipient.phone,
-        price_amount: order?.priceBreakdown?.total
-          ? Number(order.priceBreakdown.total)
-          : null,
-        price_currency: order?.priceBreakdown?.currency ?? null,
-        last_order_payload: result.data,
-      },
-      { onConflict: "local_order_id" }
-    );
+    if (body.routeId) {
+      // Salva na rota
+      await supabaseAdmin
+        .from("delivery_routes")
+        .update({
+          lalamove_order_id: order?.orderId ?? null,
+          lalamove_status: order?.status ?? null,
+          lalamove_share_link: order?.shareLink ?? null,
+          lalamove_last_payload: result.data,
+          status: "EM_ANDAMENTO",
+          started_at: now,
+          updated_at: now,
+        })
+        .eq("id", body.routeId);
 
-    if (error) {
-      throw error;
+      // Marca todos os pedidos da rota como SAIU_PARA_ENTREGA
+      const { data: routeStops } = await supabaseAdmin
+        .from("delivery_route_stops")
+        .select("order_id")
+        .eq("route_id", body.routeId);
+
+      if (routeStops && routeStops.length > 0) {
+        await supabaseAdmin
+          .from("orders")
+          .update({ logistic_status: "SAIU_PARA_ENTREGA" })
+          .in("id", routeStops.map((s: any) => s.order_id));
+      }
+    } else if (body.orderId) {
+      // Pedido único — comportamento original
+      const { error } = await supabaseAdmin.from("order_shipments").upsert(
+        {
+          local_order_id: body.orderId,
+          provider: "LALAMOVE",
+          provider_market: getLalamoveConfig().market,
+          provider_quote_id: body.quotationId,
+          provider_order_id: order?.orderId ?? null,
+          provider_driver_id: order?.driverId ?? null,
+          provider_status: order?.status ?? null,
+          share_link: order?.shareLink ?? null,
+          sender_name: body.sender.name,
+          sender_phone: body.sender.phone,
+          recipient_name: body.recipients[0]?.name ?? null,
+          recipient_phone: body.recipients[0]?.phone ?? null,
+          price_amount: order?.priceBreakdown?.total
+            ? Number(order.priceBreakdown.total)
+            : null,
+          price_currency: order?.priceBreakdown?.currency ?? null,
+          last_order_payload: result.data,
+        },
+        { onConflict: "local_order_id" }
+      );
+
+      if (error) throw error;
+
+      // Marca pedido como SAIU_PARA_ENTREGA
+      await supabaseAdmin
+        .from("orders")
+        .update({ logistic_status: "SAIU_PARA_ENTREGA" })
+        .eq("id", body.orderId);
     }
 
     return NextResponse.json(result.data, { status: 200 });

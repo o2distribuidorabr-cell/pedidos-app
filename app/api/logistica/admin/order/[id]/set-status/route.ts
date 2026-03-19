@@ -19,19 +19,17 @@ export async function POST(request: Request, context: RouteContext) {
 
     if (
       !body.deliveryStatus ||
-      ![
-        "PENDENTE",
-        "EM_SEPARACAO",
-        "SAIU_PARA_ENTREGA",
-        "ENTREGUE",
-        "OCORRENCIA",
-      ].includes(body.deliveryStatus)
+      !["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA", "ENTREGUE", "OCORRENCIA"].includes(
+        body.deliveryStatus
+      )
     ) {
       return NextResponse.json(
         { ok: false, message: "Status logístico inválido." },
         { status: 400 }
       );
     }
+
+    const now = new Date().toISOString();
 
     await updateOrderDeliveryFields(supabaseAdmin, {
       orderId: id,
@@ -41,6 +39,9 @@ export async function POST(request: Request, context: RouteContext) {
         | "SAIU_PARA_ENTREGA"
         | "ENTREGUE"
         | "OCORRENCIA",
+      // Grava a data de entrega quando marcado como ENTREGUE
+      // Limpa a data quando voltando para status anterior
+      deliveryFinishedAt: body.deliveryStatus === "ENTREGUE" ? now : null,
     });
 
     return NextResponse.json({

@@ -274,6 +274,47 @@ export async function getPublicTrackingSessionPayloadByToken(
 
   if (!data) return null;
 
+  // FIX: busca o endereço de entrega da loja vinculada ao pedido
+  let dropoffAddress: string | null = null;
+  let dropoffLat: number | null = null;
+  let dropoffLng: number | null = null;
+
+  if (data.order_id) {
+    const { data: orderData } = await supabase
+      .from("orders")
+      .select("store_id")
+      .eq("id", data.order_id)
+      .maybeSingle();
+
+    if (orderData?.store_id) {
+      const { data: storeData } = await supabase
+        .from("stores")
+        .select(
+          "address_street, address_number, address_complement, address_neighborhood, city, state, address_lat, address_lng"
+        )
+        .eq("id", orderData.store_id)
+        .maybeSingle();
+
+      if (storeData) {
+        dropoffAddress = [
+          storeData.address_street,
+          storeData.address_number,
+          storeData.address_complement,
+          storeData.address_neighborhood,
+          storeData.city,
+          storeData.state,
+        ]
+          .filter(Boolean)
+          .join(", ");
+
+        dropoffLat =
+          typeof storeData.address_lat === "number" ? storeData.address_lat : null;
+        dropoffLng =
+          typeof storeData.address_lng === "number" ? storeData.address_lng : null;
+      }
+    }
+  }
+
   return {
     sessionId: data.tracking_session_id,
     orderId: data.order_id,
@@ -286,5 +327,9 @@ export async function getPublicTrackingSessionPayloadByToken(
     lastSeenAt: data.last_seen_at,
     confirmationStatus: data.confirmation_status,
     codeExpiresAt: data.code_expires_at,
+    // FIX: endereço de entrega para abrir no Waze/Maps
+    dropoffAddress,
+    dropoffLat,
+    dropoffLng,
   };
 }

@@ -66,14 +66,12 @@ export type OrderDeliveryOverviewRow = {
   order_created_at: string | null;
   submitted_at: string | null;
   approved_at: string | null;
-
   delivery_status: DeliveryStatus;
   delivery_driver_name: string | null;
   delivery_driver_phone: string | null;
   delivery_started_at: string | null;
   delivery_finished_at: string | null;
   delivery_notes: string | null;
-
   tracking_session_id: string | null;
   tracking_status: DeliveryTrackingSessionStatus | null;
   tracking_token: string | null;
@@ -83,7 +81,6 @@ export type OrderDeliveryOverviewRow = {
   last_seen_at: string | null;
   tracking_started_at: string | null;
   tracking_ended_at: string | null;
-
   confirmation_id: string | null;
   confirmation_status: DeliveryConfirmationStatus | null;
   attempts: number | null;
@@ -106,6 +103,10 @@ export type PublicTrackingSessionPayload = {
   lastSeenAt: string | null;
   confirmationStatus: DeliveryConfirmationStatus | null;
   codeExpiresAt: string | null;
+  // FIX: endereço de entrega para abrir no Waze/Maps
+  dropoffAddress: string | null;
+  dropoffLat: number | null;
+  dropoffLng: number | null;
 };
 
 export type StartDeliveryFlowResult = {
