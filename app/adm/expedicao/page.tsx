@@ -9,14 +9,16 @@ import { PageHeader, Card, Input, Badge, Select } from "@/app/components/ui";
 type UnifiedLogisticStatus =
   | "RECEBIDO"
   | "EM_SEPARACAO"
-  | "SAIU_PARA_ENTREGA"
+  | "SAIU_PARA_ENTGA"
   | "ENTREGUE";
+
+type DeliveryProvider = "autonomo" | "lalamove";
 
 type OrderRow = {
   id: string;
   store_id: string | null;
   status: string;
-  logistic_status: UnifiedLogisticStatus | null;
+  logistic_status: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | null;
   delivery_forecast: string | null;
   created_at: string | null;
   submitted_at: string | null;
@@ -91,7 +93,10 @@ type PackInfo = {
   unitLabel: string;
 };
 
-const LOGISTIC_OPTIONS: Array<{ value: UnifiedLogisticStatus; label: string }> = [
+const LOGISTIC_OPTIONS: Array<{
+  value: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE";
+  label: string;
+}> = [
   { value: "RECEBIDO", label: "Recebido" },
   { value: "EM_SEPARACAO", label: "Em separação" },
   { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
@@ -206,19 +211,23 @@ function ceilPacks(qty: number, pack: PackInfo) {
 }
 
 function packBaseText(pack: PackInfo) {
-  if (pack.perPackKg && pack.perPackKg > 0) return `${fmtNumBR(pack.perPackKg)}${pack.unitLabel}/${pack.packLabel}`;
-  if (pack.perPack && pack.perPack > 0) return `${fmtNumBR(pack.perPack)}${pack.unitLabel}/${pack.packLabel}`;
+  if (pack.perPackKg && pack.perPackKg > 0) {
+    return `${fmtNumBR(pack.perPackKg)}${pack.unitLabel}/${pack.packLabel}`;
+  }
+  if (pack.perPack && pack.perPack > 0) {
+    return `${fmtNumBR(pack.perPack)}${pack.unitLabel}/${pack.packLabel}`;
+  }
   return `-${pack.unitLabel}/${pack.packLabel}`;
 }
 
-function logisticTone(status: UnifiedLogisticStatus | null) {
+function logisticTone(status: OrderRow["logistic_status"]) {
   if (status === "ENTREGUE") return "green" as const;
   if (status === "SAIU_PARA_ENTREGA") return "blue" as const;
   if (status === "EM_SEPARACAO") return "yellow" as const;
   return "neutral" as const;
 }
 
-function logisticLabel(status: UnifiedLogisticStatus | null) {
+function logisticLabel(status: OrderRow["logistic_status"]) {
   if (status === "RECEBIDO") return "Recebido";
   if (status === "EM_SEPARACAO") return "Em separação";
   if (status === "SAIU_PARA_ENTREGA") return "Saiu para entrega";
@@ -250,7 +259,7 @@ function sortOrdersForExpedition(a: OrderRow, b: OrderRow) {
   const bToday = b.delivery_forecast === today;
   if (aToday !== bToday) return aToday ? -1 : 1;
 
-  const statusWeight = (s: UnifiedLogisticStatus | null) => {
+  const statusWeight = (s: OrderRow["logistic_status"]) => {
     if (s === "EM_SEPARACAO") return 0;
     if (s === "RECEBIDO") return 1;
     if (s === "SAIU_PARA_ENTREGA") return 2;
@@ -353,6 +362,41 @@ function SummaryBox({
   );
 }
 
+function ProviderChoiceCard({
+  title,
+  subtitle,
+  accent,
+  onClick,
+  disabled,
+}: {
+  title: string;
+  subtitle: string;
+  accent: "cyan" | "violet";
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
+  const toneClass =
+    accent === "violet"
+      ? "border-violet-200 bg-violet-50 hover:bg-violet-100"
+      : "border-cyan-200 bg-cyan-50 hover:bg-cyan-100";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "w-full rounded-[24px] border p-4 text-left transition",
+        toneClass,
+        "disabled:cursor-not-allowed disabled:opacity-50",
+      ].join(" ")}
+    >
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
+    </button>
+  );
+}
+
 export default function AdmExpedicaoPage() {
   const router = useRouter();
 
@@ -372,6 +416,10 @@ export default function AdmExpedicaoPage() {
   const [printMode, setPrintMode] = useState(false);
   const [printPayload, setPrintPayload] = useState<PrintPayload | null>(null);
 
+  const [dispatchChooserOpen, setDispatchChooserOpen] = useState(false);
+  const [dispatchOrder, setDispatchOrder] = useState<OrderRow | null>(null);
+  const [dispatchSaving, setDispatchSaving] = useState(false);
+
   useEffect(() => {
     (async () => {
       const ok = await requireAdminOrRedirect(router);
@@ -387,6 +435,20 @@ export default function AdmExpedicaoPage() {
     window.addEventListener("afterprint", onAfterPrint);
     return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []);
+
+  useEffect(() => {
+    if (!dispatchChooserOpen) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !dispatchSaving) {
+        setDispatchChooserOpen(false);
+        setDispatchOrder(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dispatchChooserOpen, dispatchSaving]);
 
   async function loadOrders() {
     setMsg("");
@@ -429,7 +491,7 @@ export default function AdmExpedicaoPage() {
       id: row.id,
       store_id: row.store_id,
       status: row.status,
-      logistic_status: (row.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus,
+      logistic_status: (row.logistic_status ?? "RECEBIDO") as OrderRow["logistic_status"],
       delivery_forecast: row.delivery_forecast ?? null,
       created_at: row.created_at ?? null,
       submitted_at: row.submitted_at ?? null,
@@ -528,23 +590,33 @@ export default function AdmExpedicaoPage() {
     if (successMessage) setMsg(successMessage);
   }
 
-  async function openDeliveryFlow(order: OrderRow) {
-    setSavingId(order.id);
+  function closeDispatchChooser() {
+    if (dispatchSaving) return;
+    setDispatchChooserOpen(false);
+    setDispatchOrder(null);
+  }
+
+  function openDispatchChooser(order: OrderRow) {
+    if (order.delivery_mode === "RETIRADA") return;
+    setDispatchOrder(order);
+    setDispatchChooserOpen(true);
+  }
+
+  async function goToLogisticsWithProvider(provider: DeliveryProvider) {
+    if (!dispatchOrder) return;
+
+    setDispatchSaving(true);
+    setSavingId(dispatchOrder.id);
     setMsg("");
 
     try {
-      if (order.delivery_mode === "RETIRADA") {
-        router.push(`/adm/logistica/${order.id}`);
-        return;
-      }
-
-      const currentStatus = order.logistic_status ?? "RECEBIDO";
+      const currentStatus = dispatchOrder.logistic_status ?? "RECEBIDO";
 
       if (currentStatus === "RECEBIDO") {
         const { error } = await supabase
           .from("orders")
           .update({ logistic_status: "EM_SEPARACAO" })
-          .eq("id", order.id);
+          .eq("id", dispatchOrder.id);
 
         if (error) {
           setMsg(error.message);
@@ -553,13 +625,17 @@ export default function AdmExpedicaoPage() {
 
         setOrders((prev) =>
           prev.map((o) =>
-            o.id === order.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
+            o.id === dispatchOrder.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
           )
         );
       }
 
-      router.push(`/adm/logistica/${order.id}?mode=dispatch`);
+      setDispatchChooserOpen(false);
+      setDispatchOrder(null);
+
+      router.push(`/adm/logistica/${dispatchOrder.id}?mode=dispatch&provider=${provider}`);
     } finally {
+      setDispatchSaving(false);
       setSavingId(null);
     }
   }
@@ -589,9 +665,7 @@ export default function AdmExpedicaoPage() {
 
       const { data: itemsData, error: itemsError } = await supabase
         .from("order_items")
-        .select(
-          "id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)"
-        )
+        .select("id,qty,unit,unit_cost,product_id, products:products (sku,name,unit)")
         .eq("order_id", order.id);
 
       if (itemsError) {
@@ -693,6 +767,8 @@ export default function AdmExpedicaoPage() {
         .length,
     };
   }, [filtered]);
+
+  const dispatchOrderName = dispatchOrder?.stores?.name || "Loja não identificada";
 
   return (
     <div className="space-y-5">
@@ -864,7 +940,7 @@ export default function AdmExpedicaoPage() {
 
       {msg ? (
         <Card>
-          <div className="text-sm text-slate-700 whitespace-pre-wrap">{msg}</div>
+          <div className="whitespace-pre-wrap text-sm text-slate-700">{msg}</div>
         </Card>
       ) : null}
 
@@ -959,7 +1035,7 @@ export default function AdmExpedicaoPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-slate-900 break-all">
+                    <div className="break-all text-sm font-semibold text-slate-900">
                       Pedido {order.id}
                     </div>
                     <div className="mt-1 text-sm text-slate-600">
@@ -1061,7 +1137,7 @@ export default function AdmExpedicaoPage() {
                     onChange={(v) =>
                       updateOrder(
                         order.id,
-                        { logistic_status: v as UnifiedLogisticStatus },
+                        { logistic_status: v as OrderRow["logistic_status"] },
                         "Status logístico atualizado."
                       )
                     }
@@ -1096,8 +1172,9 @@ export default function AdmExpedicaoPage() {
                     Fluxo rápido de entrega
                   </div>
                   <div className="mt-1 text-sm text-cyan-900">
-                    Ao tocar em <b>Sair para entrega</b>, abre uma tela curta para preencher
-                    motorista, enviar o link de rastreio e concluir a saída.
+                    Ao tocar em <b>Sair para entrega</b>, o sistema perguntará se a entrega será
+                    por <b>motorista autônomo</b> ou <b>Lalamove</b>. Depois disso, a página de
+                    logística assume o restante do fluxo.
                   </div>
                 </div>
 
@@ -1150,7 +1227,7 @@ export default function AdmExpedicaoPage() {
                   <PrimaryActionButton
                     fullWidth
                     disabled={saving || order.delivery_mode === "RETIRADA"}
-                    onClick={() => openDeliveryFlow(order)}
+                    onClick={() => openDispatchChooser(order)}
                   >
                     Sair para entrega
                   </PrimaryActionButton>
@@ -1182,7 +1259,7 @@ export default function AdmExpedicaoPage() {
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       Observações
                     </div>
-                    <div className="mt-1 text-sm text-slate-700 whitespace-pre-wrap">
+                    <div className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
                       {order.notes}
                     </div>
                   </div>
@@ -1192,6 +1269,70 @@ export default function AdmExpedicaoPage() {
           })}
         </div>
       )}
+
+      {dispatchChooserOpen && dispatchOrder ? (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center">
+          <div className="w-full max-w-2xl rounded-[30px] border border-slate-200 bg-white p-5 shadow-[0_25px_90px_rgba(15,23,42,0.28)]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Saída para entrega
+                </div>
+                <h3 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-slate-900">
+                  Escolha como este pedido será despachado
+                </h3>
+                <div className="mt-2 text-sm text-slate-600">
+                  <b>Pedido:</b> {dispatchOrder.id}
+                </div>
+                <div className="text-sm text-slate-600">
+                  <b>Loja:</b> {dispatchOrderName}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeDispatchChooser}
+                disabled={dispatchSaving}
+                className="rounded-[14px] border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              Depois da escolha, o sistema abrirá a <b>página de logística</b> com o fluxo
+              correspondente.
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <ProviderChoiceCard
+                accent="cyan"
+                title="Motorista autônomo"
+                subtitle="Abre a logística no fluxo atual para preencher motorista, gerar link de rastreio e código de entrega."
+                disabled={dispatchSaving}
+                onClick={() => goToLogisticsWithProvider("autonomo")}
+              />
+
+              <ProviderChoiceCard
+                accent="violet"
+                title="Chamar Lalamove"
+                subtitle="Abre a logística já preparada para cotação, chamada da corrida e acompanhamento da entrega."
+                disabled={dispatchSaving}
+                onClick={() => goToLogisticsWithProvider("lalamove")}
+              />
+            </div>
+
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <SecondaryActionButton
+                disabled={dispatchSaving}
+                onClick={closeDispatchChooser}
+              >
+                Cancelar
+              </SecondaryActionButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div id="print-area" className={printMode ? "print-mode" : ""}>
         {printPayload ? (
