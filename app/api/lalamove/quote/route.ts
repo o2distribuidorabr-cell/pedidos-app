@@ -94,6 +94,16 @@ export async function POST(request: NextRequest) {
           : null,
         price_currency: quotation?.priceBreakdown?.currency ?? null,
         last_quote_payload: result.data,
+        // FIX: reseta o pedido anterior ao gerar nova cotação
+        // Isso permite rechamar a Lalamove após um cancelamento
+        provider_order_id: null,
+        provider_driver_id: null,
+        provider_status: null,
+        provider_event_type: null,
+        share_link: null,
+        last_order_payload: null,
+        last_driver_payload: null,
+        last_webhook_payload: null,
       },
       { onConflict: "local_order_id" }
     );
