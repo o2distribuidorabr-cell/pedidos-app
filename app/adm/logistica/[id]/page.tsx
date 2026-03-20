@@ -324,6 +324,26 @@ function createDeliveryIcon(emoji = "🛵", bg = "#0891b2") {
   });
 }
 
+function createPinIcon(emoji = "📍", bg = "#16a34a") {
+  return L.divIcon({
+    className: "custom-pin-marker",
+    html: `<div style="width:36px;height:36px;border-radius:9999px;background:${bg};display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,0.25);border:3px solid white;font-size:18px;">${emoji}</div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18],
+  });
+}
+
+function RecenterMap({ center, followVehicle }: { center: [number, number]; followVehicle: boolean }) {
+  const { useMap } = require("react-leaflet") as typeof import("react-leaflet");
+  const map = useMap();
+  useEffect(() => {
+    if (!followVehicle) return;
+    map.flyTo(center, map.getZoom(), { animate: true, duration: 1.2 });
+  }, [center, followVehicle, map]);
+  return null;
+}
+
 function normalizeNumber(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() !== "") {
@@ -758,10 +778,22 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const lalamoveDriverPhone = lalamoveSnapshot.driverPhone ?? null;
   const lalamoveDriverPlate = lalamoveSnapshot.driverPlate ?? null;
   const lalamoveHasMap = lalamoveLastLat != null && lalamoveLastLng != null;
+
+  // Coordenadas de retirada (pickup) — sempre disponíveis
+  const pickupLatNum = pickupLat ? Number(pickupLat) : null;
+  const pickupLngNum = pickupLng ? Number(pickupLng) : null;
+  const hasPickup = pickupLatNum != null && Number.isFinite(pickupLatNum) && pickupLngNum != null && Number.isFinite(pickupLngNum);
+
+  // Coordenadas de entrega (dropoff) — da cotação Lalamove ou da loja
+  const dropoffLatNum = dropoffLat ? Number(dropoffLat) : null;
+  const dropoffLngNum = dropoffLng ? Number(dropoffLng) : null;
+  const hasDropoff = dropoffLatNum != null && Number.isFinite(dropoffLatNum) && dropoffLngNum != null && Number.isFinite(dropoffLngNum);
   const lalamoveFormattedCoords = lalamoveHasMap ? `${lalamoveLastLat?.toFixed(5)}, ${lalamoveLastLng?.toFixed(5)}` : "—";
   const lalamoveMapOpenUrl = useMemo(() => lalamoveLastLat && lalamoveLastLng ? buildGoogleMapsOpenUrl(lalamoveLastLat, lalamoveLastLng) : "", [lalamoveLastLat, lalamoveLastLng]);
 
   const deliveryIcon = useMemo(() => createDeliveryIcon("🛵", "#0891b2"), []);
+  const pickupIcon = useMemo(() => createPinIcon("🏭", "#f59e0b"), []);
+  const dropoffIcon = useMemo(() => createPinIcon("🏪", "#16a34a"), []);
   const lalamoveIcon = useMemo(() => createDeliveryIcon("🚚", "#7c3aed"), []);
 
   // Para rota múltipla, usa dados da delivery_routes; para pedido único, usa order_shipments
@@ -1331,6 +1363,10 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
               <div className={`${heightClass} w-full`}>
                 <MapContainer key={mapKey} center={[lalamoveLastLat, lalamoveLastLng]} zoom={16} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
                   <TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+
+                  {/* Segue o veículo automaticamente */}
+                  <RecenterMap center={[lalamoveLastLat, lalamoveLastLng]} followVehicle={followVehicle} />
+
                   <Circle center={[lalamoveLastLat, lalamoveLastLng]} radius={Math.max(Number(lalamoveLastAccuracy ?? 15), 8)} pathOptions={{ color: "#7c3aed", fillColor: "#a78bfa", fillOpacity: 0.18 }} />
                   <Marker position={[lalamoveLastLat, lalamoveLastLng]} icon={lalamoveIcon}>
                     <Popup>
@@ -1343,12 +1379,64 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                       </div>
                     </Popup>
                   </Marker>
+
+                  {/* Marcador de retirada (pickup) */}
+                  {hasPickup ? (
+                    <Marker position={[pickupLatNum!, pickupLngNum!]} icon={pickupIcon}>
+                      <Popup>
+                        <div className="text-sm">
+                          <div className="font-semibold">🏭 Ponto de retirada</div>
+                          <div className="mt-1 text-slate-600">{pickupAddress || "Endereço de retirada"}</div>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ) : null}
+
+                  {/* Marcador de entrega (dropoff) */}
+                  {hasDropoff ? (
+                    <Marker position={[dropoffLatNum!, dropoffLngNum!]} icon={dropoffIcon}>
+                      <Popup>
+                        <div className="text-sm">
+                          <div className="font-semibold">🏪 Ponto de entrega</div>
+                          <div className="mt-1 text-slate-600">{dropoffAddress || "Endereço de entrega"}</div>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ) : null}
                 </MapContainer>
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap gap-3">
-              <SecondaryActionButton disabled={!lalamoveHasMap} onClick={() => { setFollowVehicle(true); setMapKey((k) => k + 1); }}>Centralizar no mapa</SecondaryActionButton>
-              {lalamoveMapOpenUrl ? <a href={lalamoveMapOpenUrl} target="_blank" rel="noreferrer"><SecondaryActionButton>Abrir no Google Maps</SecondaryActionButton></a> : null}
+
+            {/* Legenda */}
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-[14px] border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+              <span className="inline-flex items-center gap-1">🛵 <span>Motorista</span></span>
+              <span className="text-slate-300">|</span>
+              <span className="inline-flex items-center gap-1">🏭 <span>Retirada</span></span>
+              <span className="text-slate-300">|</span>
+              <span className="inline-flex items-center gap-1">🏪 <span>Entrega</span></span>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <SecondaryActionButton onClick={() => setFollowVehicle((v) => !v)}>
+                {followVehicle ? "Seguindo motorista" : "Seguir motorista"}
+              </SecondaryActionButton>
+              {lalamoveMapOpenUrl ? (
+                <a href={lalamoveMapOpenUrl} target="_blank" rel="noreferrer">
+                  <SecondaryActionButton>Abrir no Google Maps</SecondaryActionButton>
+                </a>
+              ) : null}
+              {lalamoveDriverPhone ? (
+                <a
+                  href={`https://wa.me/${lalamoveDriverPhone.replace(/\D/g, "")}?text=${encodeURIComponent("Olá! Sou da equipe de logística. Preciso falar sobre a entrega em andamento.")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <button type="button"
+                    className="inline-flex h-12 items-center justify-center rounded-[18px] bg-green-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(22,163,74,0.26)] transition hover:bg-green-700">
+                    WhatsApp do motorista
+                  </button>
+                </a>
+              ) : null}
             </div>
           </>
         ) : (
@@ -1523,6 +1611,30 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                         <Marker position={[internalLastLat, internalLastLng]} icon={deliveryIcon}>
                           <Popup><div className="text-sm"><div className="font-semibold">Entrega em andamento</div><div className="mt-1">Check-in: {formatDateTime(internalLastSeenAt)}</div></div></Popup>
                         </Marker>
+
+                        {/* Marcador de retirada (pickup) */}
+                        {hasPickup ? (
+                          <Marker position={[pickupLatNum!, pickupLngNum!]} icon={pickupIcon}>
+                            <Popup>
+                              <div className="text-sm">
+                                <div className="font-semibold">🏭 Ponto de retirada</div>
+                                <div className="mt-1 text-slate-600">{pickupAddress || "Endereço de retirada"}</div>
+                              </div>
+                            </Popup>
+                          </Marker>
+                        ) : null}
+
+                        {/* Marcador de entrega (dropoff) */}
+                        {hasDropoff ? (
+                          <Marker position={[dropoffLatNum!, dropoffLngNum!]} icon={dropoffIcon}>
+                            <Popup>
+                              <div className="text-sm">
+                                <div className="font-semibold">🏪 Ponto de entrega</div>
+                                <div className="mt-1 text-slate-600">{dropoffAddress || "Endereço de entrega"}</div>
+                              </div>
+                            </Popup>
+                          </Marker>
+                        ) : null}
                       </MapContainer>
                     </div>
                   </div>
@@ -1557,7 +1669,22 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                     <>
                       <div className="flex items-center justify-between gap-3"><span>Lalamove</span><Badge tone={lalamoveTone(isMultiStop ? routeData?.lalamove_status : shipment?.provider_status)}>{humanizeProviderStatus(isMultiStop ? routeData?.lalamove_status : shipment?.provider_status)}</Badge></div>
                       <div className="flex items-center justify-between gap-3"><span>Motorista</span><span className="font-semibold text-slate-900 text-right">{lalamoveDriverName || "Não atribuído"}</span></div>
-                      {lalamoveDriverPhone ? <div className="flex items-center justify-between gap-3"><span>Telefone</span><span className="font-semibold text-slate-900">{lalamoveDriverPhone}</span></div> : null}
+                      {lalamoveDriverPhone ? (
+                        <>
+                          <div className="flex items-center justify-between gap-3">
+                            <span>Telefone</span>
+                            <span className="font-semibold text-slate-900">{lalamoveDriverPhone}</span>
+                          </div>
+                          <a
+                            href={`https://wa.me/${lalamoveDriverPhone.replace(/\D/g, "")}?text=${encodeURIComponent("Olá! Sou da equipe de logística. Preciso falar sobre a entrega em andamento.")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex w-full h-12 items-center justify-center rounded-[18px] bg-green-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(22,163,74,0.26)] transition hover:bg-green-700"
+                          >
+                            WhatsApp do motorista
+                          </a>
+                        </>
+                      ) : null}
                       {lalamoveDriverPlate ? <div className="flex items-center justify-between gap-3"><span>Placa</span><span className="font-semibold text-slate-900">{lalamoveDriverPlate}</span></div> : null}
                     </>
                   ) : (

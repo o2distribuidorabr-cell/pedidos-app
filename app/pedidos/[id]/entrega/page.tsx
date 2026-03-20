@@ -67,6 +67,7 @@ type ApiResponse = {
   confirmationCode?: string | null;
   routeInfo?: RouteInfo | null;
   lalamoveShareLink?: string | null;
+  store?: { address_lat?: number | null; address_lng?: number | null; address?: string | null; name?: string | null } | null;
 };
 
 type Props = {
@@ -180,6 +181,16 @@ function createCartIcon() {
   });
 }
 
+function createPinIcon(emoji = "📍", bg = "#16a34a") {
+  return L.divIcon({
+    className: "custom-pin-marker",
+    html: `<div style="width:36px;height:36px;border-radius:9999px;background:${bg};display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,0.25);border:3px solid white;font-size:18px;">${emoji}</div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18],
+  });
+}
+
 function RecenterMap({ center, followVehicle }: { center: [number, number]; followVehicle: boolean; }) {
   const { useMap } = require("react-leaflet") as typeof import("react-leaflet");
   const map = useMap();
@@ -198,6 +209,7 @@ export default function PedidoEntregaPage({ params }: Props) {
   const [storeLabel, setStoreLabel] = useState("Sem loja");
   const [confirmationCode, setConfirmationCode] = useState<string | null>(null);
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
+  const [storeCoords, setStoreCoords] = useState<{ lat: number; lng: number; address: string } | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -224,6 +236,14 @@ export default function PedidoEntregaPage({ params }: Props) {
       setStoreLabel(data.storeLabel || "Sem loja");
       setConfirmationCode(data.confirmationCode ?? null);
       setRouteInfo(data.routeInfo ?? null);
+      // Coordenadas da loja para marcador de entrega
+      if (data.store?.address_lat && data.store?.address_lng) {
+        setStoreCoords({
+          lat: Number(data.store.address_lat),
+          lng: Number(data.store.address_lng),
+          address: data.store.address ?? data.store.name ?? "Ponto de entrega",
+        });
+      }
     } catch (error) {
       showError(error instanceof Error ? error.message : "Erro ao carregar entrega.");
     } finally {
@@ -244,6 +264,13 @@ export default function PedidoEntregaPage({ params }: Props) {
   const center = useMemo<[number, number] | null>(() => lastLat && lastLng ? [lastLat, lastLng] : null, [lastLat, lastLng]);
   const mapOpenUrl = useMemo(() => lastLat && lastLng ? buildGoogleMapsOpenUrl(lastLat, lastLng) : "", [lastLat, lastLng]);
   const cartIcon = useMemo(() => createCartIcon(), []);
+  const pickupIcon = useMemo(() => createPinIcon("🏭", "#f59e0b"), []);
+  const dropoffIcon = useMemo(() => createPinIcon("🏪", "#16a34a"), []);
+
+  // Pickup: coordenadas fixas do centro de distribuição
+  const PICKUP_LAT = -19.9704199;
+  const PICKUP_LNG = -44.0547074;
+  const PICKUP_ADDRESS = "Rua Coronel Salvador Fernandes, 222, Bandeirantes, Contagem, MG";
 
   const staleSeconds = useMemo(() => {
     if (!lastSeenAt) return null;
@@ -455,6 +482,28 @@ export default function PedidoEntregaPage({ params }: Props) {
                           </div>
                         </Popup>
                       </Marker>
+
+                      {/* Marcador de retirada — centro de distribuição */}
+                      <Marker position={[PICKUP_LAT, PICKUP_LNG]} icon={pickupIcon}>
+                        <Popup>
+                          <div className="text-sm">
+                            <div className="font-semibold">🏭 Ponto de retirada</div>
+                            <div className="mt-1 text-slate-600">{PICKUP_ADDRESS}</div>
+                          </div>
+                        </Popup>
+                      </Marker>
+
+                      {/* Marcador de entrega — loja do cliente */}
+                      {storeCoords ? (
+                        <Marker position={[storeCoords.lat, storeCoords.lng]} icon={dropoffIcon}>
+                          <Popup>
+                            <div className="text-sm">
+                              <div className="font-semibold">🏪 {storeLabel}</div>
+                              <div className="mt-1 text-slate-600">{storeCoords.address}</div>
+                            </div>
+                          </Popup>
+                        </Marker>
+                      ) : null}
                     </MapContainer>
                   </div>
                 </div>
