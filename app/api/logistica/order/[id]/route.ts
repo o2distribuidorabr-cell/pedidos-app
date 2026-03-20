@@ -104,13 +104,34 @@ export async function GET(_: Request, context: RouteContext) {
         codeExpiresAt: routeStop.confirmation_code_expires_at,
       };
     } else {
-      // Pedido único — busca código normal
       const { data: confirmation } = await supabaseAdmin
         .from("delivery_confirmations")
-        .select("confirmation_code")
+        .select("confirmation_code, status, confirmed_at, confirmed_by, code_expires_at, attempts, max_attempts")
         .eq("order_id", id)
         .maybeSingle();
-      confirmationCode = confirmation?.confirmation_code ?? null;
+
+      const deliveryMode = (order as any).delivery_mode ?? null;
+
+      if (deliveryMode === "RETIRADA") {
+        // Retirada: franqueado precisa ver o código para confirmar no portal
+        confirmationCode = confirmation?.confirmation_code ?? null;
+      } else {
+        // Entrega (frete): código é SOMENTE do cliente — API nunca retorna o valor
+        // Apenas retorna metadados para o admin saber que foi confirmado
+        confirmationCode = null;
+      }
+
+      // Retorna metadados da confirmação (sem o código em si para entrega)
+      if (confirmation) {
+        (order as any)._confirmationMeta = {
+          status: confirmation.status,
+          confirmedAt: confirmation.confirmed_at,
+          confirmedBy: confirmation.confirmed_by,
+          expiresAt: confirmation.code_expires_at,
+          attempts: confirmation.attempts,
+          maxAttempts: confirmation.max_attempts,
+        };
+      }
     }
 
     let store: Record<string, unknown> | null = null;
@@ -166,6 +187,7 @@ export async function GET(_: Request, context: RouteContext) {
       storeLabel,
       confirmationCode,
       routeInfo,
+      confirmationMeta: (order as any)._confirmationMeta ?? null,
       lalamoveShareLink: lalamove.shareLink ?? null,
     });
   } catch (error) {

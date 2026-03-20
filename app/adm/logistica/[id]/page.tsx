@@ -509,6 +509,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const [mapKey, setMapKey] = useState(0);
 
   const didInitialFormLoadRef = useRef(false);
+  const [showDriverValidation, setShowDriverValidation] = useState(false);
   const didInitialLalamoveLoadRef = useRef(false);
   const didAutofillRef = useRef(false);
   const lastLalamoveMapCoordRef = useRef("");
@@ -724,8 +725,22 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         await fetch(`/api/lalamove/provider-order/${orderId}/driver/${resolvedDriverId}`, { method: "GET", cache: "no-store" });
       }
       await loadLalamoveShipment(true);
+
+      // AUTO-COMPLETE: se Lalamove concluiu a corrida, atualiza nosso status para ENTREGUE automaticamente
+      const lalamoveStatus = String(orderData?.data?.status ?? "").toUpperCase();
+      const isLalamoveCompleted = ["COMPLETED", "DELIVERED", "DELIVERED_FAILED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
+      const currentStatus = overview?.delivery_status;
+
+      if (isLalamoveCompleted && currentStatus !== "ENTREGUE") {
+        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliveryStatus: "ENTREGUE" }),
+        }).catch(() => {});
+        await loadAllData(true);
+      }
     } catch { /* sync silenciosa */ }
-  }, [routeData, shipment?.provider_order_id, shipment?.provider_driver_id, loadLalamoveShipment]);
+  }, [routeData, shipment?.provider_order_id, shipment?.provider_driver_id, loadLalamoveShipment, overview?.delivery_status, id, loadAllData]);
 
   useEffect(() => { loadAllData(false); }, [loadAllData]);
   useEffect(() => { const i = window.setInterval(() => loadLiveOnly(), 5000); return () => window.clearInterval(i); }, [loadLiveOnly]);
@@ -737,6 +752,19 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     const i = window.setInterval(() => syncLalamoveSilently(), 10000);
     return () => window.clearInterval(i);
   }, [isLalamove, routeData, shipment?.provider_order_id, syncLalamoveSilently]);
+
+  // Auto-complete para rota múltipla: detecta quando todas paradas foram confirmadas
+  useEffect(() => {
+    if (!isMultiStop || !routeStops.length) return;
+    const allConfirmed = routeStops.every(s => s.status === "CONFIRMADO");
+    if (allConfirmed && overview?.delivery_status !== "ENTREGUE") {
+      fetch(`/api/logistica/admin/order/${id}/set-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deliveryStatus: "ENTREGUE" }),
+      }).then(() => loadAllData(true)).catch(() => {});
+    }
+  }, [routeStops, isMultiStop, overview?.delivery_status, id, loadAllData]);
 
   useEffect(() => {
     if (!currentSelectedService) { setSelectedSpecialRequests([]); return; }
@@ -760,6 +788,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   }, [id, lastGeneratedCode]);
 
   const canStartDelivery = overview?.delivery_status !== "SAIU_PARA_ENTREGA" && overview?.delivery_status !== "ENTREGUE";
+  const driverNameValid = driverName.trim().length > 0;
+  const driverPhoneValid = driverPhone.trim().length > 0;
+  const driverDataValid = driverNameValid && driverPhoneValid;
   const internalLastLat = overview?.last_lat ?? null;
   const internalLastLng = overview?.last_lng ?? null;
   const internalLastAccuracy = overview?.last_accuracy ?? null;
@@ -838,7 +869,13 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   }
 
   async function handleStartDelivery() {
+    if (!driverDataValid) {
+      setShowDriverValidation(true);
+      showError("Preencha o nome e telefone do motorista antes de sair para entrega.");
+      return;
+    }
     try {
+      setShowDriverValidation(false);
       setStartingDelivery(true); clearMessage();
       const response = await fetch(`/api/logistica/admin/order/${id}/start-delivery`, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -885,6 +922,13 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   }
 
   async function handleSetStatus(status: DeliveryStatus) {
+    if (status === "SAIU_PARA_ENTREGA" && !driverDataValid) {
+      setShowDriverValidation(true);
+      showError("Preencha o nome e telefone do motorista antes de marcar como saiu para entrega.");
+      // Scroll to driver form
+      document.getElementById("driver-form-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
     try {
       setSettingStatus(status); clearMessage();
       const response = await fetch(`/api/logistica/admin/order/${id}/set-status`, {
@@ -1548,15 +1592,35 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
           ) : (
             <>
               {/* Motorista autônomo */}
-              <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
-                <div className="text-sm font-semibold text-slate-900">Dados do motorista</div>
+              <div id="driver-form-section" className={["rounded-[30px] border bg-white p-5 shadow-sm md:p-6", showDriverValidation && !driverDataValid ? "border-red-300" : "border-slate-200"].join(" ")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="text-sm font-semibold text-slate-900">Dados do motorista</div>
+                  {showDriverValidation && !driverDataValid ? (
+                    <div className="text-xs font-semibold text-red-600">⚠️ Obrigatório para sair para entrega</div>
+                  ) : null}
+                </div>
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <Input label="Nome do motorista" value={driverName} onChange={(v) => { setDriverName(v); setDriverNameDirty(true); }} placeholder="Ex.: Carlos Henrique" />
-                  <Input label="Telefone do motorista" value={driverPhone} onChange={(v) => { setDriverPhone(v); setDriverPhoneDirty(true); }} placeholder="Ex.: 31999999999" />
+                  <div>
+                    <Input label="Nome do motorista *" value={driverName} onChange={(v) => { setDriverName(v); setDriverNameDirty(true); if (v.trim()) setShowDriverValidation(false); }} placeholder="Ex.: Carlos Henrique" />
+                    {showDriverValidation && !driverNameValid ? (
+                      <div className="mt-1 text-xs font-semibold text-red-500">Nome do motorista é obrigatório</div>
+                    ) : null}
+                  </div>
+                  <div>
+                    <Input label="Telefone do motorista *" value={driverPhone} onChange={(v) => { setDriverPhone(v); setDriverPhoneDirty(true); if (v.trim()) setShowDriverValidation(false); }} placeholder="Ex.: 31999999999" />
+                    {showDriverValidation && !driverPhoneValid ? (
+                      <div className="mt-1 text-xs font-semibold text-red-500">Telefone do motorista é obrigatório</div>
+                    ) : null}
+                  </div>
                   <div className="md:col-span-2">
                     <Input label="Observações logísticas" value={deliveryNotes} onChange={(v) => { setDeliveryNotes(v); setDeliveryNotesDirty(true); }} placeholder="Ex.: portaria, condomínio, entrega urgente" />
                   </div>
                 </div>
+                {showDriverValidation && !driverDataValid ? (
+                  <div className="mt-4 rounded-[18px] border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    Preencha o <b>nome</b> e o <b>telefone</b> do motorista antes de sair para entrega.
+                  </div>
+                ) : null}
                 <div className="mt-6 flex flex-wrap gap-3">
                   <PrimaryActionButton onClick={handleSaveDriver} disabled={savingDriver}>{savingDriver ? "Salvando..." : "Salvar motorista"}</PrimaryActionButton>
                   <SecondaryActionButton onClick={handleMarkSeparation} disabled={markingSeparation}>{markingSeparation ? "Processando..." : "Marcar em separação"}</SecondaryActionButton>
@@ -1568,9 +1632,21 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                   <div className="text-sm font-semibold text-slate-900">Saída para entrega</div>
                   <div className="mt-1 text-sm text-slate-600">Ao iniciar a entrega, o sistema gera link de rastreio e código de confirmação.</div>
                   <div className="mt-6 flex flex-wrap gap-3">
-                    <PrimaryActionButton onClick={handleStartDelivery} disabled={startingDelivery || !canStartDelivery}>
+                    <PrimaryActionButton
+                      onClick={handleStartDelivery}
+                      disabled={startingDelivery || !canStartDelivery || !driverDataValid}>
                       {startingDelivery ? "Gerando..." : "Sair para entrega"}
                     </PrimaryActionButton>
+                    {!driverDataValid ? (
+                      <button type="button"
+                        onClick={() => {
+                          setShowDriverValidation(true);
+                          document.getElementById("driver-form-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }}
+                        className="inline-flex h-12 items-center justify-center rounded-[18px] border border-red-200 bg-red-50 px-5 text-sm font-semibold text-red-600 transition hover:bg-red-100">
+                        ⚠️ Preencher dados do motorista
+                      </button>
+                    ) : null}
                     <SecondaryActionButton onClick={handleRegenerateCode} disabled={regeneratingCode}>
                       {regeneratingCode ? "Gerando..." : "Regenerar código"}
                     </SecondaryActionButton>
@@ -1587,14 +1663,30 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                     </div>
                   </div>
 
-                  {/* Código */}
+                  {/* Código de confirmação — SOMENTE o cliente vê o código */}
                   <div className="mt-6">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Código de confirmação</div>
-                    <div className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-900">{lastGeneratedCode || "—"}</div>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <SecondaryActionButton disabled={!lastGeneratedCode} onClick={() => lastGeneratedCode && handleCopyText(lastGeneratedCode, "Código copiado.")}>Copiar código</SecondaryActionButton>
-                      <a href={customerWhatsAppUrl || "#"} target="_blank" rel="noreferrer"><SecondaryActionButton disabled={!lastGeneratedCode}>Enviar código ao cliente</SecondaryActionButton></a>
-                    </div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirmação de entrega</div>
+                    {overview?.confirmation_status === "CONFIRMADO" ? (
+                      <div className="mt-3 rounded-[18px] border border-green-200 bg-green-50 p-3">
+                        <div className="text-sm font-semibold text-green-700">
+                          ✅ Entrega confirmada por código
+                        </div>
+                        <div className="mt-1 text-xs text-slate-600">
+                          Confirmado em: {formatDateTime(overview?.confirmed_at)}
+                          {overview?.confirmed_by ? ` • por: ${overview.confirmed_by}` : ""}
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          O cliente inseriu o código de confirmação pessoalmente no portal.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-[18px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                        🔒 O código de confirmação é visível apenas para o cliente no portal dele — isso garante que somente quem recebeu o pedido pode confirmar a entrega.
+                        <div className="mt-2 text-xs text-slate-500">
+                          Status atual: {overview?.confirmation_status ? getConfirmationStatusLabel(overview.confirmation_status) : "Aguardando saída para entrega"}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -1711,11 +1803,25 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
               <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ajuste manual</div>
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  {(["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA", "ENTREGUE"] as DeliveryStatus[]).map((s) => (
-                    <SecondaryActionButton key={s} disabled={settingStatus === s} onClick={() => handleSetStatus(s)}>
-                      {settingStatus === s ? "Alterando..." : `Marcar: ${getDeliveryStatusLabel(s)}`}
-                    </SecondaryActionButton>
-                  ))}
+                  {/* ENTREGUE foi removido do ajuste manual — só via código de confirmação ou Lalamove automático */}
+                  {(["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA"] as DeliveryStatus[]).map((s) => {
+                    const needsDriver = s === "SAIU_PARA_ENTREGA" && !driverDataValid;
+                    return (
+                      <button key={s} type="button"
+                        disabled={settingStatus === s}
+                        onClick={() => handleSetStatus(s)}
+                        className={["inline-flex h-12 w-full items-center justify-center rounded-[18px] border px-5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                          needsDriver
+                            ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                            : "border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
+                        ].join(" ")}>
+                        {settingStatus === s ? "Alterando..." : needsDriver ? `⚠️ Marcar: ${getDeliveryStatusLabel(s)}` : `Marcar: ${getDeliveryStatusLabel(s)}`}
+                      </button>
+                    );
+                  })}
+                  <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                    🔒 <b>Entregue</b> só é marcado automaticamente — via código de confirmação do cliente (motorista autônomo) ou quando a Lalamove concluir a corrida.
+                  </div>
                 </div>
               </div>
             </div>
