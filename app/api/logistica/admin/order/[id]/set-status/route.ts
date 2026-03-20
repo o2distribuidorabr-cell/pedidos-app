@@ -29,6 +29,28 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    // Bloqueia qualquer alteração se o pedido já foi confirmado por código
+    const { data: confirmation } = await supabaseAdmin
+      .from("delivery_confirmations")
+      .select("status, confirmed_at, confirmed_by")
+      .eq("order_id", id)
+      .maybeSingle();
+
+    if (confirmation?.status === "CONFIRMADO") {
+      const when = confirmation.confirmed_at
+        ? new Date(confirmation.confirmed_at).toLocaleString("pt-BR")
+        : "data desconhecida";
+
+      return NextResponse.json(
+        {
+          ok: false,
+          message: `Este pedido foi confirmado por código de entrega em ${when}. O status não pode mais ser alterado manualmente.`,
+          blocked: true,
+        },
+        { status: 403 }
+      );
+    }
+
     const now = new Date().toISOString();
 
     await updateOrderDeliveryFields(supabaseAdmin, {
@@ -39,8 +61,6 @@ export async function POST(request: Request, context: RouteContext) {
         | "SAIU_PARA_ENTREGA"
         | "ENTREGUE"
         | "OCORRENCIA",
-      // Grava a data de entrega quando marcado como ENTREGUE
-      // Limpa a data quando voltando para status anterior
       deliveryFinishedAt: body.deliveryStatus === "ENTREGUE" ? now : null,
     });
 

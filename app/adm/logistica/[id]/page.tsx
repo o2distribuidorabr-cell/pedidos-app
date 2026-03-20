@@ -788,6 +788,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   }, [id, lastGeneratedCode]);
 
   const canStartDelivery = overview?.delivery_status !== "SAIU_PARA_ENTREGA" && overview?.delivery_status !== "ENTREGUE";
+  // Pedido bloqueado se já foi confirmado por código — nenhum status manual permitido
+  const isConfirmedByCode = overview?.confirmation_status === "CONFIRMADO";
+
   const driverNameValid = driverName.trim().length > 0;
   const driverPhoneValid = driverPhone.trim().length > 0;
   const driverDataValid = driverNameValid && driverPhoneValid;
@@ -1803,25 +1806,41 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
               <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ajuste manual</div>
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  {/* ENTREGUE foi removido do ajuste manual — só via código de confirmação ou Lalamove automático */}
-                  {(["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA"] as DeliveryStatus[]).map((s) => {
-                    const needsDriver = s === "SAIU_PARA_ENTREGA" && !driverDataValid;
-                    return (
-                      <button key={s} type="button"
-                        disabled={settingStatus === s}
-                        onClick={() => handleSetStatus(s)}
-                        className={["inline-flex h-12 w-full items-center justify-center rounded-[18px] border px-5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
-                          needsDriver
-                            ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
-                            : "border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
-                        ].join(" ")}>
-                        {settingStatus === s ? "Alterando..." : needsDriver ? `⚠️ Marcar: ${getDeliveryStatusLabel(s)}` : `Marcar: ${getDeliveryStatusLabel(s)}`}
-                      </button>
-                    );
-                  })}
-                  <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
-                    🔒 <b>Entregue</b> só é marcado automaticamente — via código de confirmação do cliente (motorista autônomo) ou quando a Lalamove concluir a corrida.
-                  </div>
+                  {/* Se já confirmado por código — mostra cadeado e bloqueia tudo */}
+                  {isConfirmedByCode ? (
+                    <div className="rounded-[18px] border border-green-200 bg-green-50 p-4">
+                      <div className="text-sm font-semibold text-green-700">
+                        🔒 Status bloqueado
+                      </div>
+                      <div className="mt-1 text-xs text-green-600">
+                        Este pedido foi confirmado por código de entrega em{" "}
+                        <b>{formatDateTime(overview?.confirmed_at)}</b>.
+                        O status não pode mais ser alterado manualmente.
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* ENTREGUE removido — só via código ou Lalamove automático */}
+                      {(["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA"] as DeliveryStatus[]).map((s) => {
+                        const needsDriver = s === "SAIU_PARA_ENTREGA" && !driverDataValid;
+                        return (
+                          <button key={s} type="button"
+                            disabled={settingStatus === s}
+                            onClick={() => handleSetStatus(s)}
+                            className={["inline-flex h-12 w-full items-center justify-center rounded-[18px] border px-5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                              needsDriver
+                                ? "border-red-200 bg-red-50 text-red-600 hover:bg-red-100"
+                                : "border-slate-200 bg-white text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] hover:bg-slate-50"
+                            ].join(" ")}>
+                            {settingStatus === s ? "Alterando..." : needsDriver ? `⚠️ Marcar: ${getDeliveryStatusLabel(s)}` : `Marcar: ${getDeliveryStatusLabel(s)}`}
+                          </button>
+                        );
+                      })}
+                      <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                        🔒 <b>Entregue</b> só é marcado automaticamente — via código de confirmação do cliente ou quando a Lalamove concluir a corrida.
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

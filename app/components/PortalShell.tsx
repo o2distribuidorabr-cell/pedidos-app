@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import BrandMark from "./BrandMark";
+import WhatsNewModal from "./WhatsNewModal";
 import { supabase } from "@/lib/supabaseClient";
 import {
   clonePermissions,
@@ -391,6 +392,9 @@ export default function PortalShell({
 
   return (
     <div className="min-h-screen bg-slate-50 overflow-x-hidden">
+      {/* Modal de novidades — apenas para franqueados, não aparece no admin */}
+      {!isAdminMode && !loading ? <WhatsNewModal /> : null}
+
       {menuOpen ? (
         <div
           className="fixed inset-0 z-40 bg-black/30"
