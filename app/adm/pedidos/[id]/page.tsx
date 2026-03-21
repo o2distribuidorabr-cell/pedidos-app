@@ -133,8 +133,8 @@ const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
 const LOG_OPTIONS: UnifiedLogisticStatus[] = [
   "RECEBIDO",
   "EM_SEPARACAO",
-  "SAIU_PARA_ENTREGA",
-  "ENTREGUE",
+  // "SAIU_PARA_ENTREGA" — só via botão de dispatch (modal de provedor)
+  // "ENTREGUE" — só via código de confirmação ou Lalamove automático
 ];
 const PAY_METHODS = ["PIX", "CARTAO", "BOLETO"] as const;
 const DELIVERY_OPTIONS = ["RETIRADA", "FRETE"] as const;
@@ -478,6 +478,10 @@ export default function AdmPedidoDetalhePage() {
   const [splitModalOpen, setSplitModalOpen] = useState(false);
   const [splitItems, setSplitItems] = useState<Record<string, SplitItemState>>({});
   const [splitNotes, setSplitNotes] = useState<string>("");
+
+  // Dispatch — modal de escolha de provedor (igual à expedição)
+  const [dispatchModalOpen, setDispatchModalOpen] = useState(false);
+  const [dispatchSaving, setDispatchSaving] = useState(false);
   const [splitCreating, setSplitCreating] = useState(false);
 
   const [focusDoc, setFocusDoc] = useState<FocusNfeDocRow | null>(null);
@@ -695,6 +699,45 @@ export default function AdmPedidoDetalhePage() {
     setSaving(true);
     setMsg("");
 
+    // Se está alterando logistic_status, passa pela API com validações de bloqueio
+    if (patch.logistic_status !== undefined) {
+      if (patch.logistic_status === "ENTREGUE") {
+        setMsg("O status 'Entregue' só pode ser marcado automaticamente via código de confirmação ou pela Lalamove.");
+        setSaving(false);
+        return;
+      }
+      if (patch.logistic_status === "SAIU_PARA_ENTREGA") {
+        setMsg("Use o botão 'Saída para entrega' para escolher o provedor (motorista autônomo ou Lalamove).");
+        setSaving(false);
+        return;
+      }
+      const response = await fetch(`/api/logistica/admin/order/${order.id}/set-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deliveryStatus: patch.logistic_status }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        setMsg(data.message || "Erro ao atualizar status.");
+        setSaving(false);
+        return;
+      }
+      // Recarrega o pedido para refletir o novo status
+      const { data: refreshed, error: rErr } = await supabase
+        .from("orders")
+        .select("id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,delivery_forecast,edited_by_admin,edited_at,original_items")
+        .eq("id", order.id)
+        .single();
+      if (!rErr && refreshed) {
+        const ord = refreshed as OrderRow;
+        setOrder(ord);
+        setOriginalItems((ord.original_items ?? null) as any);
+      }
+      setSaving(false);
+      return;
+    }
+
+    // Para outros campos, atualiza diretamente
     const { data, error } = await supabase
       .from("orders")
       .update(patch)
@@ -1049,6 +1092,26 @@ export default function AdmPedidoDetalhePage() {
   }
 
   const edited = !!order.edited_by_admin;
+  async function goToLogisticsWithProvider(provider: "autonomo" | "lalamove") {
+    if (!order) return;
+    setDispatchSaving(true);
+    try {
+      // Se ainda está como Recebido, avança para Em separação antes de abrir logística
+      if ((order.logistic_status ?? "RECEBIDO") === "RECEBIDO") {
+        await fetch(`/api/logistica/admin/order/${order.id}/set-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliveryStatus: "EM_SEPARACAO" }),
+        });
+        setOrder((prev) => prev ? { ...prev, logistic_status: "EM_SEPARACAO" } : prev);
+      }
+      setDispatchModalOpen(false);
+      router.push(`/adm/logistica/${order.id}?mode=dispatch&provider=${provider}`);
+    } finally {
+      setDispatchSaving(false);
+    }
+  }
+
   const logisticsHref = `/adm/logistica/${order.id}`;
   const fiscalHref = `/adm/emissao-fiscal/${order.id}`;
 
@@ -1985,17 +2048,23 @@ export default function AdmPedidoDetalhePage() {
                   label="Status logístico"
                   value={(order.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus}
                   onChange={(v) => updateOrder({ logistic_status: v as UnifiedLogisticStatus })}
-                  options={LOG_OPTIONS.map((s) => ({
-                    value: s,
-                    label:
-                      s === "RECEBIDO"
-                        ? "Recebido"
-                        : s === "EM_SEPARACAO"
-                        ? "Em separação"
-                        : s === "SAIU_PARA_ENTREGA"
-                        ? "Saiu para entrega"
-                        : "Entregue",
-                  }))}
+                  disabled={
+                    order.logistic_status === "SAIU_PARA_ENTREGA" ||
+                    order.logistic_status === "ENTREGUE"
+                  }
+                  options={[
+                    ...LOG_OPTIONS.map((s) => ({
+                      value: s,
+                      label: s === "RECEBIDO" ? "Recebido" : "Em separação",
+                    })),
+                    // Mostra o status atual se for SAIU ou ENTREGUE mas não permite mudar
+                    ...(order.logistic_status === "SAIU_PARA_ENTREGA"
+                      ? [{ value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" }]
+                      : []),
+                    ...(order.logistic_status === "ENTREGUE"
+                      ? [{ value: "ENTREGUE", label: "Entregue" }]
+                      : []),
+                  ]}
                 />
 
                 <div className="grid gap-2">
@@ -2015,21 +2084,20 @@ export default function AdmPedidoDetalhePage() {
                       Marcar em separação
                     </SecondaryActionButton>
 
-                    <SecondaryActionButton
-                      fullWidth
-                      onClick={() => updateOrder({ logistic_status: "SAIU_PARA_ENTREGA" })}
-                      disabled={saving || order.logistic_status === "SAIU_PARA_ENTREGA"}
-                    >
-                      Marcar saída
-                    </SecondaryActionButton>
+                    {order.delivery_mode !== "RETIRADA" && order.logistic_status !== "SAIU_PARA_ENTREGA" && order.logistic_status !== "ENTREGUE" ? (
+                      <SecondaryActionButton
+                        fullWidth
+                        onClick={() => setDispatchModalOpen(true)}
+                        disabled={saving}
+                      >
+                        Saída para entrega
+                      </SecondaryActionButton>
+                    ) : null}
 
-                    <SecondaryActionButton
-                      fullWidth
-                      onClick={() => updateOrder({ logistic_status: "ENTREGUE" })}
-                      disabled={saving || order.logistic_status === "ENTREGUE"}
-                    >
-                      Marcar entregue
-                    </SecondaryActionButton>
+                    {/* "Marcar entregue" removido — só via código de confirmação ou Lalamove automático */}
+                    <div className="rounded-[14px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                      🔒 <b>Entregue</b> só é marcado automaticamente — via código do cliente ou Lalamove.
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2134,6 +2202,49 @@ export default function AdmPedidoDetalhePage() {
           </div>
         ) : null}
       </div>
+
+      {/* Modal: escolha de provedor para saída para entrega */}
+      {dispatchModalOpen && order ? (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center"
+          onClick={() => { if (!dispatchSaving) setDispatchModalOpen(false); }}>
+          <div className="w-full max-w-2xl rounded-[30px] border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Saída para entrega</div>
+                <h3 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-slate-900">Escolha como este pedido será despachado</h3>
+                <div className="mt-2 text-sm text-slate-600"><b>Pedido:</b> {order.id}</div>
+              </div>
+              <button type="button" onClick={() => setDispatchModalOpen(false)} disabled={dispatchSaving}
+                className="rounded-[14px] border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <button type="button" disabled={dispatchSaving}
+                onClick={() => goToLogisticsWithProvider("autonomo")}
+                className="w-full rounded-[24px] border border-cyan-200 bg-cyan-50 p-4 text-left transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-50">
+                <div className="text-sm font-semibold text-slate-900">Motorista autônomo</div>
+                <div className="mt-1 text-sm text-slate-600">Abre a logística para preencher motorista, gerar link de rastreio e código de entrega.</div>
+              </button>
+              <button type="button" disabled={dispatchSaving}
+                onClick={() => goToLogisticsWithProvider("lalamove")}
+                className="w-full rounded-[24px] border border-violet-200 bg-violet-50 p-4 text-left transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50">
+                <div className="text-sm font-semibold text-slate-900">Chamar Lalamove</div>
+                <div className="mt-1 text-sm text-slate-600">Abre a logística preparada para cotação, chamada da corrida e acompanhamento.</div>
+              </button>
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button type="button" disabled={dispatchSaving} onClick={() => setDispatchModalOpen(false)}
+                className="inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {creditModalOpen ? (
         <div className="no-print fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCreditModal}>

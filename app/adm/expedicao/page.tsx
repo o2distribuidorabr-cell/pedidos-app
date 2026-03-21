@@ -94,13 +94,12 @@ type PackInfo = {
 };
 
 const LOGISTIC_OPTIONS: Array<{
-  value: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE";
+  value: "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA";
   label: string;
 }> = [
   { value: "RECEBIDO", label: "Recebido" },
   { value: "EM_SEPARACAO", label: "Em separação" },
   { value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" },
-  { value: "ENTREGUE", label: "Entregue" },
 ];
 
 const PACK_RULES: Array<{ match: string; info: PackInfo }> = [
@@ -320,6 +319,9 @@ export default function AdmExpedicaoPage() {
   const [dispatchOrder, setDispatchOrder] = useState<OrderRow | null>(null);
   const [dispatchSaving, setDispatchSaving] = useState(false);
 
+  // Geração de código de retirada
+  const [generatingPickupId, setGeneratingPickupId] = useState<string | null>(null);
+
   // Seleção múltipla para rota
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -406,14 +408,36 @@ export default function AdmExpedicaoPage() {
   async function updateOrder(orderId: string, patch: Partial<OrderRow>, successMessage?: string) {
     setSavingId(orderId);
     setMsg("");
+
+    // Se está alterando logistic_status, passa pela API que tem as validações de bloqueio
+    if (patch.logistic_status !== undefined) {
+      // ENTREGUE não pode ser marcado manualmente aqui
+      if (patch.logistic_status === "ENTREGUE") {
+        setMsg("O status 'Entregue' só pode ser marcado automaticamente via código de confirmação ou pela Lalamove.");
+        setSavingId(null);
+        return;
+      }
+      const response = await fetch(`/api/logistica/admin/order/${orderId}/set-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deliveryStatus: patch.logistic_status }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        setMsg(data.message || "Erro ao atualizar status.");
+        setSavingId(null);
+        return;
+      }
+      setOrders((prev) => prev.map((order) => order.id === orderId ? { ...order, ...patch } : order));
+      setSavingId(null);
+      if (successMessage) setMsg(successMessage);
+      return;
+    }
+
+    // Para outros campos (não logistic_status), atualiza diretamente
     const { error } = await supabase.from("orders").update(patch).eq("id", orderId);
     if (error) { setMsg(error.message); setSavingId(null); return; }
-    if (patch.logistic_status === "ENTREGUE") {
-      setOrders((prev) => prev.filter((o) => o.id !== orderId));
-      setItemAggMap((prev) => { const copy = { ...prev }; delete copy[orderId]; return copy; });
-    } else {
-      setOrders((prev) => prev.map((order) => order.id === orderId ? { ...order, ...patch } : order));
-    }
+    setOrders((prev) => prev.map((order) => order.id === orderId ? { ...order, ...patch } : order));
     setSavingId(null);
     if (successMessage) setMsg(successMessage);
   }
@@ -422,6 +446,33 @@ export default function AdmExpedicaoPage() {
     if (dispatchSaving) return;
     setDispatchChooserOpen(false);
     setDispatchOrder(null);
+  }
+
+  async function handleGeneratePickupCode(order: OrderRow) {
+    setGeneratingPickupId(order.id);
+    setMsg("");
+    try {
+      // Marca em separação — a API já gera o código de retirada automaticamente
+      const response = await fetch(`/api/logistica/admin/order/${order.id}/mark-separation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        setMsg(data.message || "Erro ao gerar código de retirada.");
+        return;
+      }
+      // Atualiza o status localmente
+      setOrders((prev) => prev.map((o) =>
+        o.id === order.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
+      ));
+      setMsg(`Código de retirada gerado! O franqueado já pode confirmar no portal.`);
+    } catch {
+      setMsg("Erro ao gerar código de retirada.");
+    } finally {
+      setGeneratingPickupId(null);
+    }
   }
 
   function openDispatchChooser(order: OrderRow) {
@@ -809,17 +860,14 @@ export default function AdmExpedicaoPage() {
 
                 {!selectionMode ? (
                   <>
-                    <div className="mt-4 grid gap-3">
-                      <Select label="Status da expedição" value={currentStatus}
-                        onChange={(v) => updateOrder(order.id, { logistic_status: v as OrderRow["logistic_status"] }, "Status logístico atualizado.")}
-                        options={LOGISTIC_OPTIONS.filter((o) => o.value !== "ENTREGUE")} />
+                    <div className="mt-4">
                       <div>
                         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">Previsão de entrega</label>
                         <input type="date" value={order.delivery_forecast ?? ""}
                           onChange={(e) => updateOrder(order.id, { delivery_forecast: e.target.value || null }, "Previsão atualizada.")}
                           disabled={saving}
                           className="h-11 w-full rounded-[18px] border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-slate-300 disabled:bg-slate-50" />
-                        <div className="mt-2 text-xs text-slate-500">Atual: {fmtDate(order.delivery_forecast)}</div>
+                        <div className="mt-1 text-xs text-slate-500">Atual: {fmtDate(order.delivery_forecast)}</div>
                       </div>
                     </div>
 
@@ -828,12 +876,26 @@ export default function AdmExpedicaoPage() {
                       <SecondaryActionButton fullWidth disabled={saving || printing} onClick={() => handlePrintOrder(order)}>{printing ? "Preparando..." : "Imprimir"}</SecondaryActionButton>
                       <SecondaryActionButton fullWidth disabled={saving} onClick={() => updateOrder(order.id, { logistic_status: "RECEBIDO" }, "Marcado como recebido.")}>Recebido</SecondaryActionButton>
                       <PrimaryActionButton tone="amber" fullWidth disabled={saving} onClick={() => updateOrder(order.id, { logistic_status: "EM_SEPARACAO" }, "Em separação.")}>Em separação</PrimaryActionButton>
-                      <PrimaryActionButton fullWidth disabled={saving || order.delivery_mode === "RETIRADA"} onClick={() => openDispatchChooser(order)}>Sair para entrega</PrimaryActionButton>
-                      <PrimaryActionButton tone="green" fullWidth disabled={saving} onClick={() => updateOrder(order.id, { logistic_status: "ENTREGUE" }, "Marcado como entregue.")}>Entregue</PrimaryActionButton>
+
+                      {order.delivery_mode === "RETIRADA" ? (
+                        /* RETIRADA: botão para gerar código de retirada */
+                        <PrimaryActionButton tone="cyan" fullWidth
+                          disabled={saving || generatingPickupId === order.id || order.logistic_status === "EM_SEPARACAO"}
+                          onClick={() => handleGeneratePickupCode(order)}>
+                          {generatingPickupId === order.id ? "Gerando..." : order.logistic_status === "EM_SEPARACAO" ? "Código gerado ✓" : "Gerar código retirada"}
+                        </PrimaryActionButton>
+                      ) : (
+                        /* FRETE: botão de saída para entrega com modal de provedor */
+                        <PrimaryActionButton fullWidth disabled={saving} onClick={() => openDispatchChooser(order)}>
+                          Sair para entrega
+                        </PrimaryActionButton>
+                      )}
                     </div>
 
-                    {order.delivery_mode === "RETIRADA" ? (
-                      <div className="mt-3 text-xs text-slate-500">Pedido em retirada: a ação de saída para entrega não se aplica.</div>
+                    {order.delivery_mode === "RETIRADA" && order.logistic_status === "EM_SEPARACAO" ? (
+                      <div className="mt-3 rounded-[14px] border border-cyan-100 bg-cyan-50 p-3 text-xs text-cyan-700">
+                        🔐 Código de retirada gerado — o franqueado já pode confirmar em <b>Pedidos → Acompanhar entrega</b> no portal. Quando confirmar, o pedido sairá automaticamente desta lista.
+                      </div>
                     ) : null}
 
                     {order.notes ? (

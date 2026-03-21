@@ -524,6 +524,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
   const isLalamove = selectedProvider === "lalamove";
   const isMultiStop = !!routeId && routeStops.length > 1;
+  const isPickup = (order as any)?.delivery_mode === "RETIRADA";
 
   const showSuccess = (text: string) => { setMessage(text); setMessageTone("green"); };
   const showError = (text: string) => { setMessage(text); setMessageTone("red"); };
@@ -726,18 +727,59 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       }
       await loadLalamoveShipment(true);
 
-      // AUTO-COMPLETE: se Lalamove concluiu a corrida, atualiza nosso status para ENTREGUE automaticamente
+      // Processa status da Lalamove e atualiza nosso status conforme as regras:
       const lalamoveStatus = String(orderData?.data?.status ?? "").toUpperCase();
-      const isLalamoveCompleted = ["COMPLETED", "DELIVERED", "DELIVERED_FAILED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
-      const currentStatus = overview?.delivery_status;
+      const currentDeliveryStatus = overview?.delivery_status;
 
-      if (isLalamoveCompleted && currentStatus !== "ENTREGUE") {
+      // Regra 1: Lalamove COMPLETED → marca como ENTREGUE automaticamente
+      const isLalamoveCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
+      if (isLalamoveCompleted && currentDeliveryStatus !== "ENTREGUE") {
         await fetch(`/api/logistica/admin/order/${id}/set-status`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ deliveryStatus: "ENTREGUE" }),
         }).catch(() => {});
         await loadAllData(true);
+        return;
+      }
+
+      // Regra 2: Lalamove CANCELED + nosso status SAIU_PARA_ENTREGA → volta para EM_SEPARACAO
+      const isLalamoveCanceled = ["CANCEL", "EXPIRED", "REJECTED"].some(s => lalamoveStatus.includes(s));
+      if (isLalamoveCanceled && currentDeliveryStatus === "SAIU_PARA_ENTREGA") {
+        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliveryStatus: "EM_SEPARACAO" }),
+        }).catch(() => {});
+        await loadAllData(true);
+        return;
+      }
+
+      // Regra 3: só marca SAIU_PARA_ENTREGA se Lalamove estiver PICKED_UP ou ON_GOING
+      // Se nosso status já é SAIU_PARA_ENTREGA mas Lalamove ainda não coletou, reverte para EM_SEPARACAO
+      const isLalamovePickedUp = ["PICKED_UP", "ON_GOING", "IN_TRANSIT", "ONGOING"].some(s => lalamoveStatus.includes(s));
+      const isLalamovePending = ["ASSIGNING", "MATCHING", "PENDING", "QUEUE", "ACCEPTED", "ASSIGNED"].some(s => lalamoveStatus.includes(s));
+
+      if (isLalamovePending && currentDeliveryStatus === "SAIU_PARA_ENTREGA") {
+        // Lalamove ainda não coletou — volta para EM_SEPARACAO
+        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliveryStatus: "EM_SEPARACAO" }),
+        }).catch(() => {});
+        await loadAllData(true);
+        return;
+      }
+
+      // Se Lalamove coletou e nosso status ainda é EM_SEPARACAO → avança para SAIU_PARA_ENTREGA
+      if (isLalamovePickedUp && currentDeliveryStatus === "EM_SEPARACAO") {
+        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliveryStatus: "SAIU_PARA_ENTREGA" }),
+        }).catch(() => {});
+        await loadAllData(true);
+        return;
       }
     } catch { /* sync silenciosa */ }
   }, [routeData, shipment?.provider_order_id, shipment?.provider_driver_id, loadLalamoveShipment, overview?.delivery_status, id, loadAllData]);
@@ -790,6 +832,20 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const canStartDelivery = overview?.delivery_status !== "SAIU_PARA_ENTREGA" && overview?.delivery_status !== "ENTREGUE";
   // Pedido bloqueado se já foi confirmado por código — nenhum status manual permitido
   const isConfirmedByCode = overview?.confirmation_status === "CONFIRMADO";
+
+  // Pedido bloqueado se Lalamove concluiu a corrida
+  const lalamoveCurrentStatus = String(
+    (isMultiStop ? routeData?.lalamove_status : shipment?.provider_status) ?? ""
+  ).toUpperCase();
+  const isLalamoveCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(
+    (s) => lalamoveCurrentStatus.includes(s)
+  );
+  const isLalamoveCanceled = ["CANCEL", "EXPIRED", "REJECTED"].some(
+    (s) => lalamoveCurrentStatus.includes(s)
+  );
+
+  // Status travado = confirmado por código OU Lalamove concluiu
+  const isStatusLocked = isConfirmedByCode || isLalamoveCompleted;
 
   const driverNameValid = driverName.trim().length > 0;
   const driverPhoneValid = driverPhone.trim().length > 0;
@@ -928,12 +984,25 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     if (status === "SAIU_PARA_ENTREGA" && !driverDataValid) {
       setShowDriverValidation(true);
       showError("Preencha o nome e telefone do motorista antes de marcar como saiu para entrega.");
-      // Scroll to driver form
       document.getElementById("driver-form-section")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     try {
       setSettingStatus(status); clearMessage();
+
+      // Para pedido de RETIRADA marcando EM_SEPARACAO: usa mark-separation para gerar o código automaticamente
+      if (isPickup && status === "EM_SEPARACAO") {
+        const response = await fetch(`/api/logistica/admin/order/${id}/mark-separation`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.message || "Erro.");
+        await loadAllData(true);
+        showSuccess("Pedido em separação. Código de retirada gerado — o franqueado pode confirmar no portal.");
+        return;
+      }
+
       const response = await fetch(`/api/logistica/admin/order/${id}/set-status`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deliveryStatus: status }),
@@ -1553,7 +1622,8 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         </div>
       ) : null}
 
-      {renderProviderSelectorCard()}
+      {/* Para retirada, não mostra seletor de provedor — fluxo é diferente */}
+      {!isPickup ? renderProviderSelectorCard() : null}
 
       {/* NOVO: card de paradas da rota múltipla */}
       {renderRouteStopsCard()}
@@ -1586,7 +1656,80 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-6">
-          {isLalamove ? (
+          {isPickup ? (
+            /* RETIRADA: card informativo — confirmação é feita pelo cliente no portal */
+            <div className="rounded-[30px] border border-amber-200 bg-amber-50 p-5 shadow-sm md:p-6">
+              <div className="flex items-start gap-4">
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-amber-100 text-2xl">🏪</div>
+                <div>
+                  <div className="text-base font-semibold text-slate-900">Pedido de retirada</div>
+                  <div className="mt-1 text-sm text-slate-600">
+                    Este pedido não possui entrega — o franqueado retira pessoalmente no centro de distribuição.
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                {/* Status atual */}
+                <div className="rounded-[20px] border border-amber-200 bg-white p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status atual</div>
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className={["h-3 w-3 rounded-full", overview?.delivery_status === "ENTREGUE" ? "bg-green-500" : "bg-amber-400"].join(" ")} />
+                    <span className="text-sm font-semibold text-slate-900">
+                      {getDeliveryStatusLabel(overview?.delivery_status ?? "PENDENTE")}
+                    </span>
+                  </div>
+                  {overview?.delivery_finished_at ? (
+                    <div className="mt-2 text-xs text-slate-500">
+                      Confirmado em: <b>{formatDateTime(overview.delivery_finished_at)}</b>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Código de retirada */}
+                <div className="rounded-[20px] border border-amber-200 bg-white p-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Código de retirada</div>
+                  {overview?.confirmation_status === "CONFIRMADO" ? (
+                    <div className="mt-3">
+                      <div className="rounded-[14px] border border-green-200 bg-green-50 p-3">
+                        <div className="text-sm font-semibold text-green-700">✅ Retirada confirmada por código</div>
+                        <div className="mt-1 text-xs text-green-600">
+                          Confirmado em: <b>{formatDateTime(overview?.confirmed_at)}</b>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          O franqueado inseriu o código de retirada no portal — prova de recebimento registrada.
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3">
+                      <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                        🔒 O código de retirada é gerado automaticamente quando o pedido entra em separação
+                        e fica visível <b>somente para o franqueado</b> no portal dele em{" "}
+                        <b>Pedidos → Acompanhar entrega</b>.
+                      </div>
+                      <div className="mt-3 text-xs text-slate-500">
+                        Status do código: <b>{getConfirmationStatusLabel(overview?.confirmation_status ?? null)}</b>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Ação — marcar em separação */}
+                {overview?.delivery_status === "PENDENTE" || overview?.delivery_status === null ? (
+                  <div className="rounded-[20px] border border-slate-200 bg-white p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">Ação</div>
+                    <SecondaryActionButton fullWidth onClick={handleMarkSeparation} disabled={markingSeparation}>
+                      {markingSeparation ? "Processando..." : "Marcar em separação e gerar código"}
+                    </SecondaryActionButton>
+                    <div className="mt-2 text-xs text-slate-500">
+                      Ao marcar em separação, o código de retirada será gerado automaticamente e o franqueado poderá vê-lo no portal.
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : isLalamove ? (
             <>
               {renderLalamoveRequestCard()}
               {renderLalamoveShipmentCard()}
@@ -1806,22 +1949,40 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
               <div className="mt-4 rounded-[22px] border border-slate-200 bg-white p-4">
                 <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Ajuste manual</div>
                 <div className="mt-4 grid grid-cols-1 gap-3">
-                  {/* Se já confirmado por código — mostra cadeado e bloqueia tudo */}
-                  {isConfirmedByCode ? (
-                    <div className="rounded-[18px] border border-green-200 bg-green-50 p-4">
-                      <div className="text-sm font-semibold text-green-700">
+                  {/* Retirada — aviso no topo, ajuste limitado a Recebido/Em Separação */}
+                  {isPickup ? (
+                    <div className="rounded-[18px] border border-amber-100 bg-amber-50 p-3 text-xs text-amber-700">
+                      🏪 Pedido de retirada — apenas <b>Recebido</b> e <b>Em separação</b> podem ser ajustados. A confirmação é feita pelo franqueado no portal via código.
+                    </div>
+                  ) : null}
+
+                  {/* Status travado — confirmado por código ou Lalamove concluída */}
+                  {isStatusLocked ? (
+                    <div className={["rounded-[18px] border p-4", isLalamoveCompleted ? "border-violet-200 bg-violet-50" : "border-green-200 bg-green-50"].join(" ")}>
+                      <div className={["text-sm font-semibold", isLalamoveCompleted ? "text-violet-700" : "text-green-700"].join(" ")}>
                         🔒 Status bloqueado
                       </div>
-                      <div className="mt-1 text-xs text-green-600">
-                        Este pedido foi confirmado por código de entrega em{" "}
-                        <b>{formatDateTime(overview?.confirmed_at)}</b>.
-                        O status não pode mais ser alterado manualmente.
+                      <div className={["mt-1 text-xs", isLalamoveCompleted ? "text-violet-600" : "text-green-600"].join(" ")}>
+                        {isLalamoveCompleted
+                          ? `A corrida foi concluída pela Lalamove. O status não pode mais ser alterado manualmente.`
+                          : `Este pedido foi confirmado por código de entrega em ${formatDateTime(overview?.confirmed_at)}. O status não pode mais ser alterado manualmente.`
+                        }
+                      </div>
+                    </div>
+                  ) : isLalamoveCanceled && isLalamove ? (
+                    <div className="rounded-[18px] border border-amber-200 bg-amber-50 p-4">
+                      <div className="text-sm font-semibold text-amber-700">⚠️ Corrida cancelada</div>
+                      <div className="mt-1 text-xs text-amber-600">
+                        A corrida Lalamove foi cancelada. O pedido voltou automaticamente para Em separação.
                       </div>
                     </div>
                   ) : (
                     <>
-                      {/* ENTREGUE removido — só via código ou Lalamove automático */}
-                      {(["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA"] as DeliveryStatus[]).map((s) => {
+                      {/* Para retirada: só mostra Recebido e Em Separação. Para entrega: mostra até Saiu para Entrega */}
+                      {(isPickup
+                        ? ["PENDENTE", "EM_SEPARACAO"] as DeliveryStatus[]
+                        : ["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA"] as DeliveryStatus[]
+                      ).map((s) => {
                         const needsDriver = s === "SAIU_PARA_ENTREGA" && !driverDataValid;
                         return (
                           <button key={s} type="button"
@@ -1837,7 +1998,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                         );
                       })}
                       <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
-                        🔒 <b>Entregue</b> só é marcado automaticamente — via código de confirmação do cliente ou quando a Lalamove concluir a corrida.
+                        {isPickup
+                          ? "🔒 Retirada confirmada pelo franqueado no portal via código gerado automaticamente."
+                          : "🔒 Entregue só é marcado automaticamente — via código de confirmação do cliente ou Lalamove."}
                       </div>
                     </>
                   )}

@@ -420,10 +420,10 @@ export default function PedidoEntregaPage({ params }: Props) {
               </div>
             </div>
 
-            {/* Card de confirmação — diferente para retirada e entrega */}
+            {/* Card de confirmação — diferente para retirada, entrega e rota múltipla */}
             <div className="w-full max-w-sm rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm">
               {isPickup ? (
-                /* RETIRADA: franqueado digita o código para confirmar */
+                /* RETIRADA: mostra código + campo para confirmar */
                 isPickupConfirmed ? (
                   <div className="space-y-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Retirada confirmada</div>
@@ -435,7 +435,14 @@ export default function PedidoEntregaPage({ params }: Props) {
                 ) : (
                   <div className="space-y-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirmar retirada</div>
-                    <div className="text-sm text-slate-600">Digite o código que foi informado pela distribuidora para confirmar a retirada do seu pedido.</div>
+                    {/* Mostra o código para o franqueado saber qual digitar */}
+                    {confirmationCode ? (
+                      <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-3 text-center">
+                        <div className="text-xs text-slate-500 mb-1">Seu código de retirada</div>
+                        <div className="text-3xl font-semibold tracking-[0.15em] text-slate-900">{confirmationCode}</div>
+                      </div>
+                    ) : null}
+                    <div className="text-sm text-slate-600">Digite o código acima no campo abaixo para confirmar a retirada.</div>
                     <input
                       type="text"
                       value={pickupCode}
@@ -456,41 +463,43 @@ export default function PedidoEntregaPage({ params }: Props) {
                   </div>
                 )
               ) : isMultiStop ? (
-                /* ROTA MÚLTIPLA */
+                /* ROTA MÚLTIPLA: mostra código para passar ao motorista */
                 <div className="space-y-3">
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Código da parada {routeInfo!.stopOrder}
                   </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-sm text-slate-600">Código</span>
-                    <span className="text-2xl font-semibold tracking-[-0.04em] text-slate-900">{confirmationCode || "—"}</span>
+                  <div className="text-center py-2">
+                    <div className="text-4xl font-semibold tracking-[0.1em] text-slate-900">{confirmationCode || "—"}</div>
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-slate-600">Status</span>
                     <span className="text-sm font-semibold text-slate-900">{stopConfirmed ? "✅ Confirmado" : "Aguardando"}</span>
                   </div>
                   <div className="h-px bg-slate-200" />
-                  <div className="text-xs text-slate-500">
-                    {stopConfirmed ? "Esta parada já foi confirmada." : "Informe este código ao motorista no momento do recebimento."}
+                  <div className="rounded-[12px] bg-cyan-50 border border-cyan-100 p-2 text-xs text-cyan-700 text-center">
+                    {stopConfirmed ? "Esta parada já foi confirmada." : "📱 Mostre este código ao motorista quando ele chegar."}
+                  </div>
+                </div>
+              ) : isDeliveryConfirmed ? (
+                /* ENTREGA CONFIRMADA */
+                <div className="space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Entrega confirmada</div>
+                  <div className="rounded-[18px] border border-green-200 bg-green-50 p-3 text-sm text-green-700">
+                    ✅ Entrega confirmada em {formatDateTime(confirmationMeta?.confirmedAt)}
                   </div>
                 </div>
               ) : (
-                /* ENTREGA (FRETE): só mostra se foi confirmado — nunca mostra o código */
+                /* ENTREGA EM ANDAMENTO: mostra código para o cliente mostrar ao motorista */
                 <div className="space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirmação da entrega</div>
-                  {isDeliveryConfirmed ? (
-                    <div className="rounded-[18px] border border-green-200 bg-green-50 p-3 text-sm text-green-700">
-                      ✅ Entrega confirmada em {formatDateTime(confirmationMeta?.confirmedAt)}
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-sm text-slate-600">Quando o entregador chegar, mostre o código que aparece na seção abaixo para que ele confirme a entrega.</div>
-                      <div className="h-px bg-slate-200" />
-                      <div className="text-xs text-slate-500">
-                        Status: {getConfirmationLabel(overview?.confirmation_status ?? null)}
-                      </div>
-                    </>
-                  )}
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Código de confirmação</div>
+                  <div className="text-center py-2">
+                    <div className="text-4xl font-semibold tracking-[0.1em] text-slate-900">{confirmationCode || "—"}</div>
+                  </div>
+                  <div className="h-px bg-slate-200" />
+                  <div className="rounded-[12px] bg-cyan-50 border border-cyan-100 p-2 text-xs text-cyan-700 text-center">
+                    📱 Quando o motorista chegar, mostre este código para que ele confirme a entrega.
+                  </div>
+                  {codeExpiresAt ? <div className="text-xs text-slate-400 text-center">Expira em: {formatDateTime(codeExpiresAt)}</div> : null}
                 </div>
               )}
             </div>
@@ -638,36 +647,34 @@ export default function PedidoEntregaPage({ params }: Props) {
                   </div>
                 </div>
 
-                {/* Código de confirmação na sidebar — diferente para retirada e entrega */}
-                {isPickup ? (
-                  isPickupConfirmed ? (
-                    <div className="mt-4 rounded-[22px] border border-green-200 bg-green-50 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-green-600">Retirada confirmada</div>
-                      <div className="mt-2 text-sm font-semibold text-green-700">✅ Confirmado em {formatDateTime(confirmationMeta?.confirmedAt ?? overview?.delivery_finished_at)}</div>
-                    </div>
-                  ) : (
-                    <div className="mt-4 rounded-[22px] border border-cyan-200 bg-cyan-50 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-cyan-600">Confirmar retirada</div>
-                      <div className="mt-2 text-sm text-slate-600">Digite o código acima para confirmar que retirou o pedido.</div>
-                    </div>
-                  )
-                ) : isMultiStop ? (
-                  <div className="mt-4 rounded-[22px] border border-cyan-200 bg-cyan-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-cyan-600">Código — Parada {routeInfo!.stopOrder}</div>
-                    <div className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-slate-900">{confirmationCode || "—"}</div>
-                    <div className="mt-2 text-sm text-slate-600">{stopConfirmed ? "✅ Parada já confirmada." : "Mostre ao motorista para concluir."}</div>
-                  </div>
-                ) : isDeliveryConfirmed ? (
+                {/* Código na sidebar */}
+                {(isPickupConfirmed || isDeliveryConfirmed) ? (
                   <div className="mt-4 rounded-[22px] border border-green-200 bg-green-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-green-600">Entrega confirmada</div>
-                    <div className="mt-2 text-sm font-semibold text-green-700">✅ Confirmado em {formatDateTime(confirmationMeta?.confirmedAt)}</div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-green-600">
+                      {isPickup ? "Retirada confirmada" : "Entrega confirmada"}
+                    </div>
+                    <div className="mt-2 text-sm font-semibold text-green-700">
+                      ✅ Confirmado em {formatDateTime(
+                        isPickup
+                          ? (confirmationMeta?.confirmedAt ?? overview?.delivery_finished_at)
+                          : confirmationMeta?.confirmedAt
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div className="mt-4 rounded-[22px] border border-cyan-200 bg-cyan-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-cyan-600">Código de confirmação</div>
-                    <div className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-slate-900">{confirmationCode || "—"}</div>
-                    <div className="mt-2 text-sm text-slate-600">Mostre este código ao motorista para concluir a entrega.</div>
-                    {codeExpiresAt ? <div className="mt-1 text-xs text-slate-500">Expira em: {formatDateTime(codeExpiresAt)}</div> : null}
+                    <div className="text-xs font-semibold uppercase tracking-wide text-cyan-600">
+                      {isPickup ? "Código de retirada" : isMultiStop ? `Código — Parada ${routeInfo!.stopOrder}` : "Código de confirmação"}
+                    </div>
+                    <div className="mt-3 text-4xl font-semibold tracking-[0.05em] text-slate-900 text-center">
+                      {confirmationCode || "—"}
+                    </div>
+                    <div className="mt-3 rounded-[10px] bg-white border border-cyan-100 p-2 text-xs text-cyan-700 text-center">
+                      {isPickup
+                        ? "Use o código acima para confirmar sua retirada."
+                        : "📱 Mostre ao motorista quando ele chegar para confirmar a entrega."}
+                    </div>
+                    {codeExpiresAt ? <div className="mt-2 text-xs text-slate-400 text-center">Expira em: {formatDateTime(codeExpiresAt)}</div> : null}
                   </div>
                 )}
 

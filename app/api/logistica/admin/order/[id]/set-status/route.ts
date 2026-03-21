@@ -12,17 +12,24 @@ type BodyPayload = {
   deliveryStatus?: string;
 };
 
+// Mapeia o status logístico da tabela orders para o delivery_status interno
+function mapLogisticToDelivery(status: string): "PENDENTE" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE" | "OCORRENCIA" | null {
+  if (status === "RECEBIDO" || status === "PENDENTE") return "PENDENTE";
+  if (status === "EM_SEPARACAO") return "EM_SEPARACAO";
+  if (status === "SAIU_PARA_ENTREGA") return "SAIU_PARA_ENTREGA";
+  if (status === "ENTREGUE") return "ENTREGUE";
+  if (status === "OCORRENCIA") return "OCORRENCIA";
+  return null;
+}
+
 export async function POST(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = (await request.json()) as BodyPayload;
 
-    if (
-      !body.deliveryStatus ||
-      !["PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA", "ENTREGUE", "OCORRENCIA"].includes(
-        body.deliveryStatus
-      )
-    ) {
+    const validStatuses = ["RECEBIDO", "PENDENTE", "EM_SEPARACAO", "SAIU_PARA_ENTREGA", "ENTREGUE", "OCORRENCIA"];
+
+    if (!body.deliveryStatus || !validStatuses.includes(body.deliveryStatus)) {
       return NextResponse.json(
         { ok: false, message: "Status logístico inválido." },
         { status: 400 }
@@ -51,17 +58,44 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    // Bloqueia alteração se a Lalamove já marcou a corrida como concluída
+    const { data: shipment } = await supabaseAdmin
+      .from("order_shipments")
+      .select("provider_status")
+      .eq("local_order_id", id)
+      .eq("provider", "LALAMOVE")
+      .maybeSingle();
+
+    if (shipment?.provider_status) {
+      const lalamoveStatus = String(shipment.provider_status).toUpperCase();
+      const isCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
+
+      if (isCompleted) {
+        return NextResponse.json(
+          {
+            ok: false,
+            message: `Esta corrida foi concluída pela Lalamove (status: ${shipment.provider_status}). O status não pode mais ser alterado manualmente.`,
+            blocked: true,
+          },
+          { status: 403 }
+        );
+      }
+    }
+
+    const deliveryStatus = mapLogisticToDelivery(body.deliveryStatus);
+    if (!deliveryStatus) {
+      return NextResponse.json(
+        { ok: false, message: "Status inválido." },
+        { status: 400 }
+      );
+    }
+
     const now = new Date().toISOString();
 
     await updateOrderDeliveryFields(supabaseAdmin, {
       orderId: id,
-      deliveryStatus: body.deliveryStatus as
-        | "PENDENTE"
-        | "EM_SEPARACAO"
-        | "SAIU_PARA_ENTREGA"
-        | "ENTREGUE"
-        | "OCORRENCIA",
-      deliveryFinishedAt: body.deliveryStatus === "ENTREGUE" ? now : null,
+      deliveryStatus,
+      deliveryFinishedAt: deliveryStatus === "ENTREGUE" ? now : null,
     });
 
     return NextResponse.json({

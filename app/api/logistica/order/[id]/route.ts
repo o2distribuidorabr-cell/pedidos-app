@@ -112,14 +112,9 @@ export async function GET(_: Request, context: RouteContext) {
 
       const deliveryMode = (order as any).delivery_mode ?? null;
 
-      if (deliveryMode === "RETIRADA") {
-        // Retirada: franqueado precisa ver o código para confirmar no portal
-        confirmationCode = confirmation?.confirmation_code ?? null;
-      } else {
-        // Entrega (frete): código é SOMENTE do cliente — API nunca retorna o valor
-        // Apenas retorna metadados para o admin saber que foi confirmado
-        confirmationCode = null;
-      }
+      // Sempre retorna o código para o cliente — esta API só é chamada pelo portal do franqueado
+      // O admin não vê o código porque a página de logística do admin usa uma API diferente
+      confirmationCode = confirmation?.confirmation_code ?? null;
 
       // Retorna metadados da confirmação (sem o código em si para entrega)
       if (confirmation) {

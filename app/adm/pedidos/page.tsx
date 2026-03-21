@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/components/ui";
 
 type PaymentMethod = "PIX" | "CARTAO" | "BOLETO";
+type DeliveryProvider = "autonomo" | "lalamove";
 type DeliveryMode = "RETIRADA" | "FRETE";
 type UnifiedLogisticStatus =
   | "RECEBIDO"
@@ -40,8 +41,7 @@ const STATUS_OPTIONS = ["draft", "submitted", "approved", "rejected"] as const;
 const LOG_OPTIONS: UnifiedLogisticStatus[] = [
   "RECEBIDO",
   "EM_SEPARACAO",
-  "SAIU_PARA_ENTREGA",
-  "ENTREGUE",
+  // "SAIU_PARA_ENTREGA" e "ENTREGUE" removidos — só via botão de dispatch ou automático
 ];
 
 type TabKey = "OPEN" | "DELIVERED";
@@ -240,11 +240,28 @@ function InfoLine({
   );
 }
 
+function ProviderChoiceCard({ title, subtitle, accent, onClick, disabled }: {
+  title: string; subtitle: string; accent: "cyan" | "violet"; onClick?: () => void; disabled?: boolean;
+}) {
+  const toneClass = accent === "violet"
+    ? "border-violet-200 bg-violet-50 hover:bg-violet-100"
+    : "border-cyan-200 bg-cyan-50 hover:bg-cyan-100";
+  return (
+    <button type="button" onClick={onClick} disabled={disabled}
+      className={["w-full rounded-[24px] border p-4 text-left transition", toneClass, "disabled:cursor-not-allowed disabled:opacity-50"].join(" ")}>
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      <div className="mt-1 text-sm text-slate-600">{subtitle}</div>
+    </button>
+  );
+}
+
 export default function AdmPedidosPage() {
   const router = useRouter();
 
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dispatchOrder, setDispatchOrder] = useState<OrderRow | null>(null);
+  const [dispatchSaving, setDispatchSaving] = useState(false);
   const [q, setQ] = useState("");
 
   const [tab, setTab] = useState<TabKey>("OPEN");
@@ -343,17 +360,65 @@ export default function AdmPedidosPage() {
   }
 
   async function updateOrder(id: string, patch: Partial<OrderRow>) {
-    const { error } = await supabase.from("orders").update(patch).eq("id", id);
-    if (error) {
-      console.error("updateOrder error:", error);
+    // Se está alterando logistic_status, passa pela API com validações de bloqueio
+    if (patch.logistic_status !== undefined) {
+      if (patch.logistic_status === "ENTREGUE") {
+        console.warn("Status ENTREGUE não pode ser marcado manualmente.");
+        return;
+      }
+      if (patch.logistic_status === "SAIU_PARA_ENTREGA") {
+        console.warn("Use o botão de dispatch para saída para entrega.");
+        return;
+      }
+      const response = await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deliveryStatus: patch.logistic_status }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        console.error("set-status error:", data.message);
+        return;
+      }
+      setOrders((prev) => prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o)));
+      await loadOrders();
       return;
     }
 
-    setOrders((prev) =>
-      prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o))
-    );
-
+    // Para outros campos, atualiza diretamente
+    const { error } = await supabase.from("orders").update(patch).eq("id", id);
+    if (error) { console.error("updateOrder error:", error); return; }
+    setOrders((prev) => prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o)));
     await loadOrders();
+  }
+
+  function openDispatchChooser(order: OrderRow) {
+    if (order.delivery_mode === "RETIRADA") return;
+    setDispatchOrder(order);
+  }
+
+  function closeDispatchChooser() {
+    if (dispatchSaving) return;
+    setDispatchOrder(null);
+  }
+
+  async function goToLogisticsWithProvider(provider: DeliveryProvider) {
+    if (!dispatchOrder) return;
+    setDispatchSaving(true);
+    try {
+      const currentStatus = dispatchOrder.logistic_status ?? "RECEBIDO";
+      if (currentStatus === "RECEBIDO") {
+        await fetch(`/api/logistica/admin/order/${dispatchOrder.id}/set-status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ deliveryStatus: "EM_SEPARACAO" }),
+        });
+      }
+      setDispatchOrder(null);
+      router.push(`/adm/logistica/${dispatchOrder.id}?mode=dispatch&provider=${provider}`);
+    } finally {
+      setDispatchSaving(false);
+    }
   }
 
   const summary = useMemo(() => {
@@ -557,17 +622,54 @@ export default function AdmPedidosPage() {
                       options={STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
                     />
 
-                    <Select
-                      label="Logística"
-                      value={o.logistic_status ?? LOG_OPTIONS[0]}
-                      onChange={(v) =>
-                        updateOrder(o.id, { logistic_status: v as UnifiedLogisticStatus })
-                      }
-                      options={LOG_OPTIONS.map((s) => ({
-                        value: s,
-                        label: getLogisticLabel(s),
-                      }))}
-                    />
+                    <div>
+                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Logística</div>
+
+                      {/* Status atual */}
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={["inline-flex h-7 items-center justify-center rounded-[10px] px-3 text-xs font-semibold",
+                          o.logistic_status === "ENTREGUE" ? "bg-green-100 text-green-700" :
+                          o.logistic_status === "SAIU_PARA_ENTREGA" ? "bg-blue-100 text-blue-700" :
+                          o.logistic_status === "EM_SEPARACAO" ? "bg-amber-100 text-amber-700" :
+                          "bg-slate-100 text-slate-600"
+                        ].join(" ")}>
+                          {getLogisticLabel(o.logistic_status ?? "RECEBIDO")}
+                        </span>
+                      </div>
+
+                      {/* Botões de ação — iguais às outras páginas, passam pela API */}
+                      {o.logistic_status !== "SAIU_PARA_ENTREGA" && o.logistic_status !== "ENTREGUE" ? (
+                        <div className="flex flex-col gap-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <button type="button"
+                              onClick={() => updateOrder(o.id, { logistic_status: "RECEBIDO" })}
+                              disabled={o.logistic_status === "RECEBIDO"}
+                              className="inline-flex h-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                              Recebido
+                            </button>
+                            <button type="button"
+                              onClick={() => updateOrder(o.id, { logistic_status: "EM_SEPARACAO" })}
+                              disabled={o.logistic_status === "EM_SEPARACAO"}
+                              className="inline-flex h-9 items-center justify-center rounded-[12px] border border-amber-200 bg-amber-50 px-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                              Em separação
+                            </button>
+                          </div>
+                          {o.delivery_mode !== "RETIRADA" ? (
+                            <button type="button" onClick={() => openDispatchChooser(o)}
+                              className="inline-flex h-9 w-full items-center justify-center rounded-[12px] border border-violet-200 bg-violet-50 text-xs font-semibold text-violet-700 transition hover:bg-violet-100">
+                              Saída para entrega →
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : (
+                        /* Status travado — saiu ou entregue */
+                        <div className="rounded-[12px] border border-slate-100 bg-slate-50 p-2 text-xs text-slate-500 text-center">
+                          {o.logistic_status === "ENTREGUE"
+                            ? "🔒 Entregue — status bloqueado"
+                            : "🚚 Em rota — aguardando confirmação"}
+                        </div>
+                      )}
+                    </div>
 
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -626,6 +728,39 @@ export default function AdmPedidosPage() {
               </div>
             );
           })}
+        </div>
+      ) : null}
+      {/* Modal: dispatch chooser */}
+      {dispatchOrder ? (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center">
+          <div className="w-full max-w-2xl rounded-[30px] border border-slate-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Saída para entrega</div>
+                <h3 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-slate-900">Escolha como este pedido será despachado</h3>
+                <div className="mt-2 text-sm text-slate-600"><b>Pedido:</b> {dispatchOrder.id}</div>
+                <div className="text-sm text-slate-600"><b>Loja:</b> {dispatchOrder.store_name || "Loja não identificada"}</div>
+              </div>
+              <button type="button" onClick={closeDispatchChooser} disabled={dispatchSaving}
+                className="rounded-[14px] border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                Fechar
+              </button>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <ProviderChoiceCard accent="cyan" title="Motorista autônomo"
+                subtitle="Abre a logística para preencher motorista, gerar link de rastreio e código de entrega."
+                disabled={dispatchSaving} onClick={() => goToLogisticsWithProvider("autonomo")} />
+              <ProviderChoiceCard accent="violet" title="Chamar Lalamove"
+                subtitle="Abre a logística para cotação, chamada da corrida e acompanhamento da entrega."
+                disabled={dispatchSaving} onClick={() => goToLogisticsWithProvider("lalamove")} />
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button type="button" disabled={dispatchSaving} onClick={closeDispatchChooser}
+                className="inline-flex h-11 items-center justify-center rounded-[18px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
