@@ -477,7 +477,7 @@ function MiniColumnsChart({
 
   return (
     <div className="overflow-x-auto">
-      <div className="flex min-w-[560px] items-end gap-3">
+      <div className="flex min-w-[360px] items-end gap-3">
         {data.map((item) => {
           const pct = max > 0 ? (item.total_qty / max) * 100 : 0;
           return (
@@ -1353,7 +1353,7 @@ export default function AdmDashboardPage() {
         title="Dashboard"
         subtitle="Visão geral da rede, demanda semanal e inteligência de compra"
         right={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             <Select
               value={monthYM}
               onChange={setMonthYM}
@@ -1390,7 +1390,7 @@ export default function AdmDashboardPage() {
           subtitle="Panorama mensal consolidado da rede"
         />
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
           <SummaryBox title="Total no mês" value={money(kpis.total)} subtitle={`Referência ${monthYM}`} />
           <SummaryBox title="Em aberto" value={money(kpis.emAberto)} subtitle="submitted / approved" />
           <SummaryBox title="Pedidos no mês" value={kpis.pedidos.toLocaleString("pt-BR")} subtitle="Somatório por status" />
@@ -1402,7 +1402,7 @@ export default function AdmDashboardPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 md:gap-6 xl:grid-cols-2">
         <ChartCard
           title="Distribuição por status no mês"
           subtitle="Valor financeiro por status"
@@ -1440,7 +1440,7 @@ export default function AdmDashboardPage() {
           subtitle="Entenda a demanda por período e por estágio logístico"
         />
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-6">
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6 md:gap-4">
           <Select
             label="Período"
             value={rangePreset}
@@ -1512,7 +1512,7 @@ export default function AdmDashboardPage() {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-4">
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 md:gap-4">
           <div className="lg:col-span-2">
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
               Buscar item
@@ -1551,7 +1551,7 @@ export default function AdmDashboardPage() {
 
         {rangeMsg ? <div className="mt-4 text-sm text-red-600">{rangeMsg}</div> : null}
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
           <SummaryBox title="Período" value={`${isoToBR(rangeStart)} → ${isoToBR(rangeEnd)}`} subtitle="Janela analisada" />
           <SummaryBox title="Pedidos" value={rangeOrdersCount.toLocaleString("pt-BR")} subtitle={`Lojas: ${rangeStoresCount}`} />
           <SummaryBox title="Itens diferentes" value={rangeKpis.itemsCount.toLocaleString("pt-BR")} subtitle="Com quantidade" />
@@ -1568,7 +1568,7 @@ export default function AdmDashboardPage() {
           />
         </div>
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <div className="mt-6 grid gap-4 md:gap-6 xl:grid-cols-2">
           <ChartCard
             title="Demanda por semana"
             subtitle="Quantidade somada por semana"
@@ -1594,7 +1594,7 @@ export default function AdmDashboardPage() {
           </ChartCard>
         </div>
 
-        <div className="mt-6 grid gap-6 xl:grid-cols-2">
+        <div className="mt-6 grid gap-4 md:gap-6 xl:grid-cols-2">
           <ChartCard
             title="Heatmap / ranking de lojas"
             subtitle="Lojas com maior demanda no período"
@@ -1617,7 +1617,7 @@ export default function AdmDashboardPage() {
             ) : abcRows.length === 0 ? (
               <EmptyState text="Sem dados para curva ABC." />
             ) : (
-              <Table
+              <div className="overflow-x-auto -mx-1 px-1"><Table
                 headers={["Item", "Qtd", "% Part.", "% Acum.", "Curva"]}
                 rows={abcRows.slice(0, 12).map((r) => [
                   <div key={`${r.product_id}-name`} className="min-w-[240px]">
@@ -1637,7 +1637,7 @@ export default function AdmDashboardPage() {
                     {r.curve}
                   </Badge>,
                 ])}
-              />
+              /></div>
             )}
           </ChartCard>
         </div>
@@ -1647,7 +1647,7 @@ export default function AdmDashboardPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 md:gap-6 xl:grid-cols-2">
         <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <SectionTitle
             title="Top itens do mês"
@@ -1658,7 +1658,7 @@ export default function AdmDashboardPage() {
             {topItems.length === 0 ? (
               <EmptyState text="Sem itens no período." />
             ) : (
-              <Table
+              <div className="overflow-x-auto -mx-1 px-1"><Table
                 headers={["Item", "Qtd", "Pedidos", "Valor"]}
                 rows={topItems.map((r) => [
                   <div key={`${r.product_id}-name`} className="min-w-[260px]">
@@ -1678,7 +1678,7 @@ export default function AdmDashboardPage() {
                     {money(r.total_value)}
                   </div>,
                 ])}
-              />
+              /></div>
             )}
           </div>
         </div>
@@ -1693,7 +1693,7 @@ export default function AdmDashboardPage() {
             {statusMonthly.length === 0 ? (
               <EmptyState text="Sem dados no período." />
             ) : (
-              <Table
+              <div className="overflow-x-auto -mx-1 px-1"><Table
                 headers={["Loja", "Status", "Pedidos", "Qtd Itens", "Valor"]}
                 rows={statusMonthly
                   .slice()
@@ -1715,7 +1715,7 @@ export default function AdmDashboardPage() {
                       {money(Number(r.total_value || 0))}
                     </div>,
                   ])}
-              />
+              /></div>
             )}
           </div>
         </div>
@@ -1748,7 +1748,7 @@ export default function AdmDashboardPage() {
           {forecastRows.length === 0 ? (
             <EmptyState text="Sem dados suficientes para projeção." />
           ) : (
-            <Table
+            <div className="overflow-x-auto -mx-1 px-1"><Table
               headers={["Item", "Média semanal", "Última base", "Sugestão próxima semana", "Volume", "Confiança"]}
               rows={forecastRows.slice(0, 20).map((r) => [
                 <div key={`${r.product_id}-name`} className="min-w-[260px]">
@@ -1774,7 +1774,7 @@ export default function AdmDashboardPage() {
                   {r.confidence}
                 </Badge>,
               ])}
-            />
+            /></div>
           )}
         </div>
       </div>
@@ -1802,7 +1802,7 @@ export default function AdmDashboardPage() {
           ) : rangeAggFiltered.length === 0 ? (
             <EmptyState text="Sem itens para o período selecionado." />
           ) : (
-            <Table
+            <div className="overflow-x-auto -mx-1 px-1"><Table
               headers={["Item", "Un", "Qtd total", "Volume", "Pedidos", "Lojas"]}
               rows={rangeAggFiltered.map((r) => {
                 const volume = formatVolumeSuggestion(
@@ -1835,7 +1835,7 @@ export default function AdmDashboardPage() {
                   </div>,
                 ];
               })}
-            />
+            /></div>
           )}
         </div>
       </div>

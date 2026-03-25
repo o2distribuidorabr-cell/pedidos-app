@@ -278,6 +278,104 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
 
   return (
     <div className="space-y-0">
+      {/* MOBILE: cards empilhados */}
+      <div className="block md:hidden space-y-3">
+        {paged.map((r) => {
+          const dueBadge = !r.due_date
+            ? <Badge tone="neutral">Sem venc.</Badge>
+            : r.is_overdue ? <Badge tone="red">Vencido</Badge>
+            : r.is_due_soon ? <Badge tone="yellow">A vencer</Badge>
+            : <Badge tone="green">OK</Badge>;
+
+          return (
+            <div key={r.id} onClick={() => onRowClick(r.id)}
+              className="cursor-pointer rounded-[22px] border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md">
+              {/* Cabeçalho do card */}
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold text-slate-900 text-sm">{r.store_name}</div>
+                  <div className="mt-0.5 font-mono text-xs text-slate-500">{r.id.slice(0, 8)}</div>
+                </div>
+                <Badge tone={r.is_paid ? "green" : "red"}>{r.is_paid ? "Pago" : "Em aberto"}</Badge>
+              </div>
+
+              {/* Linha divisória */}
+              <div className="my-3 h-px bg-slate-100" />
+
+              {/* Informações em grid 2 colunas */}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm">
+                <div>
+                  <div className="text-xs text-slate-500">Status</div>
+                  <div className="mt-0.5"><Badge tone={statusTone(r.status) as any}>{r.status}</Badge></div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Operação</div>
+                  <div className="mt-0.5"><Badge tone="neutral">{logisticLabel(r.logistic_status)}</Badge></div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Forma pgto.</div>
+                  <div className="mt-0.5"><Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge></div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Plataforma</div>
+                  <div className="mt-0.5"><Badge tone={gatewayTone(r.gateway)}>{gatewayLabel(r.gateway)}</Badge></div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Vencimento</div>
+                  <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    <span className="text-slate-800 text-xs">{fmtYMDToBR(r.due_date)}</span>
+                    {dueBadge}
+                  </div>
+                  {!r.is_paid && r.encargos > 0 ? <div className="text-xs text-slate-500">+{money(r.encargos)} encargos</div> : null}
+                </div>
+                <div>
+                  <div className="text-xs text-slate-500">Entregue em</div>
+                  <div className="mt-0.5 text-xs text-slate-700">{r.delivery_finished_at ? fmtBR(r.delivery_finished_at) : "—"}</div>
+                </div>
+              </div>
+
+              {/* Linha divisória */}
+              <div className="my-3 h-px bg-slate-100" />
+
+              {/* Valores */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-[14px] bg-slate-50 p-2.5 text-center">
+                  <div className="text-xs text-slate-500">Total</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-900">{money(r.total)}</div>
+                </div>
+                <div className="rounded-[14px] bg-slate-50 p-2.5 text-center">
+                  <div className="text-xs text-slate-500">Crédito</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-700">- {money(r.credit_applied)}</div>
+                </div>
+                <div className={["rounded-[14px] p-2.5 text-center", r.is_paid ? "bg-emerald-50" : "bg-red-50"].join(" ")}>
+                  <div className="text-xs text-slate-500">A pagar</div>
+                  <div className={["mt-1 text-sm font-semibold", r.is_paid ? "text-emerald-700" : "text-red-700"].join(" ")}>{money(r.a_pagar_exib)}</div>
+                </div>
+              </div>
+
+              {r.is_paid ? (
+                <div className="mt-2 text-xs text-slate-500 text-center">Pago em: {fmtBR(r.paid_at)}</div>
+              ) : null}
+            </div>
+          );
+        })}
+
+        {/* Paginação mobile */}
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="text-sm text-slate-600">
+            <b>{rows.length}</b> registro(s) • Pág. <b>{page}</b>/<b>{Math.ceil(rows.length / PAGE_SIZE)}</b>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page === 1}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 disabled:opacity-40">‹</button>
+            <button onClick={() => onPageChange(Math.min(Math.ceil(rows.length / PAGE_SIZE), page + 1))} disabled={page >= Math.ceil(rows.length / PAGE_SIZE)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 disabled:opacity-40">›</button>
+          </div>
+        </div>
+      </div>
+
+      {/* DESKTOP: tabela com scroll (escondida no mobile) */}
+      <div className="hidden md:block space-y-0">
       {/* Barra de scroll horizontal no TOPO — sincronizada com a tabela */}
       <div ref={topScrollRef} onScroll={onTopScroll}
         className="overflow-x-auto rounded-t-[20px] border border-b-0 border-slate-200 bg-slate-100 py-2 px-1">
@@ -372,7 +470,7 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
         </div>
       </div>
 
-      {/* Paginação */}
+      {/* Paginação desktop */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-slate-200 bg-slate-50 px-4 py-3">
         <div className="text-sm text-slate-600">
           <b>{rows.length}</b> registro(s) • Página <b>{page}</b> de <b>{totalPages}</b> • {PAGE_SIZE} por página
@@ -401,6 +499,7 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
             className="inline-flex h-9 w-9 items-center justify-center rounded-[12px] border border-slate-200 bg-white text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40">»</button>
         </div>
       </div>
+      </div>{/* end hidden md:block desktop wrapper */}
     </div>
   );
 }
@@ -412,7 +511,21 @@ export default function AdmFinanceiroPage() {
   const [msg, setMsg] = useState("");
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [rows, setRows] = useState<RowUi[]>([]);
-  const [page, setPage] = useState(1);
+  // Chave de persistência dos filtros no sessionStorage
+  const STORAGE_KEY = "financeiro_filtros_v1";
+
+  function loadSaved() {
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+  function savedOr<T>(key: string, fallback: T): T {
+    const s = loadSaved();
+    return s && s[key] !== undefined ? s[key] : fallback;
+  }
+
+  const [page, setPage] = useState(() => savedOr("page", 1));
 
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -422,27 +535,42 @@ export default function AdmFinanceiroPage() {
   const [dailyInterestPercent, setDailyInterestPercent] = useState<string>("0,033");
   const [pixProvider, setPixProvider] = useState<PixProvider>("MP");
 
-  const [storeSelected, setStoreSelected] = useState<string[]>([]);
+  const [storeSelected, setStoreSelected] = useState<string[]>(() => savedOr("storeSelected", []));
   const [storePopoverOpen, setStorePopoverOpen] = useState(false);
   const [storeSearch, setStoreSearch] = useState("");
   const popRef = useRef<HTMLDivElement | null>(null);
 
-  const [searchTerm, setSearchTerm] = useState("");
-  const [paidFilter, setPaidFilter] = useState<string>("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [logisticFilter, setLogisticFilter] = useState<string>("all");
-  const [deliveryFilter, setDeliveryFilter] = useState<string>("all");
-  const [dateFrom, setDateFrom] = useState<string>("");
-  const [dateTo, setDateTo] = useState<string>("");
-  const [payMethodFilter, setPayMethodFilter] = useState<string>("all");
-  const [dueFilter, setDueFilter] = useState<string>("all");
-  const [dueFrom, setDueFrom] = useState<string>("");
-  const [dueTo, setDueTo] = useState<string>("");
-  const [amountMin, setAmountMin] = useState<string>("");
-  const [amountMax, setAmountMax] = useState<string>("");
-  const [withCreditFilter, setWithCreditFilter] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<string>("created_desc");
-  const [viewMode, setViewMode] = useState<"compact" | "full">("compact");
+  const [searchTerm, setSearchTerm] = useState(() => savedOr("searchTerm", ""));
+  const [paidFilter, setPaidFilter] = useState<string>(() => savedOr("paidFilter", "all"));
+  const [statusFilter, setStatusFilter] = useState<string>(() => savedOr("statusFilter", "all"));
+  const [logisticFilter, setLogisticFilter] = useState<string>(() => savedOr("logisticFilter", "all"));
+  const [deliveryFilter, setDeliveryFilter] = useState<string>(() => savedOr("deliveryFilter", "all"));
+  const [dateFrom, setDateFrom] = useState<string>(() => savedOr("dateFrom", ""));
+  const [dateTo, setDateTo] = useState<string>(() => savedOr("dateTo", ""));
+  const [payMethodFilter, setPayMethodFilter] = useState<string>(() => savedOr("payMethodFilter", "all"));
+  const [dueFilter, setDueFilter] = useState<string>(() => savedOr("dueFilter", "all"));
+  const [dueFrom, setDueFrom] = useState<string>(() => savedOr("dueFrom", ""));
+  const [dueTo, setDueTo] = useState<string>(() => savedOr("dueTo", ""));
+  const [amountMin, setAmountMin] = useState<string>(() => savedOr("amountMin", ""));
+  const [amountMax, setAmountMax] = useState<string>(() => savedOr("amountMax", ""));
+  const [withCreditFilter, setWithCreditFilter] = useState<string>(() => savedOr("withCreditFilter", "all"));
+  const [sortBy, setSortBy] = useState<string>(() => savedOr("sortBy", "created_desc"));
+  const [viewMode, setViewMode] = useState<"compact" | "full">(() => savedOr("viewMode", "compact") as "compact" | "full");
+
+  // Persiste todos os filtros no sessionStorage sempre que mudarem
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+        page, searchTerm, paidFilter, statusFilter, logisticFilter,
+        deliveryFilter, dateFrom, dateTo, payMethodFilter, dueFilter,
+        dueFrom, dueTo, amountMin, amountMax, withCreditFilter,
+        sortBy, viewMode, storeSelected,
+      }));
+    } catch { /* ignora */ }
+  }, [page, searchTerm, paidFilter, statusFilter, logisticFilter,
+      deliveryFilter, dateFrom, dateTo, payMethodFilter, dueFilter,
+      dueFrom, dueTo, amountMin, amountMax, withCreditFilter,
+      sortBy, viewMode, storeSelected]);
 
   useEffect(() => {
     function onDocClick(e: MouseEvent) {
@@ -528,6 +656,7 @@ export default function AdmFinanceiroPage() {
     setDeliveryFilter("all"); setDateFrom(""); setDateTo(""); setPayMethodFilter("all");
     setDueFilter("all"); setDueFrom(""); setDueTo(""); setAmountMin(""); setAmountMax("");
     setWithCreditFilter("all"); setSortBy("created_desc"); clearStores(); setPage(1);
+    try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignora */ }
   }
 
   async function loadFinance(storeList: StoreRow[], calc?: CalcParams) {

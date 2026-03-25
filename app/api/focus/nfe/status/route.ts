@@ -32,6 +32,15 @@ function safeJsonParse(text: string) {
   }
 }
 
+function pickString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
 async function getExistingFocusDoc(reference: string) {
   const supabaseUrl = envOrThrow("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRole = envOrThrow("SUPABASE_SERVICE_ROLE_KEY");
@@ -129,6 +138,7 @@ function extractErrorMessage(focus: any) {
         return JSON.stringify(e);
       })
       .filter(Boolean);
+
     if (msgs.length) return msgs.join(" | ");
   }
 
@@ -143,6 +153,67 @@ function extractErrorMessage(focus: any) {
   return null;
 }
 
+function extractDanfeUrl(focus: any, existing?: any) {
+  return pickString(
+    focus?.caminho_danfe,
+    focus?.url_danfe,
+    focus?.danfe,
+    focus?.link_danfe,
+    existing?.url_danfe
+  );
+}
+
+function extractXmlUrl(focus: any, existing?: any) {
+  return pickString(
+    focus?.caminho_xml_nota_fiscal,
+    focus?.url_xml,
+    focus?.xml,
+    focus?.link_xml,
+    focus?.caminho_xml,
+    existing?.url_xml
+  );
+}
+
+function extractStatus(focus: any, existing?: any) {
+  return pickString(
+    focus?.status,
+    focus?.situacao,
+    existing?.status
+  );
+}
+
+function extractNumero(focus: any, existing?: any) {
+  const v = pickString(
+    String(focus?.numero ?? ""),
+    String(existing?.numero ?? "")
+  );
+  return v || null;
+}
+
+function extractSerie(focus: any, existing?: any) {
+  const v = pickString(
+    String(focus?.serie ?? ""),
+    String(existing?.serie ?? "")
+  );
+  return v || null;
+}
+
+function extractChave(focus: any, existing?: any) {
+  return pickString(
+    focus?.chave,
+    focus?.chave_nfe,
+    existing?.chave
+  );
+}
+
+function extractProtocolo(focus: any, existing?: any) {
+  return pickString(
+    focus?.protocolo,
+    focus?.protocolo_autorizacao,
+    existing?.protocolo
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const token = envOrThrow("FOCUS_NFE_TOKEN");
@@ -151,11 +222,17 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as StatusBody;
 
     if (!body?.orderId) {
-      return NextResponse.json({ ok: false, error: "orderId é obrigatório." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "orderId é obrigatório." },
+        { status: 400 }
+      );
     }
 
     if (!body?.reference) {
-      return NextResponse.json({ ok: false, error: "reference é obrigatória." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "reference é obrigatória." },
+        { status: 400 }
+      );
     }
 
     const existing = await getExistingFocusDoc(body.reference);
@@ -214,6 +291,13 @@ export async function POST(req: NextRequest) {
     }
 
     const errorMessage = extractErrorMessage(json);
+    const status = extractStatus(json, existing);
+    const numero = extractNumero(json, existing);
+    const serie = extractSerie(json, existing);
+    const chave = extractChave(json, existing);
+    const protocolo = extractProtocolo(json, existing);
+    const urlDanfe = extractDanfeUrl(json, existing);
+    const urlXml = extractXmlUrl(json, existing);
 
     await saveFocusDoc({
       id: existing.id ?? null,
@@ -221,13 +305,13 @@ export async function POST(req: NextRequest) {
       store_id: existing.store_id,
       emitter_id: existing.emitter_id ?? null,
       reference: body.reference,
-      status: json?.status || existing.status || null,
-      numero: json?.numero || existing.numero || null,
-      serie: json?.serie || existing.serie || null,
-      chave: json?.chave || existing.chave || null,
-      protocolo: json?.protocolo || existing.protocolo || null,
-      url_danfe: json?.url_danfe || existing.url_danfe || null,
-      url_xml: json?.url_xml || existing.url_xml || null,
+      status,
+      numero,
+      serie,
+      chave,
+      protocolo,
+      url_danfe: urlDanfe,
+      url_xml: urlXml,
       error_message: errorMessage || existing.error_message || null,
     });
 
@@ -235,6 +319,15 @@ export async function POST(req: NextRequest) {
       ok: true,
       message: "Status da NF-e atualizado.",
       focus: json,
+      saved: {
+        status,
+        numero,
+        serie,
+        chave,
+        protocolo,
+        url_danfe: urlDanfe,
+        url_xml: urlXml,
+      },
     });
   } catch (e: any) {
     return NextResponse.json(

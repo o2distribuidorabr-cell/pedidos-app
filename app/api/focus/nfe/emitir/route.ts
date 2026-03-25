@@ -10,6 +10,10 @@ type EmitBody = {
   natureza_operacao?: string | null;
   serie?: string | null;
   numero?: string | null;
+
+  tratar_frete_como_despesa_acessoria?: boolean | null;
+  valor_outras_despesas?: number | null;
+
   destinatario: {
     nome: string;
     nome_fantasia?: string | null;
@@ -28,10 +32,12 @@ type EmitBody = {
       uf: string;
     };
   };
+
   transporte?: {
     modalidade_frete?: string | null;
     valor_frete?: number | null;
   };
+
   itens: Array<{
     codigo: string;
     descricao: string;
@@ -41,7 +47,11 @@ type EmitBody = {
     unidade: string;
     quantidade: number;
     valor_unitario: number;
-    valor_total?: number;
+    valor_total?: number | null;
+
+    valor_frete?: number | null;
+    valor_outras_despesas?: number | null;
+
     gtin?: string | null;
     origem?: string | null;
     icms_situacao_tributaria?: string | null;
@@ -71,6 +81,7 @@ type EmitBody = {
     red_ibs_uf_rt_percent?: string | null;
     red_ibs_mun_rt_percent?: string | null;
   }>;
+
   observacoes?: string | null;
 };
 
@@ -136,6 +147,15 @@ function safeJsonParse(text: string) {
   } catch {
     return null;
   }
+}
+
+function round2(value: number) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function normalizeMoney(value: unknown) {
+  const n = Number(value ?? 0);
+  return Number.isFinite(n) ? round2(n) : 0;
 }
 
 function normalizeUnit(value: string | null | undefined) {
@@ -286,14 +306,36 @@ async function getEmitter(emitterId?: string | null) {
 }
 
 function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
-  const valorFrete = Number(body.transporte?.valor_frete ?? 0) || 0;
+  const tratarComoDespesa = Boolean(body.tratar_frete_como_despesa_acessoria);
 
-  const valorProdutos = body.itens.reduce((acc, item) => {
-    const total = Number(item.valor_total ?? Number(item.quantidade) * Number(item.valor_unitario));
-    return acc + (Number.isFinite(total) ? total : 0);
-  }, 0);
+  const valorProdutos = round2(
+    body.itens.reduce((acc, item) => {
+      const total = Number(item.valor_total ?? Number(item.quantidade) * Number(item.valor_unitario));
+      return acc + (Number.isFinite(total) ? total : 0);
+    }, 0)
+  );
 
-  const valorTotal = valorProdutos + valorFrete;
+  const valorFreteItens = round2(
+    body.itens.reduce((acc, item) => acc + normalizeMoney(item.valor_frete), 0)
+  );
+
+  const valorOutrasDespesasItens = round2(
+    body.itens.reduce((acc, item) => acc + normalizeMoney(item.valor_outras_despesas), 0)
+  );
+
+  const valorFreteCabecalho = normalizeMoney(body.transporte?.valor_frete);
+  const valorOutrasDespesasCabecalho = normalizeMoney(body.valor_outras_despesas);
+
+  const valorFrete = tratarComoDespesa
+    ? 0
+    : round2(valorFreteCabecalho || valorFreteItens);
+
+  const valorOutrasDespesas = tratarComoDespesa
+    ? round2(valorOutrasDespesasCabecalho || valorOutrasDespesasItens || valorFreteCabecalho)
+    : round2(valorOutrasDespesasCabecalho || valorOutrasDespesasItens);
+
+  const valorTotal = round2(valorProdutos + valorFrete + valorOutrasDespesas);
+
   const destDoc = onlyDigits(body.destinatario.cpf_cnpj);
   const destIE = onlyDigits(body.destinatario.inscricao_estadual || "");
   const indIEDest = normalizeIndIEDest(
@@ -346,13 +388,21 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
     valor_frete: valorFrete,
     valor_seguro: 0,
     valor_produtos: valorProdutos,
+    valor_outras_despesas: valorOutrasDespesas,
     valor_total: valorTotal,
 
     items: body.itens.map((item, index) => {
       const quantidade = Number(item.quantidade || 0);
-      const valorUnitario = Number(item.valor_unitario || 0);
-      const valorBruto = Number(item.valor_total ?? quantidade * valorUnitario);
+      const valorUnitario = normalizeMoney(item.valor_unitario);
+      const valorBruto = normalizeMoney(
+        item.valor_total ?? quantidade * valorUnitario
+      );
       const unidade = normalizeUnit(item.unidade);
+
+      const valorFreteItem = tratarComoDespesa ? 0 : normalizeMoney(item.valor_frete);
+      const valorOutrasDespesasItem = tratarComoDespesa
+        ? normalizeMoney(item.valor_outras_despesas)
+        : normalizeMoney(item.valor_outras_despesas);
 
       return {
         numero_item: String(index + 1),
@@ -369,6 +419,8 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
         codigo_ean_tributavel: item.gtin || undefined,
         quantidade_tributavel: quantidade,
         valor_bruto: valorBruto,
+        valor_frete: valorFreteItem || undefined,
+        valor_outras_despesas: valorOutrasDespesasItem || undefined,
         cest: item.cest ? onlyDigits(item.cest) : undefined,
         icms_situacao_tributaria: item.icms_situacao_tributaria || undefined,
         icms_origem: item.origem || undefined,
@@ -492,7 +544,10 @@ export async function POST(req: NextRequest) {
         status: "erro",
         numero: normalizeNumero(body.numero) ?? null,
         serie: normalizeSerie(body.serie || emitter.default_serie),
-        error_message: typeof errorMessage === "string" ? errorMessage : JSON.stringify(errorMessage),
+        error_message:
+          typeof errorMessage === "string"
+            ? errorMessage
+            : JSON.stringify(errorMessage),
       });
 
       return NextResponse.json(
@@ -514,6 +569,18 @@ export async function POST(req: NextRequest) {
                 body.destinatario.indicador_inscricao_estadual,
                 body.destinatario.inscricao_estadual
               ),
+            },
+            request_mode: {
+              tratar_frete_como_despesa_acessoria:
+                Boolean(body.tratar_frete_como_despesa_acessoria),
+              valor_frete_request: normalizeMoney(body.transporte?.valor_frete),
+              valor_outras_despesas_request: normalizeMoney(body.valor_outras_despesas),
+            },
+            focus_payload_resumo: {
+              valor_produtos: focusPayload.valor_produtos,
+              valor_frete: focusPayload.valor_frete,
+              valor_outras_despesas: focusPayload.valor_outras_despesas,
+              valor_total: focusPayload.valor_total,
             },
             reference,
           },
@@ -549,6 +616,14 @@ export async function POST(req: NextRequest) {
         id: emitter.id,
         cnpj: emitter.cnpj,
         legal_name: emitter.legal_name,
+      },
+      payload_resumo: {
+        tratar_frete_como_despesa_acessoria:
+          Boolean(body.tratar_frete_como_despesa_acessoria),
+        valor_produtos: focusPayload.valor_produtos,
+        valor_frete: focusPayload.valor_frete,
+        valor_outras_despesas: focusPayload.valor_outras_despesas,
+        valor_total: focusPayload.valor_total,
       },
     });
   } catch (e: any) {

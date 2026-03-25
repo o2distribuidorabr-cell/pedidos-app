@@ -594,7 +594,7 @@ export default function AdmExpedicaoPage() {
 
       setPrintPayload({ order, storeInfo, items, totalItens, frete, creditApplied, totalLiquido });
       setPrintMode(true);
-      setTimeout(() => window.print(), 80);
+      setTimeout(() => window.print(), 300);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Erro ao preparar impressão.");
       setPrintMode(false);
@@ -642,15 +642,21 @@ export default function AdmExpedicaoPage() {
     : null;
 
   return (
-    <div className="space-y-5">
+    <>
+    <div className="space-y-5 no-print" id="page-content">
       <style jsx global>{`
         @page { size: A4 portrait; margin: 10mm; }
         .print-only { display: none; }
         @media print {
-          html, body { background: #ffffff !important; }
-          body * { visibility: hidden; }
-          #print-area, #print-area * { visibility: visible; }
-          #print-area { position: absolute; inset: 0; width: 100%; margin: 0; padding: 0; background: #ffffff !important; }
+          html, body {
+            height: auto !important;
+            overflow: visible !important;
+            background: #ffffff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .no-print, .no-print * { display: none !important; }
+          #print-area { display: block !important; }
           .print-only { display: block !important; }
           .print-section { break-inside: avoid; page-break-inside: avoid; border: 1px solid #000 !important; border-radius: 0 !important; box-shadow: none !important; background: #fff !important; margin-bottom: 10px !important; padding: 10px !important; }
           .print-grid-2 { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
@@ -1025,7 +1031,9 @@ export default function AdmExpedicaoPage() {
         </div>
       ) : null}
 
-      <div id="print-area" className={printMode ? "print-mode" : ""}>
+      <div id="print-area-placeholder" />
+    </div>
+    <div id="print-area" className={printMode ? "print-mode" : ""}>
         {printPayload ? (
           <div className="print-only">
             <div className="print-section">
@@ -1118,6 +1126,6 @@ export default function AdmExpedicaoPage() {
           </div>
         ) : null}
       </div>
-    </div>
+    </>
   );
 }

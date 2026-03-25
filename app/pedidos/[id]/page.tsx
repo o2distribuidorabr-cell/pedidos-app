@@ -341,6 +341,7 @@ export default function PedidoDetalhePage() {
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [originalItems, setOriginalItems] = useState<OriginalItem[] | null>(null);
+  const [focusDoc, setFocusDoc] = useState<{ reference: string | null; status: string | null; numero: string | null; serie: string | null } | null>(null);
 
   const totalItens = useMemo(() => {
     return items.reduce((acc, it) => {
@@ -458,6 +459,17 @@ export default function PedidoDetalhePage() {
 
     const safe = (it ?? []) as unknown as ItemRow[];
     setItems(safe);
+
+    // Busca NF-e emitida para este pedido
+    const { data: focusData } = await supabase
+      .from("focus_nfe_documents")
+      .select("reference,status,numero,serie")
+      .eq("order_id", id)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    setFocusDoc(focusData ?? null);
   }
 
   async function refresh() {
@@ -969,6 +981,50 @@ export default function PedidoDetalhePage() {
                     {!canTrackDelivery ? (
                       <div className="mt-4 rounded-[20px] border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600 md:rounded-[22px]">
                         O acompanhamento da entrega será liberado quando o pedido entrar em separação, sair para entrega, for entregue ou tiver ocorrência registrada.
+                      </div>
+                    ) : null}
+
+                    {focusDoc?.reference ? (
+                      <div className="mt-4 rounded-[20px] border border-emerald-200 bg-emerald-50 p-4 md:rounded-[22px]">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+                          Nota Fiscal
+                        </div>
+
+                        <div className="mt-3 space-y-1.5 text-sm text-slate-700">
+                          {focusDoc.numero ? (
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-slate-500">Número</span>
+                              <span className="font-semibold text-slate-900">
+                                {focusDoc.numero}{focusDoc.serie ? ` / Série ${focusDoc.serie}` : ""}
+                              </span>
+                            </div>
+                          ) : null}
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-slate-500">Status</span>
+                            <span className="font-semibold text-emerald-700 capitalize">
+                              {focusDoc.status || "emitida"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-2">
+                          <a
+                            href={`/api/focus/nfe/danfe?reference=${encodeURIComponent(focusDoc.reference)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-10 items-center justify-center rounded-[14px] border border-emerald-300 bg-white px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+                          >
+                            ↓ DANFE
+                          </a>
+                          <a
+                            href={`/api/focus/nfe/xml?reference=${encodeURIComponent(focusDoc.reference)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-10 items-center justify-center rounded-[14px] border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            ↓ XML
+                          </a>
+                        </div>
                       </div>
                     ) : null}
                   </div>

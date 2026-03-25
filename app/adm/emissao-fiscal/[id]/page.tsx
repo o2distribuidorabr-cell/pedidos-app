@@ -163,8 +163,54 @@ type ItemIssue = {
   issues: string[];
 };
 
+type PayloadItem = {
+  codigo: string;
+  descricao: string;
+  unidade: string;
+  ncm: string | null;
+  cest: string | null;
+  cfop: string | null;
+  gtin: string | null;
+  origem: string | null;
+  icms_situacao_tributaria: string | null;
+  pis_situacao_tributaria: string | null;
+  cofins_situacao_tributaria: string | null;
+
+  icms_percent: string | null;
+  sit_trib: string | null;
+  pis_percent: string | null;
+  cofins_percent: string | null;
+  aliq_mun: string | null;
+  aliq_est: string | null;
+  aliq_fed: string | null;
+  aliq_csosn: string | null;
+  csosn: string | null;
+  base_reduction_percent: string | null;
+  benefit_fiscal: string | null;
+  desoneration_percent: string | null;
+  red_base_effective_percent: string | null;
+  icms_effective_percent: string | null;
+  cst_rt: string | null;
+  cod_class_trib_rt: string | null;
+  cbs_rt_percent: string | null;
+  ibs_uf_rt_percent: string | null;
+  ibs_mun_rt_percent: string | null;
+  red_cbs_rt_percent: string | null;
+  red_ibs_uf_rt_percent: string | null;
+  red_ibs_mun_rt_percent: string | null;
+
+  quantidade: number;
+  valor_unitario: number;
+  valor_total: number;
+  valor_frete: number;
+  valor_outras_despesas: number;
+};
+
 function fmtBRL(v: number) {
-  return Number(v ?? 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return Number(v ?? 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function fmtDT(v: string | null | undefined) {
@@ -199,6 +245,119 @@ function toInput(v: number | string | null | undefined) {
   return String(v);
 }
 
+function round2(value: number) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function buildItemsWithExtraExpenses(items: DraftItem[], extraExpenseTotal: number): PayloadItem[] {
+  const normalizedExtra = round2(extraExpenseTotal);
+  const totalProdutos = round2(
+    items.reduce((acc, item) => acc + Number(item.valor_total || 0), 0)
+  );
+
+  if (normalizedExtra <= 0 || totalProdutos <= 0 || items.length === 0) {
+    return items.map((it) => ({
+      codigo: it.codigo,
+      descricao: it.descricao,
+      unidade: it.unidade,
+      ncm: it.ncm || null,
+      cest: it.cest || null,
+      cfop: it.cfop || null,
+      gtin: it.ean || null,
+      origem: it.origem || null,
+      icms_situacao_tributaria: it.icms_situacao_tributaria || null,
+      pis_situacao_tributaria: it.pis_situacao_tributaria || null,
+      cofins_situacao_tributaria: it.cofins_situacao_tributaria || null,
+
+      icms_percent: it.icms_percent || null,
+      sit_trib: it.sit_trib || null,
+      pis_percent: it.pis_percent || null,
+      cofins_percent: it.cofins_percent || null,
+      aliq_mun: it.aliq_mun || null,
+      aliq_est: it.aliq_est || null,
+      aliq_fed: it.aliq_fed || null,
+      aliq_csosn: it.aliq_csosn || null,
+      csosn: it.csosn || null,
+      base_reduction_percent: it.base_reduction_percent || null,
+      benefit_fiscal: it.benefit_fiscal || null,
+      desoneration_percent: it.desoneration_percent || null,
+      red_base_effective_percent: it.red_base_effective_percent || null,
+      icms_effective_percent: it.icms_effective_percent || null,
+      cst_rt: it.cst_rt || null,
+      cod_class_trib_rt: it.cod_class_trib_rt || null,
+      cbs_rt_percent: it.cbs_rt_percent || null,
+      ibs_uf_rt_percent: it.ibs_uf_rt_percent || null,
+      ibs_mun_rt_percent: it.ibs_mun_rt_percent || null,
+      red_cbs_rt_percent: it.red_cbs_rt_percent || null,
+      red_ibs_uf_rt_percent: it.red_ibs_uf_rt_percent || null,
+      red_ibs_mun_rt_percent: it.red_ibs_mun_rt_percent || null,
+
+      quantidade: Number(it.quantidade || 0),
+      valor_unitario: round2(Number(it.valor_unitario || 0)),
+      valor_total: round2(Number(it.valor_total || 0)),
+      valor_frete: 0,
+      valor_outras_despesas: 0,
+    }));
+  }
+
+  let allocated = 0;
+
+  return items.map((it, index) => {
+    const valorItem = round2(Number(it.valor_total || 0));
+
+    let valorOutrasDespesas = 0;
+    if (index === items.length - 1) {
+      valorOutrasDespesas = round2(normalizedExtra - allocated);
+    } else {
+      valorOutrasDespesas = round2((valorItem / totalProdutos) * normalizedExtra);
+      allocated = round2(allocated + valorOutrasDespesas);
+    }
+
+    return {
+      codigo: it.codigo,
+      descricao: it.descricao,
+      unidade: it.unidade,
+      ncm: it.ncm || null,
+      cest: it.cest || null,
+      cfop: it.cfop || null,
+      gtin: it.ean || null,
+      origem: it.origem || null,
+      icms_situacao_tributaria: it.icms_situacao_tributaria || null,
+      pis_situacao_tributaria: it.pis_situacao_tributaria || null,
+      cofins_situacao_tributaria: it.cofins_situacao_tributaria || null,
+
+      icms_percent: it.icms_percent || null,
+      sit_trib: it.sit_trib || null,
+      pis_percent: it.pis_percent || null,
+      cofins_percent: it.cofins_percent || null,
+      aliq_mun: it.aliq_mun || null,
+      aliq_est: it.aliq_est || null,
+      aliq_fed: it.aliq_fed || null,
+      aliq_csosn: it.aliq_csosn || null,
+      csosn: it.csosn || null,
+      base_reduction_percent: it.base_reduction_percent || null,
+      benefit_fiscal: it.benefit_fiscal || null,
+      desoneration_percent: it.desoneration_percent || null,
+      red_base_effective_percent: it.red_base_effective_percent || null,
+      icms_effective_percent: it.icms_effective_percent || null,
+      cst_rt: it.cst_rt || null,
+      cod_class_trib_rt: it.cod_class_trib_rt || null,
+      cbs_rt_percent: it.cbs_rt_percent || null,
+      ibs_uf_rt_percent: it.ibs_uf_rt_percent || null,
+      ibs_mun_rt_percent: it.ibs_mun_rt_percent || null,
+      red_cbs_rt_percent: it.red_cbs_rt_percent || null,
+      red_ibs_uf_rt_percent: it.red_ibs_uf_rt_percent || null,
+      red_ibs_mun_rt_percent: it.red_ibs_mun_rt_percent || null,
+
+      quantidade: Number(it.quantidade || 0),
+      valor_unitario: round2(Number(it.valor_unitario || 0)),
+      valor_total: valorItem,
+      valor_frete: 0,
+      valor_outras_despesas: valorOutrasDespesas,
+    };
+  });
+}
+
 function TextCell({
   value,
   onChange,
@@ -215,9 +374,7 @@ function TextCell({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       className={`${width} rounded-[10px] border px-2 py-2 text-xs text-slate-900 outline-none transition focus:border-slate-300 ${
-        invalid
-          ? "border-red-300 bg-red-50"
-          : "border-slate-200 bg-white"
+        invalid ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
       }`}
     />
   );
@@ -510,10 +667,14 @@ export default function AdmEmissaoFiscalDetalhePage() {
     return Object.values(draftItems).reduce((acc, item) => acc + Number(item.valor_total || 0), 0);
   }, [draftItems]);
 
+  const despesasAcessoriasNfe = useMemo(() => {
+    return round2(Number(order?.freight_fee ?? 0));
+  }, [order?.freight_fee]);
+
   const totalLiquido = useMemo(() => {
     const credit = Number(order?.credit_applied ?? 0);
-    const frete = Number(order?.freight_fee ?? 0);
-    return Math.max(totalProdutos + frete - credit, 0);
+    const extras = Number(order?.freight_fee ?? 0);
+    return Math.max(totalProdutos + extras - credit, 0);
   }, [draftItems, order?.credit_applied, order?.freight_fee, totalProdutos]);
 
   const itemIssues = useMemo<ItemIssue[]>(() => {
@@ -565,6 +726,12 @@ export default function AdmEmissaoFiscalDetalhePage() {
     setMsg("");
 
     try {
+      const extraExpenseTotal = round2(Number(order.freight_fee ?? 0));
+      const payloadItems = buildItemsWithExtraExpenses(
+        Object.values(draftItems),
+        extraExpenseTotal
+      );
+
       const payload = {
         orderId: order.id,
         storeId: order.store_id,
@@ -591,50 +758,16 @@ export default function AdmEmissaoFiscalDetalhePage() {
             uf: store.state || "",
           },
         },
+
         transporte: {
           modalidade_frete: "9",
-          valor_frete: Number(order.freight_fee ?? 0) || 0,
+          valor_frete: 0,
         },
-        itens: Object.values(draftItems).map((it) => ({
-          codigo: it.codigo,
-          descricao: it.descricao,
-          unidade: it.unidade,
-          ncm: it.ncm || null,
-          cest: it.cest || null,
-          cfop: it.cfop || null,
-          gtin: it.ean || null,
-          origem: it.origem || null,
-          icms_situacao_tributaria: it.icms_situacao_tributaria || null,
-          pis_situacao_tributaria: it.pis_situacao_tributaria || null,
-          cofins_situacao_tributaria: it.cofins_situacao_tributaria || null,
 
-          icms_percent: it.icms_percent || null,
-          sit_trib: it.sit_trib || null,
-          pis_percent: it.pis_percent || null,
-          cofins_percent: it.cofins_percent || null,
-          aliq_mun: it.aliq_mun || null,
-          aliq_est: it.aliq_est || null,
-          aliq_fed: it.aliq_fed || null,
-          aliq_csosn: it.aliq_csosn || null,
-          csosn: it.csosn || null,
-          base_reduction_percent: it.base_reduction_percent || null,
-          benefit_fiscal: it.benefit_fiscal || null,
-          desoneration_percent: it.desoneration_percent || null,
-          red_base_effective_percent: it.red_base_effective_percent || null,
-          icms_effective_percent: it.icms_effective_percent || null,
-          cst_rt: it.cst_rt || null,
-          cod_class_trib_rt: it.cod_class_trib_rt || null,
-          cbs_rt_percent: it.cbs_rt_percent || null,
-          ibs_uf_rt_percent: it.ibs_uf_rt_percent || null,
-          ibs_mun_rt_percent: it.ibs_mun_rt_percent || null,
-          red_cbs_rt_percent: it.red_cbs_rt_percent || null,
-          red_ibs_uf_rt_percent: it.red_ibs_uf_rt_percent || null,
-          red_ibs_mun_rt_percent: it.red_ibs_mun_rt_percent || null,
+        valor_outras_despesas: extraExpenseTotal,
+        tratar_frete_como_despesa_acessoria: true,
 
-          quantidade: Number(it.quantidade || 0),
-          valor_unitario: Number(it.valor_unitario || 0),
-          valor_total: Number(it.valor_total || 0),
-        })),
+        itens: payloadItems,
         observacoes: order.notes || null,
       };
 
@@ -779,7 +912,7 @@ export default function AdmEmissaoFiscalDetalhePage() {
 
       {msg ? (
         <Card>
-          <div className="text-sm text-red-600 whitespace-pre-wrap">{msg}</div>
+          <div className="whitespace-pre-wrap text-sm text-red-600">{msg}</div>
         </Card>
       ) : null}
 
@@ -838,13 +971,18 @@ export default function AdmEmissaoFiscalDetalhePage() {
               <span className="font-semibold text-slate-900">{fmtBRL(totalProdutos)}</span>
             </div>
             <div className="flex justify-between gap-3">
-              <span className="text-slate-500">Frete pedido</span>
-              <span className="font-semibold text-slate-900">{fmtBRL(Number(order.freight_fee ?? 0))}</span>
+              <span className="text-slate-500">Despesa acessória NF-e</span>
+              <span className="font-semibold text-slate-900">{fmtBRL(despesasAcessoriasNfe)}</span>
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Total líquido</span>
               <span className="font-semibold text-slate-900">{fmtBRL(totalLiquido)}</span>
             </div>
+          </div>
+
+          <div className="mt-4 rounded-[18px] border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
+            O valor do campo <strong>freight_fee</strong> será enviado para a NF-e como
+            <strong> despesa acessória</strong>, e não como frete fiscal.
           </div>
         </div>
 
@@ -873,7 +1011,7 @@ export default function AdmEmissaoFiscalDetalhePage() {
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Chave</span>
-              <span className="font-semibold text-slate-900 break-all text-right">{focusDoc?.chave || "-"}</span>
+              <span className="break-all text-right font-semibold text-slate-900">{focusDoc?.chave || "-"}</span>
             </div>
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Protocolo</span>
@@ -882,27 +1020,30 @@ export default function AdmEmissaoFiscalDetalhePage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {focusDoc?.url_danfe ? (
-              <a
-                href={focusDoc.url_danfe}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-10 items-center justify-center rounded-[16px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50"
-              >
-                Abrir DANFE
-              </a>
-            ) : null}
-
-            {focusDoc?.url_xml ? (
-              <a
-                href={focusDoc.url_xml}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-10 items-center justify-center rounded-[16px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50"
-              >
-                Abrir XML
-              </a>
-            ) : null}
+            {focusDoc?.reference ? (
+              <>
+                <a
+                  href={`/api/focus/nfe/danfe?reference=${encodeURIComponent(focusDoc.reference)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-emerald-200 bg-emerald-50 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                >
+                  ↓ Baixar DANFE
+                </a>
+                <a
+                  href={`/api/focus/nfe/xml?reference=${encodeURIComponent(focusDoc.reference)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 items-center justify-center rounded-[16px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.05)] transition hover:bg-slate-50"
+                >
+                  ↓ Baixar XML
+                </a>
+              </>
+            ) : (
+              <div className="rounded-[12px] border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                Emita a NF-e primeiro para disponibilizar DANFE e XML.
+              </div>
+            )}
           </div>
 
           <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 p-3">
