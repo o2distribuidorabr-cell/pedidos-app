@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { validateDeliveryConfirmationCode } from "@/lib/deliveryConfirmation";
 import { updateOrderDeliveryFields } from "@/lib/delivery";
@@ -11,9 +11,12 @@ type RouteContext = {
 
 type BodyPayload = {
   code: string;
+  lat?: number | null;
+  lng?: number | null;
+  accuracy?: number | null;
 };
 
-export async function POST(request: Request, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = (await request.json()) as BodyPayload;
@@ -50,6 +53,12 @@ export async function POST(request: Request, context: RouteContext) {
       );
     }
 
+    // Captura IP do request
+    const ip =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+      request.headers.get("x-real-ip") ||
+      "desconhecido";
+
     // Valida o código
     const validation = await validateDeliveryConfirmationCode(supabaseAdmin, {
       orderId: id,
@@ -77,6 +86,17 @@ export async function POST(request: Request, context: RouteContext) {
       deliveryStatus: "ENTREGUE",
       deliveryFinishedAt: now,
     });
+
+    // Salva IP e localização na confirmação
+    await supabaseAdmin
+      .from("delivery_confirmations")
+      .update({
+        confirm_ip: ip,
+        confirm_lat: body.lat ?? null,
+        confirm_lng: body.lng ?? null,
+        confirm_accuracy: body.accuracy ?? null,
+      })
+      .eq("order_id", id);
 
     return NextResponse.json({
       ok: true,

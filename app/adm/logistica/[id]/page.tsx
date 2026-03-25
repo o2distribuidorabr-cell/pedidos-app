@@ -49,6 +49,11 @@ type DeliveryOverviewRow = {
   code_expires_at: string | null;
   confirmed_at: string | null;
   confirmed_by: string | null;
+  confirm_ip: string | null;
+  confirm_lat: number | null;
+  confirm_lng: number | null;
+  confirm_accuracy: number | null;
+  confirm_address: string | null;
 };
 
 type OrderRow = Record<string, unknown> & {
@@ -612,12 +617,23 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     }
   }, [id, routeId, loadRouteData, pickupAddress, pickupLat, pickupLng]);
 
-  const applyServerData = useCallback((data: { order?: OrderRow | null; overview?: DeliveryOverviewRow | null; storeLabel?: string; }, options?: { preserveForm?: boolean; clearFlashMessage?: boolean; }) => {
+  const applyServerData = useCallback((data: { order?: OrderRow | null; overview?: DeliveryOverviewRow | null; storeLabel?: string; confirmationMeta?: Record<string, unknown> | null; }, options?: { preserveForm?: boolean; clearFlashMessage?: boolean; }) => {
     const preserveForm = options?.preserveForm ?? true;
     if (options?.clearFlashMessage) clearMessage();
 
     const nextOrder = (data.order as OrderRow | null) ?? null;
-    const nextOverview = (data.overview as DeliveryOverviewRow | null) ?? null;
+
+    // Mescla confirmationMeta (IP, coords) no overview para exibição na página
+    const rawOverview = (data.overview as DeliveryOverviewRow | null) ?? null;
+    const meta = (data.confirmationMeta as Record<string, unknown> | null) ?? null;
+    const nextOverview: DeliveryOverviewRow | null = rawOverview && meta ? {
+      ...rawOverview,
+      confirm_ip: (meta.confirmIp as string | null) ?? rawOverview.confirm_ip ?? null,
+      confirm_lat: (meta.confirmLat as number | null) ?? rawOverview.confirm_lat ?? null,
+      confirm_lng: (meta.confirmLng as number | null) ?? rawOverview.confirm_lng ?? null,
+      confirm_accuracy: (meta.confirmAccuracy as number | null) ?? rawOverview.confirm_accuracy ?? null,
+      confirm_address: (meta.confirmAddress as string | null) ?? rawOverview.confirm_address ?? null,
+    } : rawOverview;
     const prevLat = overview?.last_lat ?? null;
     const prevLng = overview?.last_lng ?? null;
 
@@ -1691,14 +1707,37 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Código de retirada</div>
                   {overview?.confirmation_status === "CONFIRMADO" ? (
                     <div className="mt-3">
-                      <div className="rounded-[14px] border border-green-200 bg-green-50 p-3">
+                      <div className="rounded-[14px] border border-green-200 bg-green-50 p-3 space-y-1">
                         <div className="text-sm font-semibold text-green-700">✅ Retirada confirmada por código</div>
-                        <div className="mt-1 text-xs text-green-600">
+                        <div className="text-xs text-green-600">
                           Confirmado em: <b>{formatDateTime(overview?.confirmed_at)}</b>
+                          {overview?.confirmed_by ? ` • por: ${overview.confirmed_by}` : ""}
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          O franqueado inseriu o código de retirada no portal — prova de recebimento registrada.
-                        </div>
+                        {overview?.confirm_ip ? (
+                          <div className="text-xs text-slate-500">IP: <b className="font-mono">{overview.confirm_ip}</b></div>
+                        ) : null}
+                        {overview?.confirm_lat != null && overview?.confirm_lng != null ? (
+                          <div className="text-xs text-slate-500">
+                            Coordenadas: <b className="font-mono">{Number(overview.confirm_lat).toFixed(6)}, {Number(overview.confirm_lng).toFixed(6)}</b>
+                            {overview.confirm_accuracy != null ? ` (±${Math.round(Number(overview.confirm_accuracy))}m)` : ""}
+                            {" "}
+                            <a
+                              href={`https://www.google.com/maps?q=${overview.confirm_lat},${overview.confirm_lng}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-cyan-600 underline hover:text-cyan-700"
+                            >
+                              Ver no mapa
+                            </a>
+                          </div>
+                        ) : null}
+                        {overview?.confirm_address ? (
+                          <div className="text-xs text-slate-500">Endereço: <b>{overview.confirm_address}</b></div>
+                        ) : null}
+                        {!overview?.confirm_ip && !overview?.confirm_lat && !overview?.confirm_address ? (
+                          <div className="text-xs text-slate-400 italic">Dados de localização não disponíveis (confirmação anterior à coleta de IP/coords).</div>
+                        ) : null}
+                        <div className="text-xs text-slate-400">O franqueado inseriu o código de retirada no portal — prova de recebimento registrada.</div>
                       </div>
                     </div>
                   ) : (
@@ -1813,17 +1852,38 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                   <div className="mt-6">
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirmação de entrega</div>
                     {overview?.confirmation_status === "CONFIRMADO" ? (
-                      <div className="mt-3 rounded-[18px] border border-green-200 bg-green-50 p-3">
+                      <div className="mt-3 rounded-[18px] border border-green-200 bg-green-50 p-3 space-y-1">
                         <div className="text-sm font-semibold text-green-700">
                           ✅ Entrega confirmada por código
                         </div>
-                        <div className="mt-1 text-xs text-slate-600">
-                          Confirmado em: {formatDateTime(overview?.confirmed_at)}
+                        <div className="text-xs text-slate-600">
+                          Confirmado em: <b>{formatDateTime(overview?.confirmed_at)}</b>
                           {overview?.confirmed_by ? ` • por: ${overview.confirmed_by}` : ""}
                         </div>
-                        <div className="mt-1 text-xs text-slate-500">
-                          O cliente inseriu o código de confirmação pessoalmente no portal.
-                        </div>
+                        {overview?.confirm_ip ? (
+                          <div className="text-xs text-slate-500">IP: <b className="font-mono">{overview.confirm_ip}</b></div>
+                        ) : null}
+                        {overview?.confirm_lat != null && overview?.confirm_lng != null ? (
+                          <div className="text-xs text-slate-500">
+                            Coordenadas: <b className="font-mono">{Number(overview.confirm_lat).toFixed(6)}, {Number(overview.confirm_lng).toFixed(6)}</b>
+                            {overview.confirm_accuracy != null ? ` (±${Math.round(Number(overview.confirm_accuracy))}m)` : ""}
+                            {" "}
+                            <a
+                              href={`https://www.google.com/maps?q=${overview.confirm_lat},${overview.confirm_lng}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-cyan-600 underline hover:text-cyan-700"
+                            >
+                              Ver no mapa
+                            </a>
+                          </div>
+                        ) : null}
+                        {overview?.confirm_address ? (
+                          <div className="text-xs text-slate-500">Endereço: <b>{overview.confirm_address}</b></div>
+                        ) : null}
+                        {!overview?.confirm_ip && !overview?.confirm_lat && !overview?.confirm_address ? (
+                          <div className="text-xs text-slate-400 italic">Dados de localização não disponíveis (confirmação anterior à coleta de IP/coords).</div>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="mt-3 rounded-[18px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">

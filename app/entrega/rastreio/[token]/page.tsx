@@ -135,6 +135,23 @@ function buildGoogleMapsUrl(lat: number, lng: number, address: string): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${dest}&travelmode=driving`;
 }
 
+// Calcula distância em metros entre dois pontos usando fórmula de Haversine
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000;
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const DELIVERY_RADIUS_METERS = 200;
+// Se a precisão do GPS for pior que isso, não bloqueia — pode ser erro do dispositivo
+const GPS_ACCURACY_THRESHOLD = 50;
+
 export default function EntregaRastreioTokenPage({ params }: Props) {
   const { token } = use(params);
 
@@ -450,6 +467,39 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
         return;
       }
 
+      // Validação de proximidade — só bloqueia se GPS tiver boa precisão e estiver fora do raio
+      if (session?.dropoffLat != null && session?.dropoffLng != null) {
+        if (!coords) {
+          // Sem GPS — permite confirmar com aviso no log, não bloqueia
+          console.warn("GPS indisponível na confirmação.");
+        } else {
+          const precisao = coords.accuracy ?? 999;
+          const gpsConfiavel = precisao <= GPS_ACCURACY_THRESHOLD;
+
+          if (gpsConfiavel) {
+            const distancia = haversineMeters(
+              coords.lat,
+              coords.lng,
+              session.dropoffLat,
+              session.dropoffLng
+            );
+
+            if (distancia > DELIVERY_RADIUS_METERS) {
+              const distFormatada = distancia >= 1000
+                ? `${(distancia / 1000).toFixed(1)} km`
+                : `${Math.round(distancia)} metros`;
+              showError(
+                `Você está a ${distFormatada} do ponto de entrega. ` +
+                `Aproxime-se a menos de ${DELIVERY_RADIUS_METERS} metros para confirmar.`
+              );
+              return;
+            }
+          }
+          // GPS com precisão ruim (> 50m) — não bloqueia para não prejudicar
+          // o motorista por falha do dispositivo
+        }
+      }
+
       setSendingCode(true);
       clearMessage();
 
@@ -475,7 +525,7 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
     } finally {
       setSendingCode(false);
     }
-  }, [code, loadSession, stopWatcher, token]);
+  }, [code, coords, session, loadSession, stopWatcher, token]);
 
   useEffect(() => {
     loadSession(false);
@@ -749,6 +799,46 @@ export default function EntregaRastreioTokenPage({ params }: Props) {
             title="Finalizar entrega"
             subtitle="Peça ao cliente o código de confirmação para concluir a entrega."
           >
+            {/* Indicador de proximidade */}
+            {session.dropoffLat != null && session.dropoffLng != null ? (
+              coords ? (() => {
+                const dist = haversineMeters(coords.lat, coords.lng, session.dropoffLat!, session.dropoffLng!);
+                const precisao = coords.accuracy ?? 999;
+                const gpsConfiavel = precisao <= GPS_ACCURACY_THRESHOLD;
+                const dentro = dist <= DELIVERY_RADIUS_METERS;
+                const distFormatada = dist >= 1000
+                  ? `${(dist / 1000).toFixed(1)} km`
+                  : `${Math.round(dist)} m`;
+
+                if (!gpsConfiavel) {
+                  return (
+                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                      ⚠️ GPS com precisão baixa ({Math.round(precisao)}m). A validação de proximidade está desativada — confirme normalmente.
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className={`mb-4 rounded-xl border p-3 text-sm font-semibold ${
+                    dentro
+                      ? "border-green-200 bg-green-50 text-green-700"
+                      : "border-red-200 bg-red-50 text-red-700"
+                  }`}>
+                    {dentro
+                      ? `✅ Você está a ${distFormatada} do ponto de entrega — dentro do raio permitido.`
+                      : `📍 Você está a ${distFormatada} do ponto de entrega. Aproxime-se a menos de ${DELIVERY_RADIUS_METERS}m para confirmar.`
+                    }
+                    {" "}<span className="font-normal opacity-70">(GPS: ±{Math.round(precisao)}m)</span>
+                  </div>
+                );
+              })()
+              : (
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-700">
+                  ⚠️ GPS não disponível. Confirme normalmente — a validação de proximidade foi ignorada.
+                </div>
+              )
+            ) : null}
+
             <Input
               label="Código do cliente"
               value={code}
