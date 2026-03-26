@@ -459,16 +459,20 @@ export default function AdmExpedicaoPage() {
         body: JSON.stringify({}),
       });
       const data = await response.json();
+      console.log("[mark-separation] response:", response.status, data);
       if (!response.ok || !data.ok) {
-        setMsg(data.message || "Erro ao gerar código de retirada.");
+        const errMsg = data.message || "Erro ao gerar código de retirada.";
+        console.error("[mark-separation] erro:", errMsg);
+        setMsg(errMsg);
         return;
       }
       // Atualiza o status localmente
       setOrders((prev) => prev.map((o) =>
         o.id === order.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
       ));
-      setMsg(`Código de retirada gerado! O franqueado já pode confirmar no portal.`);
-    } catch {
+      setMsg(data.message || "Código de retirada gerado! O franqueado já pode confirmar no portal.");
+    } catch (err) {
+      console.error("[mark-separation] exception:", err);
       setMsg("Erro ao gerar código de retirada.");
     } finally {
       setGeneratingPickupId(null);
