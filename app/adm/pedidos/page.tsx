@@ -261,6 +261,7 @@ export default function AdmPedidosPage() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [dispatchOrder, setDispatchOrder] = useState<OrderRow | null>(null);
+  const [saving, setSaving] = useState(false);
   const [dispatchSaving, setDispatchSaving] = useState(false);
   const [q, setQ] = useState("");
 
@@ -390,6 +391,29 @@ export default function AdmPedidosPage() {
     if (error) { console.error("updateOrder error:", error); return; }
     setOrders((prev) => prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o)));
     await loadOrders();
+  }
+
+  async function handleMarkSeparation(order: OrderRow) {
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/logistica/admin/order/${order.id}/mark-separation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        console.error("Erro ao marcar separação:", data.message);
+        return;
+      }
+      setOrders((prev) => prev.map((o) =>
+        o.id === order.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
+      ));
+    } catch (e) {
+      console.error("Erro ao marcar separação:", e);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openDispatchChooser(order: OrderRow) {
@@ -648,10 +672,10 @@ export default function AdmPedidosPage() {
                               Recebido
                             </button>
                             <button type="button"
-                              onClick={() => updateOrder(o.id, { logistic_status: "EM_SEPARACAO" })}
-                              disabled={o.logistic_status === "EM_SEPARACAO"}
+                              onClick={() => handleMarkSeparation(o)}
+                              disabled={saving || o.logistic_status === "EM_SEPARACAO"}
                               className="inline-flex h-9 items-center justify-center rounded-[12px] border border-amber-200 bg-amber-50 px-2 text-xs font-semibold text-amber-700 transition hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                              Em separação
+                              {o.logistic_status === "EM_SEPARACAO" ? "✓ Em separação" : "Em separação"}
                             </button>
                           </div>
                           {o.delivery_mode !== "RETIRADA" ? (

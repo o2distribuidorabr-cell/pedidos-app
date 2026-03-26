@@ -881,21 +881,24 @@ export default function AdmExpedicaoPage() {
                       <SecondaryActionButton fullWidth disabled={saving} onClick={() => router.push(`/adm/expedicao/pedido/${order.id}`)}>Ver pedido</SecondaryActionButton>
                       <SecondaryActionButton fullWidth disabled={saving || printing} onClick={() => handlePrintOrder(order)}>{printing ? "Preparando..." : "Imprimir"}</SecondaryActionButton>
                       <SecondaryActionButton fullWidth disabled={saving} onClick={() => updateOrder(order.id, { logistic_status: "RECEBIDO" }, "Marcado como recebido.")}>Recebido</SecondaryActionButton>
-                      <PrimaryActionButton tone="amber" fullWidth disabled={saving} onClick={() => updateOrder(order.id, { logistic_status: "EM_SEPARACAO" }, "Em separação.")}>Em separação</PrimaryActionButton>
-
                       {order.delivery_mode === "RETIRADA" ? (
-                        /* RETIRADA: botão para gerar código de retirada */
-                        <PrimaryActionButton tone="cyan" fullWidth
+                        /* RETIRADA: marca em separação E gera código em um único clique */
+                        <PrimaryActionButton tone="amber" fullWidth
                           disabled={saving || generatingPickupId === order.id || order.logistic_status === "EM_SEPARACAO"}
                           onClick={() => handleGeneratePickupCode(order)}>
-                          {generatingPickupId === order.id ? "Gerando..." : order.logistic_status === "EM_SEPARACAO" ? "Código gerado ✓" : "Gerar código retirada"}
+                          {generatingPickupId === order.id ? "Gerando..." : order.logistic_status === "EM_SEPARACAO" ? "✓ Em separação" : "Em separação"}
                         </PrimaryActionButton>
                       ) : (
+                        /* FRETE: marca em separação via set-status */
+                        <PrimaryActionButton tone="amber" fullWidth disabled={saving} onClick={() => updateOrder(order.id, { logistic_status: "EM_SEPARACAO" }, "Em separação.")}>Em separação</PrimaryActionButton>
+                      )}
+
+                      {order.delivery_mode !== "RETIRADA" ? (
                         /* FRETE: botão de saída para entrega com modal de provedor */
                         <PrimaryActionButton fullWidth disabled={saving} onClick={() => openDispatchChooser(order)}>
                           Sair para entrega
                         </PrimaryActionButton>
-                      )}
+                      ) : null}
                     </div>
 
                     {order.delivery_mode === "RETIRADA" && order.logistic_status === "EM_SEPARACAO" ? (
