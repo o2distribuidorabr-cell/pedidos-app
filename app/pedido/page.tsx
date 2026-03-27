@@ -59,15 +59,20 @@ type OverdueOrderRow = {
 // ──────────────────────────────────────────────────────────────────────────────
 
 function getStep(product: Product): number {
-  // Usa step_qty do banco; garante mínimo de 1 para nunca travar o controle.
+  // Usa step_qty do banco. Aceita decimais (ex.: 0.397). Mínimo > 0.
   const v = Number(product.step_qty ?? 1);
   return v > 0 ? v : 1;
 }
 
 function roundToStep(value: number, step: number) {
   if (step <= 0) return value;
-  const k = Math.round(value / step);
-  return k * step;
+  // Usa arredondamento com fator de precisão para evitar erros de ponto
+  // flutuante em passos decimais (ex.: 0.397 * 3 = 1.1909999... → 1.191).
+  const precision = 1e10;
+  const k = Math.round((value / step) * precision) / precision;
+  const rounded = Math.round(k) * step;
+  // Arredonda o resultado final a 3 casas decimais para exibição limpa.
+  return Math.round(rounded * 1000) / 1000;
 }
 
 function money(v: number) {
@@ -201,7 +206,10 @@ function QtyControl({
         step={step}
         min={0}
         disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => {
+          const raw = parseFloat(e.target.value);
+          onChange(Number.isFinite(raw) ? raw : 0);
+        }}
       />
 
       <MiniQtyButton onClick={onIncrease} disabled={disabled}>
@@ -420,8 +428,8 @@ export default function PedidoPage() {
           name: String(p.name ?? ""),
           unit: (p.unit ?? "un") as string,
           unit_cost: Number(effective) || 0,
-          step_qty: p.step_qty != null ? Math.max(1, Number(p.step_qty)) : 1,  // ← CORRIGIDO
-          pack_qty: p.pack_qty != null ? Math.max(1, Number(p.pack_qty)) : 1,  // ← CORRIGIDO
+          step_qty: p.step_qty != null ? Math.max(0.001, Number(p.step_qty)) : 1,  // ← aceita decimais
+          pack_qty: p.pack_qty != null ? Math.max(0.001, Number(p.pack_qty)) : 1,  // ← aceita decimais
           base_price: base,
           override_price: ov ?? null,
           ncm: (p.ncm ?? null) as any,
@@ -764,7 +772,7 @@ export default function PedidoPage() {
                                 </div>
 
                                 {selected ? <Badge tone="blue">Selecionado</Badge> : null}
-                                {step > 1 ? <Badge tone="yellow">Passo {step}</Badge> : null}
+                                {step !== 1 ? <Badge tone="yellow">Passo {step}</Badge> : null}
                               </div>
 
                               <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-slate-600">

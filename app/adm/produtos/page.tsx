@@ -475,8 +475,8 @@ export default function AdmProdutosPage() {
       name: nameVal,
       unit: unit.trim() || "un",
       unit_price: toNumber(unitPrice),
-      step_qty: Math.max(1, Math.floor(toNumber(stepQty))),
-      pack_qty: Math.max(1, Math.floor(toNumber(packQty))),
+      step_qty: Math.max(0.001, Math.round(toNumber(stepQty) * 1000) / 1000),
+      pack_qty: Math.max(0.001, Math.round(toNumber(packQty) * 1000) / 1000),
       active: !!active,
 
       ncm: ncmNorm || null,
@@ -727,7 +727,7 @@ export default function AdmProdutosPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <Input label="Passo (step_qty)" value={stepQty} onChange={setStepQty} placeholder="1" />
+              <Input label="Passo (step_qty)" value={stepQty} onChange={setStepQty} placeholder="Ex.: 1 ou 0,397" />
               <Input label="Lote / caixa (pack_qty)" value={packQty} onChange={setPackQty} placeholder="1" />
             </div>
 
