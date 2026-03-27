@@ -455,7 +455,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
   const isDispatchMode = searchParams.get("mode") === "dispatch";
   // NOVO: detecta se veio de uma rota com múltiplas paradas
-  const routeId = searchParams.get("routeId") ?? null;
+  const routeIdFromUrl = searchParams.get("routeId") ?? null;
+  const [resolvedRouteId, setResolvedRouteId] = useState<string | null>(routeIdFromUrl);
+  const routeId = resolvedRouteId;
 
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [overview, setOverview] = useState<DeliveryOverviewRow | null>(null);
@@ -524,11 +526,15 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     if (providerFromUrl === "lalamove") return "lalamove";
     if (providerFromUrl === "autonomo") return "autonomo";
     if (shipment?.provider === "LALAMOVE") return "lalamove";
+    // Para rota múltipla: usa o provider salvo na delivery_routes
+    if (routeData?.provider === "lalamove" || routeData?.provider === "LALAMOVE") return "lalamove";
+    // Se tem routeId mas routeData ainda não carregou, aguarda (não assume autonomo)
+    if (resolvedRouteId && !routeData) return "lalamove"; // rota sempre é lalamove
     return "autonomo";
-  }, [providerFromUrl, shipment?.provider]);
+  }, [providerFromUrl, shipment?.provider, routeData, resolvedRouteId]);
 
-  const isLalamove = selectedProvider === "lalamove";
   const isMultiStop = !!routeId && routeStops.length > 1;
+  const isLalamove = selectedProvider === "lalamove" || (isMultiStop && !!routeData?.lalamove_order_id);
   const isPickup = (order as any)?.delivery_mode === "RETIRADA";
 
   const showSuccess = (text: string) => { setMessage(text); setMessageTone("green"); };
@@ -578,9 +584,29 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     try {
       if (!silent) setLoadingShipment(true);
 
-      // Se é rota múltipla, busca dados da rota (não do order_shipments)
+      // Carrega dados da rota múltipla (se houver)
       if (routeId) {
         await loadRouteData();
+        // Para rota múltipla, busca o shipment pelo lalamove_order_id da rota
+        // (o order_shipments é criado com local_order_id do primeiro pedido da rota)
+        const { data: routeCheck } = await supabase
+          .from("delivery_routes")
+          .select("lalamove_order_id")
+          .eq("id", routeId)
+          .maybeSingle();
+
+        if (routeCheck?.lalamove_order_id) {
+          const { data: routeShipment } = await supabase
+            .from("order_shipments")
+            .select("id,local_order_id,provider,provider_market,provider_order_id,provider_quote_id,provider_driver_id,provider_status,provider_event_type,share_link,service_type,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,sender_name,sender_phone,recipient_name,recipient_phone,price_amount,price_currency,last_quote_payload,last_order_payload,last_driver_payload,last_webhook_payload,created_at,updated_at")
+            .eq("provider_order_id", routeCheck.lalamove_order_id)
+            .eq("provider", "LALAMOVE")
+            .maybeSingle();
+
+          if (routeShipment) {
+            setShipment(routeShipment as LalamoveShipmentRow);
+          }
+        }
         return;
       }
 
@@ -729,14 +755,14 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
   const syncLalamoveSilently = useCallback(async () => {
     const orderId = routeData?.lalamove_order_id ?? shipment?.provider_order_id;
-    const driverId = routeData ? null : shipment?.provider_driver_id;
+    const driverId = shipment?.provider_driver_id ?? null;
     if (!orderId) return;
 
     try {
       const orderResponse = await fetch(`/api/lalamove/provider-order/${orderId}`, { method: "GET", cache: "no-store" });
       if (!orderResponse.ok) return;
       const orderData = await orderResponse.json();
-      const resolvedDriverId = firstString(orderData?.data?.driverId, driverId) ?? null;
+      const resolvedDriverId = firstString(orderData?.data?.driverId, orderData?.data?.driverIds?.[0], driverId) ?? null;
 
       if (resolvedDriverId) {
         await fetch(`/api/lalamove/provider-order/${orderId}/driver/${resolvedDriverId}`, { method: "GET", cache: "no-store" });
@@ -747,26 +773,39 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       const lalamoveStatus = String(orderData?.data?.status ?? "").toUpperCase();
       const currentDeliveryStatus = overview?.delivery_status;
 
-      // Regra 1: Lalamove COMPLETED → marca como ENTREGUE automaticamente
+      // Helper: atualiza status de todos os pedidos da rota (ou só o atual se pedido único)
+      const setStatusForAllOrders = async (deliveryStatus: string) => {
+        if (isMultiStop && routeStops.length > 0) {
+          await Promise.all(
+            routeStops.map((stop) =>
+              fetch(`/api/logistica/admin/order/${stop.order_id}/set-status`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deliveryStatus }),
+              }).catch(() => {})
+            )
+          );
+        } else {
+          await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deliveryStatus }),
+          }).catch(() => {});
+        }
+      };
+
+      // Regra 1: Lalamove COMPLETED → marca como ENTREGUE automaticamente (todos os pedidos da rota)
       const isLalamoveCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
       if (isLalamoveCompleted && currentDeliveryStatus !== "ENTREGUE") {
-        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deliveryStatus: "ENTREGUE" }),
-        }).catch(() => {});
+        await setStatusForAllOrders("ENTREGUE");
         await loadAllData(true);
         return;
       }
 
-      // Regra 2: Lalamove CANCELED + nosso status SAIU_PARA_ENTREGA → volta para EM_SEPARACAO
+      // Regra 2: Lalamove CANCELED + nosso status SAIU_PARA_ENTREGA → volta para EM_SEPARACAO (todos da rota)
       const isLalamoveCanceled = ["CANCEL", "EXPIRED", "REJECTED"].some(s => lalamoveStatus.includes(s));
       if (isLalamoveCanceled && currentDeliveryStatus === "SAIU_PARA_ENTREGA") {
-        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deliveryStatus: "EM_SEPARACAO" }),
-        }).catch(() => {});
+        await setStatusForAllOrders("EM_SEPARACAO");
         await loadAllData(true);
         return;
       }
@@ -777,28 +816,61 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       const isLalamovePending = ["ASSIGNING", "MATCHING", "PENDING", "QUEUE", "ACCEPTED", "ASSIGNED"].some(s => lalamoveStatus.includes(s));
 
       if (isLalamovePending && currentDeliveryStatus === "SAIU_PARA_ENTREGA") {
-        // Lalamove ainda não coletou — volta para EM_SEPARACAO
-        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deliveryStatus: "EM_SEPARACAO" }),
-        }).catch(() => {});
+        await setStatusForAllOrders("EM_SEPARACAO");
         await loadAllData(true);
         return;
       }
 
-      // Se Lalamove coletou e nosso status ainda é EM_SEPARACAO → avança para SAIU_PARA_ENTREGA
+      // Se Lalamove coletou e nosso status ainda é EM_SEPARACAO → avança para SAIU_PARA_ENTREGA (todos da rota)
       if (isLalamovePickedUp && currentDeliveryStatus === "EM_SEPARACAO") {
-        await fetch(`/api/logistica/admin/order/${id}/set-status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ deliveryStatus: "SAIU_PARA_ENTREGA" }),
-        }).catch(() => {});
+        await setStatusForAllOrders("SAIU_PARA_ENTREGA");
         await loadAllData(true);
         return;
       }
     } catch { /* sync silenciosa */ }
   }, [routeData, shipment?.provider_order_id, shipment?.provider_driver_id, loadLalamoveShipment, overview?.delivery_status, id, loadAllData]);
+
+  // Auto-descobre routeId se o pedido faz parte de uma rota mas a URL não tem routeId
+  useEffect(() => {
+    if (routeIdFromUrl) return; // já tem na URL
+    (async () => {
+      const { data: stop } = await supabase
+        .from("delivery_route_stops")
+        .select("route_id")
+        .eq("order_id", id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (stop?.route_id) {
+        setResolvedRouteId(stop.route_id);
+      }
+    })();
+  }, [id, routeIdFromUrl]);
+
+  // Quando resolvedRouteId muda (descoberto via auto-discovery), carrega dados da rota
+  useEffect(() => {
+    if (!resolvedRouteId) return;
+    loadRouteData();
+    // Busca também o shipment da rota pelo lalamove_order_id
+    (async () => {
+      const { data: routeCheck } = await supabase
+        .from("delivery_routes")
+        .select("lalamove_order_id")
+        .eq("id", resolvedRouteId)
+        .maybeSingle();
+      if (routeCheck?.lalamove_order_id) {
+        const { data: routeShipment } = await supabase
+          .from("order_shipments")
+          .select("id,local_order_id,provider,provider_market,provider_order_id,provider_quote_id,provider_driver_id,provider_status,provider_event_type,share_link,service_type,pickup_address,pickup_lat,pickup_lng,dropoff_address,dropoff_lat,dropoff_lng,sender_name,sender_phone,recipient_name,recipient_phone,price_amount,price_currency,last_quote_payload,last_order_payload,last_driver_payload,last_webhook_payload,created_at,updated_at")
+          .eq("provider_order_id", routeCheck.lalamove_order_id)
+          .eq("provider", "LALAMOVE")
+          .maybeSingle();
+        if (routeShipment) {
+          setShipment(routeShipment as LalamoveShipmentRow);
+        }
+      }
+    })();
+  }, [resolvedRouteId, loadRouteData]);
 
   useEffect(() => { loadAllData(false); }, [loadAllData]);
   useEffect(() => { const i = window.setInterval(() => loadLiveOnly(), 5000); return () => window.clearInterval(i); }, [loadLiveOnly]);
@@ -880,8 +952,10 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const lalamoveLastLng = lalamoveSnapshot.lng;
   const lalamoveLastAccuracy = lalamoveSnapshot.accuracy;
   const lalamoveLastSeenAt = lalamoveSnapshot.updatedAt ?? shipment?.updated_at ?? null;
-  const lalamoveDriverName = lalamoveSnapshot.driverName ?? null;
-  const lalamoveDriverPhone = lalamoveSnapshot.driverPhone ?? null;
+  // Driver name/phone: prioriza payloads Lalamove (funciona tanto para pedido único quanto rota múltipla)
+  // Para rota múltipla, o shipment agora é buscado pelo provider_order_id da rota
+  const lalamoveDriverName = lalamoveSnapshot.driverName ?? routeData?.driver_name ?? null;
+  const lalamoveDriverPhone = lalamoveSnapshot.driverPhone ?? routeData?.driver_phone ?? null;
   const lalamoveDriverPlate = lalamoveSnapshot.driverPlate ?? null;
   const lalamoveHasMap = lalamoveLastLat != null && lalamoveLastLng != null;
 
@@ -903,8 +977,8 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const lalamoveIcon = useMemo(() => createDeliveryIcon("🚚", "#7c3aed"), []);
 
   // Para rota múltipla, usa dados da delivery_routes; para pedido único, usa order_shipments
-  const hasLalamoveQuote = isMultiStop ? !!routeData?.lalamove_quote_id : !!shipment?.provider_quote_id;
-  const hasLalamoveOrder = isMultiStop ? !!routeData?.lalamove_order_id : !!shipment?.provider_order_id;
+  const hasLalamoveQuote = (isMultiStop || !!resolvedRouteId) ? !!routeData?.lalamove_quote_id : !!shipment?.provider_quote_id;
+  const hasLalamoveOrder = (isMultiStop || !!resolvedRouteId) ? !!routeData?.lalamove_order_id : !!shipment?.provider_order_id;
 
   const serviceOptions = useMemo(() => availableServices.map((service) => ({
     value: service.key,
@@ -1139,24 +1213,83 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
   async function handleLalamoveSync(showToast = true) {
     try {
-      const orderId = routeData?.lalamove_order_id ?? shipment?.provider_order_id;
-      if (!orderId) { if (showToast) showError("Ainda não existe corrida criada na Lalamove."); return; }
       setLalamoveSyncing(true);
       if (showToast) clearMessage();
+
+      // Para rota agrupada: busca SEMPRE direto do banco (ignora state que pode estar desatualizado)
+      // Para pedido individual: usa shipment do state
+      let orderId: string | null = null;
+
+      if (resolvedRouteId) {
+        const { data: rd } = await supabase
+          .from("delivery_routes")
+          .select("lalamove_order_id")
+          .eq("id", resolvedRouteId)
+          .maybeSingle();
+        orderId = rd?.lalamove_order_id ?? null;
+      }
+
+      if (!orderId) {
+        orderId = shipment?.provider_order_id ?? null;
+      }
+
+      if (!orderId) {
+        if (showToast) showError("Ainda não existe corrida criada na Lalamove.");
+        return;
+      }
 
       const orderResponse = await fetch(`/api/lalamove/provider-order/${orderId}`, { method: "GET", cache: "no-store" });
       const orderData = await orderResponse.json();
       if (!orderResponse.ok) throw new Error(orderData?.error || "Erro ao atualizar a corrida.");
 
-      const driverId = firstString(orderData?.data?.driverId, shipment?.provider_driver_id) ?? null;
+      const driverId = firstString(orderData?.data?.driverId, orderData?.data?.driverIds?.[0], shipment?.provider_driver_id) ?? null;
       if (driverId) {
         const driverResponse = await fetch(`/api/lalamove/provider-order/${orderId}/driver/${driverId}`, { method: "GET", cache: "no-store" });
         const driverData = await driverResponse.json();
         if (!driverResponse.ok) throw new Error(driverData?.error || "Erro ao atualizar motorista.");
       }
 
+      // Aplica regras de status com base no retorno da Lalamove
+      const lalamoveStatus = String(orderData?.data?.status ?? "").toUpperCase();
+      const currentDeliveryStatus = overview?.delivery_status;
+
+      const setStatusForAllOrders = async (deliveryStatus: string) => {
+        if (resolvedRouteId && routeStops.length > 0) {
+          await Promise.all(
+            routeStops.map((stop) =>
+              fetch(`/api/logistica/admin/order/${stop.order_id}/set-status`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ deliveryStatus }),
+              }).catch(() => {})
+            )
+          );
+        } else {
+          await fetch(`/api/logistica/admin/order/${id}/set-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ deliveryStatus }),
+          }).catch(() => {});
+        }
+      };
+
+      const isCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
+      const isCanceled = ["CANCEL", "EXPIRED", "REJECTED"].some(s => lalamoveStatus.includes(s));
+      const isPickedUp = ["PICKED_UP", "ON_GOING", "IN_TRANSIT", "ONGOING"].some(s => lalamoveStatus.includes(s));
+      const isPending = ["ASSIGNING", "MATCHING", "PENDING", "QUEUE", "ACCEPTED", "ASSIGNED"].some(s => lalamoveStatus.includes(s));
+
+      if (isCompleted && currentDeliveryStatus !== "ENTREGUE") {
+        await setStatusForAllOrders("ENTREGUE");
+      } else if (isCanceled && currentDeliveryStatus === "SAIU_PARA_ENTREGA") {
+        await setStatusForAllOrders("EM_SEPARACAO");
+      } else if (isPending && currentDeliveryStatus === "SAIU_PARA_ENTREGA") {
+        await setStatusForAllOrders("EM_SEPARACAO");
+      } else if (isPickedUp && currentDeliveryStatus === "EM_SEPARACAO") {
+        await setStatusForAllOrders("SAIU_PARA_ENTREGA");
+      }
+
       await loadAllData(true);
-      if (routeId) await loadRouteData();
+      if (resolvedRouteId) await loadRouteData();
       if (showToast) showSuccess("Dados da corrida Lalamove atualizados.");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Erro ao sincronizar Lalamove.";
@@ -1812,7 +1945,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                 </div>
               </div>
 
-              {!isMultiStop ? (
+              {!isMultiStop && !isLalamove ? (
                 <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
                   <div className="text-sm font-semibold text-slate-900">Saída para entrega</div>
                   <div className="mt-1 text-sm text-slate-600">Ao iniciar a entrega, o sistema gera link de rastreio e código de confirmação.</div>
