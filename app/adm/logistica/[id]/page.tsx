@@ -923,7 +923,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
 
   // Pedido bloqueado se Lalamove concluiu a corrida
   const lalamoveCurrentStatus = String(
-    (isMultiStop ? routeData?.lalamove_status : shipment?.provider_status) ?? ""
+    (isMultiStop || !!resolvedRouteId ? routeData?.lalamove_status : shipment?.provider_status) ?? ""
   ).toUpperCase();
   const isLalamoveCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(
     (s) => lalamoveCurrentStatus.includes(s)
@@ -932,8 +932,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
     (s) => lalamoveCurrentStatus.includes(s)
   );
 
-  // Status travado = confirmado por código OU Lalamove concluiu
-  const isStatusLocked = isConfirmedByCode || isLalamoveCompleted;
+  // Status travado = confirmado por código OU Lalamove concluiu OU pedido já entregue via Lalamove
+  const isDeliveredByLalamove = isLalamove && overview?.delivery_status === "ENTREGUE";
+  const isStatusLocked = isConfirmedByCode || isLalamoveCompleted || isDeliveredByLalamove;
 
   const driverNameValid = driverName.trim().length > 0;
   const driverPhoneValid = driverPhone.trim().length > 0;
