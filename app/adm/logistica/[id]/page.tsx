@@ -1363,8 +1363,8 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                 </Badge>
               </div>
 
-              {/* Código de confirmação da parada — visível para o admin enviar ao cliente */}
-              {stop.status !== "CONFIRMADO" ? (
+              {/* Código de confirmação da parada — só aparece para motorista autônomo, não para Lalamove */}
+              {stop.status !== "CONFIRMADO" && !isLalamove ? (
                 <div className="mt-3 flex items-center justify-between gap-3 rounded-[14px] border border-cyan-100 bg-cyan-50 px-3 py-2">
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wide text-cyan-600">Código do cliente</div>

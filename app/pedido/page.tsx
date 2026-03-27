@@ -12,6 +12,8 @@ type Product = {
   name: string;
   unit: string | null;
   unit_cost: number | null;
+  step_qty: number | null;   // ← ADICIONADO
+  pack_qty: number | null;   // ← ADICIONADO
   base_price?: number | null;
   override_price?: number | null;
   ncm?: string | null;
@@ -51,27 +53,15 @@ type OverdueOrderRow = {
   created_at: string | null;
 };
 
-const STEP_BY_SKU: Record<string, number> = {
-  "110129": 120,
-  "110132": 216,
-  "110133": 20,
-  "190": 1,
-  "110243": 50,
-  "110399": 800,
-  "110152": 2250,
-  "110147": 150,
-  "110278": 25,
-  "110255": 1000,
-  "110280": 3.5,
-  "110225": 0.397,
-  "110276": 48,
-  "110150": 1000,
-  "194": 60,
-  "193": 60,
-};
+// ──────────────────────────────────────────────────────────────────────────────
+// REMOVIDO: dicionário estático STEP_BY_SKU — agora o passo vem do banco de
+// dados pelo campo step_qty cadastrado em cada produto.
+// ──────────────────────────────────────────────────────────────────────────────
 
-function getStep(sku: string) {
-  return STEP_BY_SKU[sku] ?? 1;
+function getStep(product: Product): number {
+  // Usa step_qty do banco; garante mínimo de 1 para nunca travar o controle.
+  const v = Number(product.step_qty ?? 1);
+  return v > 0 ? v : 1;
 }
 
 function roundToStep(value: number, step: number) {
@@ -358,9 +348,11 @@ export default function PedidoPage() {
       setStoreName(st.name ?? "-");
       setFreightFee(Number(st.freight_fee ?? 0) || 0);
 
-      const selectOld = "id, sku, name, unit, unit_price, active";
+      // ── CORRIGIDO: inclui step_qty e pack_qty na query ──────────────────────
+      const selectOld = "id, sku, name, unit, unit_price, step_qty, pack_qty, active";
       const selectNew =
-        "id, sku, name, unit, unit_price, active, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
+        "id, sku, name, unit, unit_price, step_qty, pack_qty, active, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
+      // ────────────────────────────────────────────────────────────────────────
 
       const prodTry = await supabase
         .from("products")
@@ -416,6 +408,7 @@ export default function PedidoPage() {
         if (Number.isFinite(v) && v > 0) ovMap[String(r.product_id)] = v;
       });
 
+      // ── CORRIGIDO: mapeia step_qty e pack_qty do banco ─────────────────────
       const merged: Product[] = (prodData ?? []).map((p: any) => {
         const base = Number(p.unit_price ?? 0) || 0;
         const ov = ovMap[p.id];
@@ -427,6 +420,8 @@ export default function PedidoPage() {
           name: String(p.name ?? ""),
           unit: (p.unit ?? "un") as string,
           unit_cost: Number(effective) || 0,
+          step_qty: p.step_qty != null ? Math.max(1, Number(p.step_qty)) : 1,  // ← CORRIGIDO
+          pack_qty: p.pack_qty != null ? Math.max(1, Number(p.pack_qty)) : 1,  // ← CORRIGIDO
           base_price: base,
           override_price: ov ?? null,
           ncm: (p.ncm ?? null) as any,
@@ -439,6 +434,7 @@ export default function PedidoPage() {
           cofins_cst: (p.cofins_cst ?? null) as any,
         };
       });
+      // ────────────────────────────────────────────────────────────────────────
 
       setProducts(merged);
       setLoading(false);
@@ -477,8 +473,10 @@ export default function PedidoPage() {
     const unit = (prod.unit ?? "un").toString();
     const unit_cost = Number(prod.unit_cost ?? 0) || 0;
 
-    const step = getStep(prod.sku);
+    // ── CORRIGIDO: usa getStep(prod) que lê step_qty do banco ────────────────
+    const step = getStep(prod);
     const qty = Math.max(0, roundToStep(qtyRaw, step));
+    // ────────────────────────────────────────────────────────────────────────
 
     setCart((prev) => {
       const next = { ...prev };
@@ -510,13 +508,13 @@ export default function PedidoPage() {
   }
 
   function inc(prod: Product) {
-    const step = getStep(prod.sku);
+    const step = getStep(prod);
     const current = cart[prod.id]?.qty ?? 0;
     setQty(prod, current + step);
   }
 
   function dec(prod: Product) {
-    const step = getStep(prod.sku);
+    const step = getStep(prod);
     const current = cart[prod.id]?.qty ?? 0;
     setQty(prod, current - step);
   }
@@ -743,7 +741,7 @@ export default function PedidoPage() {
                       const unit = (p.unit ?? "un").toString();
                       const unit_cost = Number(p.unit_cost ?? 0) || 0;
                       const qty = cart[p.id]?.qty ?? 0;
-                      const step = getStep(p.sku);
+                      const step = getStep(p);  // ← CORRIGIDO: passa o objeto p
                       const lineTotal = qty * unit_cost;
                       const selected = qty > 0;
 

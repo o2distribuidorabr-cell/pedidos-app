@@ -123,17 +123,45 @@ export async function POST(request: NextRequest) {
         })
         .eq("id", body.routeId);
 
-      // Marca todos os pedidos da rota como SAIU_PARA_ENTREGA
+      // Busca os pedidos da rota
       const { data: routeStops } = await supabaseAdmin
         .from("delivery_route_stops")
         .select("order_id")
         .eq("route_id", body.routeId);
 
       if (routeStops && routeStops.length > 0) {
+        // Marca todos os pedidos da rota como SAIU_PARA_ENTREGA
         await supabaseAdmin
           .from("orders")
           .update({ logistic_status: "SAIU_PARA_ENTREGA" })
           .in("id", routeStops.map((s: any) => s.order_id));
+      }
+
+      // Cria o order_shipment para a rota usando o primeiro pedido como local_order_id
+      // Isso permite que o sistema busque dados do motorista e status pelo provider_order_id
+      const firstOrderId = routeStops?.[0]?.order_id ?? null;
+      if (firstOrderId && order?.orderId) {
+        await supabaseAdmin.from("order_shipments").upsert(
+          {
+            local_order_id: firstOrderId,
+            provider: "LALAMOVE",
+            provider_market: getLalamoveConfig().market,
+            provider_quote_id: body.quotationId,
+            provider_order_id: order?.orderId ?? null,
+            provider_driver_id: order?.driverId ?? null,
+            provider_status: order?.status ?? null,
+            share_link: order?.shareLink ?? null,
+            sender_name: body.sender.name,
+            sender_phone: body.sender.phone,
+            price_amount: order?.priceBreakdown?.total
+              ? Number(order.priceBreakdown.total)
+              : null,
+            price_currency: order?.priceBreakdown?.currency ?? null,
+            last_order_payload: result.data,
+            updated_at: now,
+          },
+          { onConflict: "local_order_id" }
+        );
       }
     } else if (body.orderId) {
       // Pedido único — comportamento original
