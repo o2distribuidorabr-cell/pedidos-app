@@ -2079,7 +2079,7 @@ export default function AdmPedidoDetalhePage() {
                     <SecondaryActionButton
                       fullWidth
                       onClick={() => updateOrder({ logistic_status: "EM_SEPARACAO" })}
-                      disabled={saving || order.logistic_status === "EM_SEPARACAO"}
+                      disabled={saving || order.logistic_status === "EM_SEPARACAO" || order.logistic_status === "ENTREGUE" || order.logistic_status === "SAIU_PARA_ENTREGA"}
                     >
                       Marcar em separação
                     </SecondaryActionButton>
