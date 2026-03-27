@@ -2044,28 +2044,28 @@ export default function AdmPedidoDetalhePage() {
               </div>
 
               <div className="mt-4 grid gap-3 md:grid-cols-2">
-                <Select
-                  label="Status logístico"
-                  value={(order.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus}
-                  onChange={(v) => updateOrder({ logistic_status: v as UnifiedLogisticStatus })}
-                  disabled={
-                    order.logistic_status === "SAIU_PARA_ENTREGA" ||
-                    order.logistic_status === "ENTREGUE"
-                  }
-                  options={[
-                    ...LOG_OPTIONS.map((s) => ({
+                {order.logistic_status === "ENTREGUE" || order.logistic_status === "SAIU_PARA_ENTREGA" ? (
+                  <div className={["rounded-[18px] border p-4", order.logistic_status === "ENTREGUE" ? "border-green-200 bg-green-50" : "border-blue-200 bg-blue-50"].join(" ")}>
+                    <div className={["text-sm font-semibold", order.logistic_status === "ENTREGUE" ? "text-green-700" : "text-blue-700"].join(" ")}>
+                      🔒 Status bloqueado
+                    </div>
+                    <div className={["mt-1 text-xs", order.logistic_status === "ENTREGUE" ? "text-green-600" : "text-blue-600"].join(" ")}>
+                      {order.logistic_status === "ENTREGUE"
+                        ? "Este pedido foi entregue. O status não pode mais ser alterado manualmente."
+                        : "Este pedido saiu para entrega. O status não pode mais ser alterado manualmente."}
+                    </div>
+                  </div>
+                ) : (
+                  <Select
+                    label="Status logístico"
+                    value={(order.logistic_status ?? "RECEBIDO") as UnifiedLogisticStatus}
+                    onChange={(v) => updateOrder({ logistic_status: v as UnifiedLogisticStatus })}
+                    options={LOG_OPTIONS.map((s) => ({
                       value: s,
                       label: s === "RECEBIDO" ? "Recebido" : "Em separação",
-                    })),
-                    // Mostra o status atual se for SAIU ou ENTREGUE mas não permite mudar
-                    ...(order.logistic_status === "SAIU_PARA_ENTREGA"
-                      ? [{ value: "SAIU_PARA_ENTREGA", label: "Saiu para entrega" }]
-                      : []),
-                    ...(order.logistic_status === "ENTREGUE"
-                      ? [{ value: "ENTREGUE", label: "Entregue" }]
-                      : []),
-                  ]}
-                />
+                    }))}
+                  />
+                )}
 
                 <div className="grid gap-2">
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -2076,22 +2076,26 @@ export default function AdmPedidoDetalhePage() {
                       <SecondaryActionButton fullWidth>Ir para logística</SecondaryActionButton>
                     </Link>
 
-                    <SecondaryActionButton
-                      fullWidth
-                      onClick={() => updateOrder({ logistic_status: "EM_SEPARACAO" })}
-                      disabled={saving || order.logistic_status === "EM_SEPARACAO" || order.logistic_status === "ENTREGUE" || order.logistic_status === "SAIU_PARA_ENTREGA"}
-                    >
-                      Marcar em separação
-                    </SecondaryActionButton>
+                    {order.logistic_status !== "ENTREGUE" && order.logistic_status !== "SAIU_PARA_ENTREGA" ? (
+                      <>
+                        <SecondaryActionButton
+                          fullWidth
+                          onClick={() => updateOrder({ logistic_status: "EM_SEPARACAO" })}
+                          disabled={saving || order.logistic_status === "EM_SEPARACAO"}
+                        >
+                          Marcar em separação
+                        </SecondaryActionButton>
 
-                    {order.delivery_mode !== "RETIRADA" && order.logistic_status !== "SAIU_PARA_ENTREGA" && order.logistic_status !== "ENTREGUE" ? (
-                      <SecondaryActionButton
-                        fullWidth
-                        onClick={() => setDispatchModalOpen(true)}
-                        disabled={saving}
-                      >
-                        Saída para entrega
-                      </SecondaryActionButton>
+                        {order.delivery_mode !== "RETIRADA" ? (
+                          <SecondaryActionButton
+                            fullWidth
+                            onClick={() => setDispatchModalOpen(true)}
+                            disabled={saving}
+                          >
+                            Saída para entrega
+                          </SecondaryActionButton>
+                        ) : null}
+                      </>
                     ) : null}
 
                     {/* "Marcar entregue" removido — só via código de confirmação ou Lalamove automático */}
