@@ -692,7 +692,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       else setLoading(true);
 
       const response = await fetch(`/api/logistica/admin/order/${id}/overview`, { method: "GET", cache: "no-store" });
-      const data = await response.json();
+      const text = await response.text();
+      if (!text) throw new Error("Resposta vazia do servidor.");
+      const data = JSON.parse(text);
 
       if (!response.ok || !data.ok) throw new Error(data.message || "Erro ao carregar logística.");
 
@@ -709,7 +711,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const loadLiveOnly = useCallback(async () => {
     try {
       const response = await fetch(`/api/logistica/admin/order/${id}/overview`, { method: "GET", cache: "no-store" });
-      const data = await response.json();
+      const text = await response.text();
+      if (!text) return;
+      const data = JSON.parse(text);
       if (!response.ok || !data.ok) return;
       applyServerData(data, { preserveForm: true, clearFlashMessage: false });
       await loadLalamoveShipment(true);
