@@ -37,6 +37,15 @@ function toNumber(v: string) {
   return Number.isFinite(n) ? n : 0;
 }
 
+
+// Converte string para decimal com até 3 casas (aceita vírgula ou ponto).
+function toDecimal3(v: string, fallback = 1): number {
+  const cleaned = String(v ?? "").trim().replace(",", ".");
+  if (!cleaned) return fallback;
+  const n = parseFloat(cleaned);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.round(n * 1000) / 1000;
+}
 function moneyBR(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -475,8 +484,8 @@ export default function AdmProdutosPage() {
       name: nameVal,
       unit: unit.trim() || "un",
       unit_price: toNumber(unitPrice),
-      step_qty: Math.max(0.001, Math.round(toNumber(stepQty) * 1000) / 1000),
-      pack_qty: Math.max(0.001, Math.round(toNumber(packQty) * 1000) / 1000),
+      step_qty: toDecimal3(stepQty),
+      pack_qty: toDecimal3(packQty),
       active: !!active,
 
       ncm: ncmNorm || null,
