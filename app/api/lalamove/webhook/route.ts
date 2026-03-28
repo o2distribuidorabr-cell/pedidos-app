@@ -51,6 +51,13 @@ export async function POST(request: NextRequest) {
   try {
     const payload = JSON.parse(rawBody);
     const path = new URL(request.url).pathname;
+
+    // Handshake da Lalamove: payload sem apiKey ou sem eventType é uma verificação inicial
+    const isHandshake = !payload?.apiKey || !payload?.eventType;
+    if (isHandshake) {
+      return NextResponse.json({ ok: true }, { status: 200 });
+    }
+
     const isValid = verifyLalamoveWebhook(payload, path);
 
     if (!isValid) {
