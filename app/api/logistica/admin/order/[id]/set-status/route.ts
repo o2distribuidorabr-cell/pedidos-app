@@ -70,7 +70,9 @@ export async function POST(request: Request, context: RouteContext) {
       const lalamoveStatus = String(shipment.provider_status).toUpperCase();
       const isCompleted = ["COMPLETED", "DELIVERED", "FULFILLED"].some(s => lalamoveStatus.includes(s));
 
-      if (isCompleted) {
+      // Bloqueia alteração manual quando Lalamove concluiu — EXCETO se for para marcar como ENTREGUE
+      // (o sync automático precisa poder marcar ENTREGUE quando Lalamove retorna COMPLETED)
+      if (isCompleted && body.deliveryStatus !== "ENTREGUE") {
         return NextResponse.json(
           {
             ok: false,
