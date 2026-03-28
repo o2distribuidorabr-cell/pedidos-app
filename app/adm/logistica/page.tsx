@@ -478,6 +478,12 @@ export default function AdmLogisticaPage() {
     loadData(false);
   }, [loadData]);
 
+  // Polling automático a cada 30 segundos para atualizar status sem precisar entrar no pedido
+  useEffect(() => {
+    const interval = window.setInterval(() => loadData(true), 30000);
+    return () => window.clearInterval(interval);
+  }, [loadData]);
+
   useEffect(() => {
     setStatusFilter("TODOS");
   }, [tab]);
