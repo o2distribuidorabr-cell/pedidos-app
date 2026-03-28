@@ -35,6 +35,11 @@ function getReplacementOrderId(payload: any) {
   );
 }
 
+// Handler GET para verificação/handshake da Lalamove
+export async function GET() {
+  return NextResponse.json({ ok: true }, { status: 200 });
+}
+
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
 
@@ -128,7 +133,7 @@ export async function POST(request: NextRequest) {
           // Marca todos os pedidos como ENTREGUE
           await supabaseAdmin
             .from("orders")
-            .update({ logistic_status: "SAIU_PARA_ENTREGA", delivery_status: "ENTREGUE", delivery_finished_at: new Date().toISOString() })
+            .update({ logistic_status: "ENTREGUE", delivery_status: "ENTREGUE", delivery_finished_at: new Date().toISOString() })
             .in("id", orderIds);
 
           // Atualiza status da rota se for múltipla
