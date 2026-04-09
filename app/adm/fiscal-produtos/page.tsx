@@ -296,6 +296,7 @@ export default function AdmFiscalProdutosPage() {
           cfop: row.cfop,
           origin: row.origin,
           icms_cst: row.icms_cst,
+          icms_cst: row.icms_cst,
           pis_cst: row.pis_cst,
           cofins_cst: row.cofins_cst,
           icms_percent: row.icms_percent,
@@ -400,11 +401,12 @@ export default function AdmFiscalProdutosPage() {
             onChange={setFilterIcms}
             options={[
               { value: "all", label: "Todos" },
-              { value: "102", label: "102" },
-              { value: "500", label: "500" },
-              { value: "900", label: "900" },
-              { value: "00", label: "00" },
-              { value: "60", label: "60" },
+              { value: "102", label: "CSOSN 102" },
+              { value: "400", label: "CSOSN 400" },
+              { value: "500", label: "CSOSN 500" },
+              { value: "900", label: "CSOSN 900" },
+              { value: "00", label: "CST 00" },
+              { value: "60", label: "CST 60" },
             ]}
           />
           <div className="flex items-end gap-6 pb-2">
@@ -449,6 +451,7 @@ export default function AdmFiscalProdutosPage() {
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">NCM</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">CEST</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">CFOP</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">ICMS CST</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">% ICMS</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Sit. Trib</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">% PIS</th>
@@ -517,6 +520,7 @@ export default function AdmFiscalProdutosPage() {
                         <td className="px-3 py-3"><TextCell value={row.ncm} onChange={(v) => setField(p.id, "ncm", v)} width="w-24" /></td>
                         <td className="px-3 py-3"><TextCell value={row.cest} onChange={(v) => setField(p.id, "cest", v)} width="w-24" /></td>
                         <td className="px-3 py-3"><TextCell value={row.cfop} onChange={(v) => setField(p.id, "cfop", v)} width="w-20" /></td>
+                        <td className="px-3 py-3"><TextCell value={row.icms_cst} onChange={(v) => setField(p.id, "icms_cst", v)} width="w-20" /></td>
                         <td className="px-3 py-3"><TextCell value={row.icms_percent} onChange={(v) => setField(p.id, "icms_percent", v)} width="w-20" /></td>
                         <td className="px-3 py-3"><TextCell value={row.sit_trib} onChange={(v) => setField(p.id, "sit_trib", v)} width="w-20" /></td>
                         <td className="px-3 py-3"><TextCell value={row.pis_percent} onChange={(v) => setField(p.id, "pis_percent", v)} width="w-20" /></td>
