@@ -80,6 +80,21 @@ type EmitBody = {
     red_cbs_rt_percent?: string | null;
     red_ibs_uf_rt_percent?: string | null;
     red_ibs_mun_rt_percent?: string | null;
+
+    // ─── Campos ICMS-ST retido (CST 500 / CSOSN 500) ───────────────────────
+    // Informados pelo front-end OU calculados automaticamente se
+    // qtd_compra + valores_st_compra forem fornecidos.
+    icms_vbc_st_retido?: number | null;        // vBCSTRet
+    icms_p_st?: number | null;                 // pST  (alíquota %)
+    icms_valor_substituto?: number | null;     // vICMSSubstituto
+    icms_valor_st_retido?: number | null;      // vICMSSTRet
+
+    // ─── Dados da NF de compra para cálculo proporcional automático ─────────
+    compra_quantidade?: number | null;         // qtd total na NF de compra
+    compra_vbc_st?: number | null;             // vBCST  da NF de compra
+    compra_p_icms_st?: number | null;          // pICMSST da NF de compra
+    compra_vicms?: number | null;              // vICMS  da NF de compra
+    compra_vicms_st?: number | null;           // vICMSST da NF de compra
   }>;
 
   observacoes?: string | null;
@@ -222,6 +237,72 @@ function normalizeIndIEDest(
   return "9";
 }
 
+/**
+ * Resolve os campos ICMS-ST retido para CST 500 / CSOSN 500.
+ *
+ * Prioridade:
+ *   1. Valores já calculados enviados diretamente no item (icms_vbc_st_retido etc.)
+ *   2. Cálculo proporcional automático usando os dados da NF de compra
+ *      (compra_quantidade, compra_vbc_st, compra_p_icms_st, compra_vicms, compra_vicms_st)
+ *   3. undefined (campo omitido — a SEFAZ vai rejeitar, mas não travamos aqui)
+ *
+ * Fórmula proporcional:
+ *   proporcao = qtd_venda / qtd_compra
+ *   vBCSTRet        = vBCST_compra  * proporcao
+ *   pST             = pICMSST_compra          (alíquota não muda)
+ *   vICMSSubstituto = vICMS_compra  * proporcao
+ *   vICMSSTRet      = vICMSST_compra * proporcao
+ */
+function resolveIcmsStRetido(item: EmitBody["itens"][number]): {
+  icms_vbc_st_retido?: number;
+  icms_p_st?: number;
+  icms_valor_substituto?: number;
+  icms_valor_st_retido?: number;
+} {
+  // 1. Valores diretos já fornecidos
+  if (
+    item.icms_vbc_st_retido != null &&
+    item.icms_p_st != null &&
+    item.icms_valor_substituto != null &&
+    item.icms_valor_st_retido != null
+  ) {
+    return {
+      icms_vbc_st_retido: round2(Number(item.icms_vbc_st_retido)),
+      icms_p_st: round2(Number(item.icms_p_st)),
+      icms_valor_substituto: round2(Number(item.icms_valor_substituto)),
+      icms_valor_st_retido: round2(Number(item.icms_valor_st_retido)),
+    };
+  }
+
+  // 2. Cálculo proporcional automático
+  const qtdVenda = Number(item.quantidade || 0);
+  const qtdCompra = Number(item.compra_quantidade || 0);
+  const vBcSt = Number(item.compra_vbc_st || 0);
+  const pSt = Number(item.compra_p_icms_st || 0);
+  const vIcms = Number(item.compra_vicms || 0);
+  const vIcmsSt = Number(item.compra_vicms_st || 0);
+
+  if (qtdVenda > 0 && qtdCompra > 0 && vBcSt > 0) {
+    const prop = qtdVenda / qtdCompra;
+    return {
+      icms_vbc_st_retido: round2(vBcSt * prop),
+      icms_p_st: round2(pSt),                      // alíquota não é proporcional
+      icms_valor_substituto: round2(vIcms * prop),
+      icms_valor_st_retido: round2(vIcmsSt * prop),
+    };
+  }
+
+  // 3. Sem dados suficientes
+  return {};
+}
+
+/** Retorna true se o item usa CST 500 ou CSOSN 500 (ST já retida) */
+function isStRetido(item: EmitBody["itens"][number]): boolean {
+  const cst = String(item.icms_situacao_tributaria || "").trim();
+  const csosn = String(item.csosn || "").trim();
+  return cst === "500" || csosn === "500";
+}
+
 function validateBody(body: EmitBody) {
   const errors: string[] = [];
 
@@ -257,6 +338,23 @@ function validateBody(body: EmitBody) {
 
     if (!(qtd > 0)) errors.push(`Item ${line}: quantidade deve ser maior que zero.`);
     if (!(vUnit >= 0)) errors.push(`Item ${line}: valor unitário inválido.`);
+
+    // Valida campos ST apenas se CST 500 / CSOSN 500
+    if (isStRetido(item)) {
+      const st = resolveIcmsStRetido(item);
+      if (
+        st.icms_vbc_st_retido == null ||
+        st.icms_p_st == null ||
+        st.icms_valor_substituto == null ||
+        st.icms_valor_st_retido == null
+      ) {
+        errors.push(
+          `Item ${line}: CST/CSOSN 500 exige vBCSTRet, pST, vICMSSubstituto e vICMSSTRet. ` +
+          `Forneça os valores diretos (icms_vbc_st_retido, icms_p_st, icms_valor_substituto, icms_valor_st_retido) ` +
+          `ou os dados da NF de compra (compra_quantidade, compra_vbc_st, compra_p_icms_st, compra_vicms, compra_vicms_st).`
+        );
+      }
+    }
   });
 
   return errors;
@@ -400,9 +498,17 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
       const unidade = normalizeUnit(item.unidade);
 
       const valorFreteItem = tratarComoDespesa ? 0 : normalizeMoney(item.valor_frete);
-      const valorOutrasDespesasItem = tratarComoDespesa
-        ? normalizeMoney(item.valor_outras_despesas)
-        : normalizeMoney(item.valor_outras_despesas);
+      const valorOutrasDespesasItem = normalizeMoney(item.valor_outras_despesas);
+
+      // ─── Monta campos ICMS-ST retido se CST/CSOSN 500 ──────────────────
+      const stFields: Record<string, number | undefined> = {};
+      if (isStRetido(item)) {
+        const st = resolveIcmsStRetido(item);
+        if (st.icms_vbc_st_retido != null) stFields.icms_vbc_st_retido = st.icms_vbc_st_retido;
+        if (st.icms_p_st != null) stFields.icms_p_st = st.icms_p_st;
+        if (st.icms_valor_substituto != null) stFields.icms_valor_substituto = st.icms_valor_substituto;
+        if (st.icms_valor_st_retido != null) stFields.icms_valor_st_retido = st.icms_valor_st_retido;
+      }
 
       return {
         numero_item: String(index + 1),
@@ -426,6 +532,8 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
         icms_origem: item.origem || undefined,
         pis_situacao_tributaria: item.pis_situacao_tributaria || undefined,
         cofins_situacao_tributaria: item.cofins_situacao_tributaria || undefined,
+        // ST retido (apenas quando CST/CSOSN 500)
+        ...stFields,
       };
     }),
 
