@@ -154,6 +154,12 @@ type DraftItem = {
   quantidade: number;
   valor_unitario: number;
   valor_total: number;
+
+  // ─── ST retido (CSOSN/CST 500) ──────────────────────────────────────────
+  st_vbc_ret: string;       // vBCSTRet  — base de cálculo do ST retido
+  st_p_st: string;          // pST       — alíquota suportada pelo consumidor
+  st_v_substituto: string;  // vICMSSubstituto — ICMS próprio do substituto
+  st_v_st_ret: string;      // vICMSSTRet — valor ST retido
 };
 
 type ItemIssue = {
@@ -204,6 +210,12 @@ type PayloadItem = {
   valor_total: number;
   valor_frete: number;
   valor_outras_despesas: number;
+
+  // ST retido — só enviado quando CSOSN/CST 500
+  icms_vbc_st_retido?: number | null;
+  icms_p_st?: number | null;
+  icms_valor_substituto?: number | null;
+  icms_valor_st_retido?: number | null;
 };
 
 function fmtBRL(v: number) {
@@ -249,68 +261,31 @@ function round2(value: number) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 }
 
+function isStRetido(item: DraftItem): boolean {
+  const cst = String(item.icms_situacao_tributaria || "").trim();
+  const csosn = String(item.csosn || "").trim();
+  return cst === "500" || csosn === "500";
+}
+
 function buildItemsWithExtraExpenses(items: DraftItem[], extraExpenseTotal: number): PayloadItem[] {
   const normalizedExtra = round2(extraExpenseTotal);
   const totalProdutos = round2(
     items.reduce((acc, item) => acc + Number(item.valor_total || 0), 0)
   );
 
-  if (normalizedExtra <= 0 || totalProdutos <= 0 || items.length === 0) {
-    return items.map((it) => ({
-      codigo: it.codigo,
-      descricao: it.descricao,
-      unidade: it.unidade,
-      ncm: it.ncm || null,
-      cest: it.cest || null,
-      cfop: it.cfop || null,
-      gtin: it.ean || null,
-      origem: it.origem || null,
-      icms_situacao_tributaria: it.icms_situacao_tributaria || null,
-      pis_situacao_tributaria: it.pis_situacao_tributaria || null,
-      cofins_situacao_tributaria: it.cofins_situacao_tributaria || null,
-
-      icms_percent: it.icms_percent || null,
-      sit_trib: it.sit_trib || null,
-      pis_percent: it.pis_percent || null,
-      cofins_percent: it.cofins_percent || null,
-      aliq_mun: it.aliq_mun || null,
-      aliq_est: it.aliq_est || null,
-      aliq_fed: it.aliq_fed || null,
-      aliq_csosn: it.aliq_csosn || null,
-      csosn: it.csosn || null,
-      base_reduction_percent: it.base_reduction_percent || null,
-      benefit_fiscal: it.benefit_fiscal || null,
-      desoneration_percent: it.desoneration_percent || null,
-      red_base_effective_percent: it.red_base_effective_percent || null,
-      icms_effective_percent: it.icms_effective_percent || null,
-      cst_rt: it.cst_rt || null,
-      cod_class_trib_rt: it.cod_class_trib_rt || null,
-      cbs_rt_percent: it.cbs_rt_percent || null,
-      ibs_uf_rt_percent: it.ibs_uf_rt_percent || null,
-      ibs_mun_rt_percent: it.ibs_mun_rt_percent || null,
-      red_cbs_rt_percent: it.red_cbs_rt_percent || null,
-      red_ibs_uf_rt_percent: it.red_ibs_uf_rt_percent || null,
-      red_ibs_mun_rt_percent: it.red_ibs_mun_rt_percent || null,
-
-      quantidade: Number(it.quantidade || 0),
-      valor_unitario: round2(Number(it.valor_unitario || 0)),
-      valor_total: round2(Number(it.valor_total || 0)),
-      valor_frete: 0,
-      valor_outras_despesas: 0,
-    }));
-  }
-
-  let allocated = 0;
-
-  return items.map((it, index) => {
-    const valorItem = round2(Number(it.valor_total || 0));
-
-    let valorOutrasDespesas = 0;
-    if (index === items.length - 1) {
-      valorOutrasDespesas = round2(normalizedExtra - allocated);
-    } else {
-      valorOutrasDespesas = round2((valorItem / totalProdutos) * normalizedExtra);
-      allocated = round2(allocated + valorOutrasDespesas);
+  const mapItem = (it: DraftItem, valorOutrasDespesas: number): PayloadItem => {
+    const stFields: Partial<PayloadItem> = {};
+    if (isStRetido(it)) {
+      const vbc = parseFloat(it.st_vbc_ret) || 0;
+      const pst = parseFloat(it.st_p_st) || 0;
+      const vsub = parseFloat(it.st_v_substituto) || 0;
+      const vstret = parseFloat(it.st_v_st_ret) || 0;
+      if (vbc > 0) {
+        stFields.icms_vbc_st_retido = round2(vbc);
+        stFields.icms_p_st = round2(pst);
+        stFields.icms_valor_substituto = round2(vsub);
+        stFields.icms_valor_st_retido = round2(vstret);
+      }
     }
 
     return {
@@ -325,7 +300,6 @@ function buildItemsWithExtraExpenses(items: DraftItem[], extraExpenseTotal: numb
       icms_situacao_tributaria: it.icms_situacao_tributaria || null,
       pis_situacao_tributaria: it.pis_situacao_tributaria || null,
       cofins_situacao_tributaria: it.cofins_situacao_tributaria || null,
-
       icms_percent: it.icms_percent || null,
       sit_trib: it.sit_trib || null,
       pis_percent: it.pis_percent || null,
@@ -348,13 +322,30 @@ function buildItemsWithExtraExpenses(items: DraftItem[], extraExpenseTotal: numb
       red_cbs_rt_percent: it.red_cbs_rt_percent || null,
       red_ibs_uf_rt_percent: it.red_ibs_uf_rt_percent || null,
       red_ibs_mun_rt_percent: it.red_ibs_mun_rt_percent || null,
-
       quantidade: Number(it.quantidade || 0),
       valor_unitario: round2(Number(it.valor_unitario || 0)),
-      valor_total: valorItem,
+      valor_total: round2(Number(it.valor_total || 0)),
       valor_frete: 0,
       valor_outras_despesas: valorOutrasDespesas,
+      ...stFields,
     };
+  };
+
+  if (normalizedExtra <= 0 || totalProdutos <= 0 || items.length === 0) {
+    return items.map((it) => mapItem(it, 0));
+  }
+
+  let allocated = 0;
+  return items.map((it, index) => {
+    const valorItem = round2(Number(it.valor_total || 0));
+    let valorOutrasDespesas = 0;
+    if (index === items.length - 1) {
+      valorOutrasDespesas = round2(normalizedExtra - allocated);
+    } else {
+      valorOutrasDespesas = round2((valorItem / totalProdutos) * normalizedExtra);
+      allocated = round2(allocated + valorOutrasDespesas);
+    }
+    return mapItem(it, valorOutrasDespesas);
   });
 }
 
@@ -396,6 +387,14 @@ function validateDraftItem(item: DraftItem): string[] {
   const unit = Number(item.valor_unitario || 0);
   if (!(qtd > 0)) issues.push("Quantidade");
   if (!(unit >= 0)) issues.push("Valor unitário");
+
+  // Valida campos ST quando CSOSN/CST 500
+  if (isStRetido(item)) {
+    if (!(parseFloat(item.st_vbc_ret) > 0)) issues.push("ST: Base de cálculo retido");
+    if (!(parseFloat(item.st_p_st) > 0)) issues.push("ST: Alíquota");
+    if (!(parseFloat(item.st_v_substituto) >= 0)) issues.push("ST: ICMS substituto");
+    if (!(parseFloat(item.st_v_st_ret) > 0)) issues.push("ST: Valor retido");
+  }
 
   return issues;
 }
@@ -577,6 +576,12 @@ export default function AdmEmissaoFiscalDetalhePage() {
           quantidade: Number(item.qty || 0),
           valor_unitario: Number(item.unit_cost || 0),
           valor_total: Number(item.qty || 0) * Number(item.unit_cost || 0),
+
+          // ST começa vazio — usuário preenche na tela
+          st_vbc_ret: "",
+          st_p_st: "",
+          st_v_substituto: "",
+          st_v_st_ret: "",
         };
       }
       setDraftItems(nextDraft);
@@ -924,7 +929,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
           <div className="mt-2 text-sm text-red-700">
             A emissão está bloqueada até a correção.
           </div>
-
           <div className="mt-4 space-y-3">
             {itemIssues.map((issue) => (
               <div key={issue.line_id} className="rounded-[18px] border border-red-200 bg-white p-3">
@@ -979,7 +983,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
               <span className="font-semibold text-slate-900">{fmtBRL(totalLiquido)}</span>
             </div>
           </div>
-
           <div className="mt-4 rounded-[18px] border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
             O valor do campo <strong>freight_fee</strong> será enviado para a NF-e como
             <strong> despesa acessória</strong>, e não como frete fiscal.
@@ -995,7 +998,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
               <Badge tone="neutral">sem NF-e</Badge>
             )}
           </div>
-
           <div className="mt-4 space-y-3 text-sm">
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Referência</span>
@@ -1018,7 +1020,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
               <span className="font-semibold text-slate-900">{focusDoc?.protocolo || "-"}</span>
             </div>
           </div>
-
           <div className="mt-4 flex flex-wrap gap-2">
             {focusDoc?.reference ? (
               <>
@@ -1045,7 +1046,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
               </div>
             )}
           </div>
-
           <div className="mt-4 rounded-[18px] border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Erro / retorno</div>
             <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700">
@@ -1058,7 +1058,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
       <div className="grid gap-6 xl:grid-cols-2">
         <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="text-sm font-semibold text-slate-900">Emitente</div>
-
           <div className="mt-4 grid gap-4">
             <Select
               label="Emitente"
@@ -1069,13 +1068,11 @@ export default function AdmEmissaoFiscalDetalhePage() {
                 label: `${e.name} - ${fmtCNPJ(e.cnpj)}`,
               }))}
             />
-
             <div className="grid gap-4 md:grid-cols-2">
               <Input label="Natureza da operação" value={naturezaOperacao} onChange={setNaturezaOperacao} />
               <Input label="Série" value={serie} onChange={setSerie} />
               <Input label="Número" value={numero} onChange={setNumero} placeholder="opcional" />
             </div>
-
             <div className="flex gap-2">
               <button
                 type="button"
@@ -1086,7 +1083,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
                 {savingEmitter ? "Salvando..." : "Salvar emitente no pedido"}
               </button>
             </div>
-
             {selectedEmitter ? (
               <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-3 text-sm">
                 <div className="font-semibold text-slate-900">{selectedEmitter.legal_name}</div>
@@ -1099,7 +1095,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
 
         <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
           <div className="text-sm font-semibold text-slate-900">Destinatário</div>
-
           <div className="mt-4 space-y-3 text-sm">
             <div className="flex justify-between gap-3">
               <span className="text-slate-500">Loja</span>
@@ -1131,6 +1126,103 @@ export default function AdmEmissaoFiscalDetalhePage() {
         </div>
       </div>
 
+      {/* ─── Painel ICMS-ST Retido (aparece só quando há produto CSOSN/CST 500) ─── */}
+      {Object.values(draftItems).some(isStRetido) && (
+        <div className="rounded-[30px] border border-amber-200 bg-amber-50 p-5 shadow-sm md:p-6">
+          <div className="text-sm font-semibold text-amber-900">
+            ⚠️ Substituição Tributária retida (CSOSN/CST 500)
+          </div>
+          <div className="mt-1 text-sm text-amber-800">
+            Os produtos abaixo têm ST já recolhida pelo fornecedor. Preencha os valores da nota de compra para cada um.
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {Object.values(draftItems).filter(isStRetido).map((it) => {
+              const issues = issuesByLine.get(it.line_id) || [];
+              const stIssues = issues.filter((i) => i.startsWith("ST:"));
+              return (
+                <div
+                  key={it.line_id}
+                  className={`rounded-[20px] border p-4 ${stIssues.length > 0 ? "border-red-200 bg-red-50" : "border-amber-100 bg-white"}`}
+                >
+                  <div className="text-sm font-semibold text-slate-900">
+                    {it.codigo} — {it.descricao}
+                  </div>
+                  {stIssues.length > 0 && (
+                    <div className="mt-1 text-xs text-red-700">Faltando: {stIssues.join(", ")}</div>
+                  )}
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Base cálculo ST retido (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="ex: 4262.60"
+                        value={it.st_vbc_ret}
+                        onChange={(e) => setDraftField(it.line_id, "st_vbc_ret", e.target.value)}
+                        className={`w-full rounded-[10px] border px-3 py-2 text-sm outline-none transition focus:border-amber-400 ${
+                          stIssues.includes("ST: Base de cálculo retido") ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
+                        }`}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Alíquota ST (%)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="ex: 18.00"
+                        value={it.st_p_st}
+                        onChange={(e) => setDraftField(it.line_id, "st_p_st", e.target.value)}
+                        className={`w-full rounded-[10px] border px-3 py-2 text-sm outline-none transition focus:border-amber-400 ${
+                          stIssues.includes("ST: Alíquota") ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
+                        }`}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        ICMS próprio substituto (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="ex: 568.35"
+                        value={it.st_v_substituto}
+                        onChange={(e) => setDraftField(it.line_id, "st_v_substituto", e.target.value)}
+                        className={`w-full rounded-[10px] border px-3 py-2 text-sm outline-none transition focus:border-amber-400 ${
+                          stIssues.includes("ST: ICMS substituto") ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
+                        }`}
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-slate-600">
+                        Valor ST retido (R$)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="ex: 198.92"
+                        value={it.st_v_st_ret}
+                        onChange={(e) => setDraftField(it.line_id, "st_v_st_ret", e.target.value)}
+                        className={`w-full rounded-[10px] border px-3 py-2 text-sm outline-none transition focus:border-amber-400 ${
+                          stIssues.includes("ST: Valor retido") ? "border-red-300 bg-red-50" : "border-slate-200 bg-white"
+                        }`}
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    Esses valores estão na nota de compra do fornecedor (campos vBCST, pICMSST, vICMS e vICMSST).
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="rounded-[30px] border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 md:px-6">
           <div>
@@ -1157,7 +1249,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
                 <tr className="border-b border-slate-200 bg-slate-50 text-left">
                   <th className="sticky left-0 z-20 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">SKU</th>
                   <th className="sticky left-[120px] z-20 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Produto</th>
-
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Unid.</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Qtd</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Vlr unit.</th>
@@ -1169,7 +1260,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">ICMS/CST</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">PIS CST</th>
                   <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">COFINS CST</th>
-
                   {showAdvanced ? (
                     <>
                       <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">% ICMS</th>
@@ -1202,7 +1292,7 @@ export default function AdmEmissaoFiscalDetalhePage() {
               <tbody>
                 {Object.values(draftItems).map((it) => {
                   const issues = issuesByLine.get(it.line_id) || [];
-                  const hasIssue = issues.length > 0;
+                  const hasIssue = issues.some((i) => !i.startsWith("ST:"));
 
                   return (
                     <tr
@@ -1215,10 +1305,11 @@ export default function AdmEmissaoFiscalDetalhePage() {
                       <td className={`sticky left-[120px] z-10 px-4 py-3 ${hasIssue ? "bg-red-50" : "bg-white"}`}>
                         <div className="w-[320px] text-sm font-semibold text-slate-900">{it.descricao || "-"}</div>
                         {hasIssue ? (
-                          <div className="mt-1 text-xs text-red-700">Faltando: {issues.join(", ")}</div>
+                          <div className="mt-1 text-xs text-red-700">
+                            Faltando: {issues.filter((i) => !i.startsWith("ST:")).join(", ")}
+                          </div>
                         ) : null}
                       </td>
-
                       <td className="px-3 py-3"><TextCell value={it.unidade} onChange={(v) => setDraftField(it.line_id, "unidade", v)} width="w-20" invalid={issues.includes("Unidade")} /></td>
                       <td className="px-3 py-3"><div className={`w-20 text-xs ${issues.includes("Quantidade") ? "font-semibold text-red-700" : "text-slate-700"}`}>{it.quantidade}</div></td>
                       <td className="px-3 py-3"><div className={`w-24 text-xs ${issues.includes("Valor unitário") ? "font-semibold text-red-700" : "text-slate-700"}`}>{fmtBRL(it.valor_unitario)}</div></td>
@@ -1230,7 +1321,6 @@ export default function AdmEmissaoFiscalDetalhePage() {
                       <td className="px-3 py-3"><TextCell value={it.icms_situacao_tributaria} onChange={(v) => setDraftField(it.line_id, "icms_situacao_tributaria", v)} width="w-24" invalid={issues.includes("ICMS/CST")} /></td>
                       <td className="px-3 py-3"><TextCell value={it.pis_situacao_tributaria} onChange={(v) => setDraftField(it.line_id, "pis_situacao_tributaria", v)} width="w-20" invalid={issues.includes("PIS CST")} /></td>
                       <td className="px-3 py-3"><TextCell value={it.cofins_situacao_tributaria} onChange={(v) => setDraftField(it.line_id, "cofins_situacao_tributaria", v)} width="w-20" invalid={issues.includes("COFINS CST")} /></td>
-
                       {showAdvanced ? (
                         <>
                           <td className="px-3 py-3"><TextCell value={it.icms_percent} onChange={(v) => setDraftField(it.line_id, "icms_percent", v)} width="w-20" /></td>
