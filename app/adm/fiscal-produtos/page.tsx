@@ -321,7 +321,6 @@ export default function AdmFiscalProdutosPage() {
           cfop: row.cfop,
           origin: row.origin,
           icms_cst: row.icms_cst,
-          icms_cst: row.icms_cst,
           pis_cst: row.pis_cst,
           cofins_cst: row.cofins_cst,
           icms_percent: row.icms_percent,
