@@ -86,6 +86,12 @@ type ProductFiscalEmbed = {
   red_cbs_rt_percent?: number | null;
   red_ibs_uf_rt_percent?: number | null;
   red_ibs_mun_rt_percent?: number | null;
+
+  // ICMS-ST retida anteriormente (CSOSN 500)
+  icms_st_ret_base?: number | null;
+  icms_st_ret_aliquota?: number | null;
+  icms_st_ret_vlr_substituto?: number | null;
+  icms_st_ret_valor?: number | null;
 };
 
 type ItemRow = {
@@ -512,7 +518,11 @@ export default function AdmEmissaoFiscalDetalhePage() {
           ibs_mun_rt_percent,
           red_cbs_rt_percent,
           red_ibs_uf_rt_percent,
-          red_ibs_mun_rt_percent
+          red_ibs_mun_rt_percent,
+          icms_st_ret_base,
+          icms_st_ret_aliquota,
+          icms_st_ret_vlr_substituto,
+          icms_st_ret_valor
         )
       `)
       .eq("order_id", orderId);
@@ -577,11 +587,11 @@ export default function AdmEmissaoFiscalDetalhePage() {
           valor_unitario: Number(item.unit_cost || 0),
           valor_total: Number(item.qty || 0) * Number(item.unit_cost || 0),
 
-          // ST começa vazio — usuário preenche na tela
-          st_vbc_ret: "",
-          st_p_st: "",
-          st_v_substituto: "",
-          st_v_st_ret: "",
+          // ST retida: carrega do cadastro do produto, editável na tela
+          st_vbc_ret: toInput(p?.icms_st_ret_base),
+          st_p_st: toInput(p?.icms_st_ret_aliquota),
+          st_v_substituto: toInput(p?.icms_st_ret_vlr_substituto),
+          st_v_st_ret: toInput(p?.icms_st_ret_valor),
         };
       }
       setDraftItems(nextDraft);

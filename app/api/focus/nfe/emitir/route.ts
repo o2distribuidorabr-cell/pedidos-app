@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { consumeStBalance, getStBalance, previewStConsumption } from "@/lib/st-balance";
 
 export const runtime = "nodejs";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type EmitBody = {
   orderId: string;
@@ -39,6 +42,7 @@ type EmitBody = {
   };
 
   itens: Array<{
+    product_id: string;   // OBRIGATÓRIO para busca de saldo ST
     codigo: string;
     descricao: string;
     ncm?: string | null;
@@ -81,20 +85,11 @@ type EmitBody = {
     red_ibs_uf_rt_percent?: string | null;
     red_ibs_mun_rt_percent?: string | null;
 
-    // ─── Campos ICMS-ST retido (CST 500 / CSOSN 500) ───────────────────────
-    // Informados pelo front-end OU calculados automaticamente se
-    // qtd_compra + valores_st_compra forem fornecidos.
-    icms_vbc_st_retido?: number | null;        // vBCSTRet
-    icms_p_st?: number | null;                 // pST  (alíquota %)
-    icms_valor_substituto?: number | null;     // vICMSSubstituto
-    icms_valor_st_retido?: number | null;      // vICMSSTRet
-
-    // ─── Dados da NF de compra para cálculo proporcional automático ─────────
-    compra_quantidade?: number | null;         // qtd total na NF de compra
-    compra_vbc_st?: number | null;             // vBCST  da NF de compra
-    compra_p_icms_st?: number | null;          // pICMSST da NF de compra
-    compra_vicms?: number | null;              // vICMS  da NF de compra
-    compra_vicms_st?: number | null;           // vICMSST da NF de compra
+    // Override manual (opcional — se informado, usa esses valores em vez do saldo)
+    icms_vbc_st_retido_override?: number | null;
+    icms_p_st_override?: number | null;
+    icms_valor_substituto_override?: number | null;
+    icms_valor_st_retido_override?: number | null;
   }>;
 
   observacoes?: string | null;
@@ -120,6 +115,16 @@ type EmitterRow = {
   is_active: boolean;
   is_default: boolean;
 };
+
+type ResolvedStFields = {
+  icms_vbc_st_retido: number;
+  icms_p_st: number;
+  icms_valor_substituto: number;
+  icms_valor_st_retido: number;
+  fromBalance: boolean;
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function envOrThrow(name: string): string {
   const value = String(process.env[name] || "").trim();
@@ -157,11 +162,7 @@ function normalizeSerie(value?: string | null) {
 }
 
 function safeJsonParse(text: string) {
-  try {
-    return text ? JSON.parse(text) : null;
-  } catch {
-    return null;
-  }
+  try { return text ? JSON.parse(text) : null; } catch { return null; }
 }
 
 function round2(value: number) {
@@ -175,52 +176,24 @@ function normalizeMoney(value: unknown) {
 
 function normalizeUnit(value: string | null | undefined) {
   const raw = String(value || "").trim().toUpperCase();
-
   if (!raw) return "UN";
-
   const map: Record<string, string> = {
-    UN: "UN",
-    UND: "UN",
-    UNID: "UN",
-    UNIDADE: "UN",
-    UNIDADES: "UN",
-    KG: "KG",
-    KGS: "KG",
-    QUILO: "KG",
-    QUILOS: "KG",
-    G: "G",
-    GR: "G",
-    GRAMA: "G",
-    GRAMAS: "G",
-    CX: "CX",
-    CAIXA: "CX",
-    CAIXAS: "CX",
-    PCT: "PCT",
-    PACOTE: "PCT",
-    PACOTES: "PCT",
-    FD: "FD",
-    FARDO: "FD",
-    LT: "LT",
-    L: "LT",
-    LITRO: "LT",
-    LITROS: "LT",
+    UN: "UN", UND: "UN", UNID: "UN", UNIDADE: "UN", UNIDADES: "UN",
+    KG: "KG", KGS: "KG", QUILO: "KG", QUILOS: "KG",
+    G: "G", GR: "G", GRAMA: "G", GRAMAS: "G",
+    CX: "CX", CAIXA: "CX", CAIXAS: "CX",
+    PCT: "PCT", PACOTE: "PCT", PACOTES: "PCT",
+    FD: "FD", FARDO: "FD",
+    LT: "LT", L: "LT", LITRO: "LT", LITROS: "LT",
     ML: "ML",
-    SC: "SC",
-    SACO: "SC",
-    SACOS: "SC",
-    BALDE: "BD",
-    BD: "BD",
-    FRASCO: "FR",
-    FR: "FR",
-    ROLO: "RL",
-    RL: "RL",
+    SC: "SC", SACO: "SC", SACOS: "SC",
+    BALDE: "BD", BD: "BD",
+    FRASCO: "FR", FR: "FR",
+    ROLO: "RL", RL: "RL",
   };
-
   if (map[raw]) return map[raw];
-
   const compact = raw.replace(/\s+/g, "");
   if (map[compact]) return map[compact];
-
   return compact.slice(0, 6) || "UN";
 }
 
@@ -230,88 +203,71 @@ function normalizeIndIEDest(
 ) {
   const ie = onlyDigits(inscricaoEstadual || "");
   if (ie) return "1";
-
   const ind = String(indicador || "").trim();
   if (ind === "1" || ind === "2" || ind === "9") return ind;
-
   return "9";
 }
 
-/**
- * Resolve os campos ICMS-ST retido para CST 500 / CSOSN 500.
- *
- * Prioridade:
- *   1. Valores já calculados enviados diretamente no item (icms_vbc_st_retido etc.)
- *   2. Cálculo proporcional automático usando os dados da NF de compra
- *      (compra_quantidade, compra_vbc_st, compra_p_icms_st, compra_vicms, compra_vicms_st)
- *   3. undefined (campo omitido — a SEFAZ vai rejeitar, mas não travamos aqui)
- *
- * Fórmula proporcional:
- *   proporcao = qtd_venda / qtd_compra
- *   vBCSTRet        = vBCST_compra  * proporcao
- *   pST             = pICMSST_compra          (alíquota não muda)
- *   vICMSSubstituto = vICMS_compra  * proporcao
- *   vICMSSTRet      = vICMSST_compra * proporcao
- */
-function resolveIcmsStRetido(item: EmitBody["itens"][number]): {
-  icms_vbc_st_retido?: number;
-  icms_p_st?: number;
-  icms_valor_substituto?: number;
-  icms_valor_st_retido?: number;
-} {
-  // 1. Valores diretos já fornecidos
-  if (
-    item.icms_vbc_st_retido != null &&
-    item.icms_p_st != null &&
-    item.icms_valor_substituto != null &&
-    item.icms_valor_st_retido != null
-  ) {
-    return {
-      icms_vbc_st_retido: round2(Number(item.icms_vbc_st_retido)),
-      icms_p_st: round2(Number(item.icms_p_st)),
-      icms_valor_substituto: round2(Number(item.icms_valor_substituto)),
-      icms_valor_st_retido: round2(Number(item.icms_valor_st_retido)),
-    };
-  }
-
-  // 2. Cálculo proporcional automático
-  const qtdVenda = Number(item.quantidade || 0);
-  const qtdCompra = Number(item.compra_quantidade || 0);
-  const vBcSt = Number(item.compra_vbc_st || 0);
-  const pSt = Number(item.compra_p_icms_st || 0);
-  const vIcms = Number(item.compra_vicms || 0);
-  const vIcmsSt = Number(item.compra_vicms_st || 0);
-
-  if (qtdVenda > 0 && qtdCompra > 0 && vBcSt > 0) {
-    const prop = qtdVenda / qtdCompra;
-    return {
-      icms_vbc_st_retido: round2(vBcSt * prop),
-      icms_p_st: round2(pSt),                      // alíquota não é proporcional
-      icms_valor_substituto: round2(vIcms * prop),
-      icms_valor_st_retido: round2(vIcmsSt * prop),
-    };
-  }
-
-  // 3. Sem dados suficientes
-  return {};
-}
-
-/** Retorna true se o item usa CST 500 ou CSOSN 500 (ST já retida) */
 function isStRetido(item: EmitBody["itens"][number]): boolean {
   const cst = String(item.icms_situacao_tributaria || "").trim();
   const csosn = String(item.csosn || "").trim();
   return cst === "500" || csosn === "500";
 }
 
-function validateBody(body: EmitBody) {
+// ─── Pré-validação de saldo ST (antes de consumir) ────────────────────────────
+
+async function preValidateStBalances(
+  supabaseUrl: string,
+  serviceRole: string,
+  itens: EmitBody["itens"]
+): Promise<string[]> {
+  const errors: string[] = [];
+
+  for (let i = 0; i < itens.length; i++) {
+    const item = itens[i];
+    if (!isStRetido(item)) continue;
+
+    // Se tem override manual completo, não precisa de saldo
+    if (
+      item.icms_vbc_st_retido_override != null &&
+      item.icms_p_st_override != null &&
+      item.icms_valor_substituto_override != null &&
+      item.icms_valor_st_retido_override != null
+    ) continue;
+
+    if (!item.product_id) {
+      errors.push(`Item ${i + 1} (${item.descricao}): CSOSN 500 requer product_id para consultar saldo ST.`);
+      continue;
+    }
+
+    const balance = await getStBalance(supabaseUrl, serviceRole, item.product_id);
+
+    if (!balance.available) {
+      errors.push(`Item ${i + 1} (${item.descricao}): sem saldo de ICMS-ST disponível. Importe a NF de compra primeiro.`);
+      continue;
+    }
+
+    const preview = previewStConsumption(balance.entries, Number(item.quantidade));
+
+    if (!preview.sufficient) {
+      errors.push(
+        `Item ${i + 1} (${item.descricao}): saldo insuficiente. ` +
+        `Necessário: ${item.quantidade}, disponível: ${round2(balance.totalRemaining)}.`
+      );
+    }
+  }
+
+  return errors;
+}
+
+// ─── Valida body ──────────────────────────────────────────────────────────────
+
+function validateBody(body: EmitBody): string[] {
   const errors: string[] = [];
 
   if (!body?.orderId) errors.push("orderId é obrigatório.");
   if (!body?.storeId) errors.push("storeId é obrigatório.");
-
-  if (!body?.destinatario?.nome) {
-    errors.push("Destinatário: nome é obrigatório.");
-  }
+  if (!body?.destinatario?.nome) errors.push("Destinatário: nome é obrigatório.");
 
   const doc = onlyDigits(body?.destinatario?.cpf_cnpj);
   if (![11, 14].includes(doc.length)) {
@@ -335,36 +291,19 @@ function validateBody(body: EmitBody) {
 
     const qtd = Number(item.quantidade || 0);
     const vUnit = Number(item.valor_unitario || 0);
-
     if (!(qtd > 0)) errors.push(`Item ${line}: quantidade deve ser maior que zero.`);
     if (!(vUnit >= 0)) errors.push(`Item ${line}: valor unitário inválido.`);
-
-    // Valida campos ST apenas se CST 500 / CSOSN 500
-    if (isStRetido(item)) {
-      const st = resolveIcmsStRetido(item);
-      if (
-        st.icms_vbc_st_retido == null ||
-        st.icms_p_st == null ||
-        st.icms_valor_substituto == null ||
-        st.icms_valor_st_retido == null
-      ) {
-        errors.push(
-          `Item ${line}: CST/CSOSN 500 exige vBCSTRet, pST, vICMSSubstituto e vICMSSTRet. ` +
-          `Forneça os valores diretos (icms_vbc_st_retido, icms_p_st, icms_valor_substituto, icms_valor_st_retido) ` +
-          `ou os dados da NF de compra (compra_quantidade, compra_vbc_st, compra_p_icms_st, compra_vicms, compra_vicms_st).`
-        );
-      }
-    }
   });
 
   return errors;
 }
 
+// ─── Busca emitente ───────────────────────────────────────────────────────────
+
 async function getEmitter(emitterId?: string | null) {
   const supabaseUrl = envOrThrow("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRole = envOrThrow("SUPABASE_SERVICE_ROLE_KEY");
-
-  const baseHeaders = {
+  const headers = {
     apikey: serviceRole,
     Authorization: `Bearer ${serviceRole}`,
     "Content-Type": "application/json",
@@ -373,37 +312,79 @@ async function getEmitter(emitterId?: string | null) {
   if (emitterId) {
     const res = await fetch(
       `${supabaseUrl}/rest/v1/emitters?id=eq.${encodeURIComponent(emitterId)}&select=*`,
-      { headers: baseHeaders, cache: "no-store" }
+      { headers, cache: "no-store" }
     );
-
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(`Falha ao buscar emitente por id: ${txt}`);
-    }
-
+    if (!res.ok) throw new Error(`Falha ao buscar emitente por id: ${await res.text()}`);
     const arr = (await res.json()) as EmitterRow[];
     if (arr?.[0]) return arr[0];
   }
 
   const defaultRes = await fetch(
     `${supabaseUrl}/rest/v1/emitters?is_default=eq.true&is_active=eq.true&select=*`,
-    { headers: baseHeaders, cache: "no-store" }
+    { headers, cache: "no-store" }
   );
-
-  if (!defaultRes.ok) {
-    const txt = await defaultRes.text();
-    throw new Error(`Falha ao buscar emitente padrão: ${txt}`);
-  }
-
+  if (!defaultRes.ok) throw new Error(`Falha ao buscar emitente padrão: ${await defaultRes.text()}`);
   const arr = (await defaultRes.json()) as EmitterRow[];
-  if (!arr?.[0]) {
-    throw new Error("Nenhum emitente padrão ativo encontrado.");
-  }
-
+  if (!arr?.[0]) throw new Error("Nenhum emitente padrão ativo encontrado.");
   return arr[0];
 }
 
-function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
+// ─── Consome ST e monta campos resolvidos ─────────────────────────────────────
+
+async function resolveStFields(
+  supabaseUrl: string,
+  serviceRole: string,
+  item: EmitBody["itens"][number],
+  reference: string,
+  orderId: string
+): Promise<ResolvedStFields | { error: string }> {
+
+  // Override manual completo — usa direto sem tocar no saldo
+  if (
+    item.icms_vbc_st_retido_override != null &&
+    item.icms_p_st_override != null &&
+    item.icms_valor_substituto_override != null &&
+    item.icms_valor_st_retido_override != null
+  ) {
+    return {
+      icms_vbc_st_retido: round2(Number(item.icms_vbc_st_retido_override)),
+      icms_p_st: round2(Number(item.icms_p_st_override)),
+      icms_valor_substituto: round2(Number(item.icms_valor_substituto_override)),
+      icms_valor_st_retido: round2(Number(item.icms_valor_st_retido_override)),
+      fromBalance: false,
+    };
+  }
+
+  // Consome do saldo (FIFO)
+  const result = await consumeStBalance(
+    supabaseUrl,
+    serviceRole,
+    item.product_id,
+    Number(item.quantidade),
+    orderId,
+    reference
+  );
+
+  if (!result.ok) {
+    return { error: result.error || "Falha ao consumir saldo ST." };
+  }
+
+  return {
+    icms_vbc_st_retido: result.st_base,
+    icms_p_st: result.st_rate,
+    icms_valor_substituto: result.st_icms_substitute,
+    icms_valor_st_retido: result.st_value,
+    fromBalance: true,
+  };
+}
+
+// ─── Monta payload Focus ──────────────────────────────────────────────────────
+
+function buildFocusPayload(
+  body: EmitBody,
+  emitter: EmitterRow,
+  resolvedStByIndex: Map<number, ResolvedStFields>
+) {
   const tratarComoDespesa = Boolean(body.tratar_frete_como_despesa_acessoria);
 
   const valorProdutos = round2(
@@ -416,7 +397,6 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
   const valorFreteItens = round2(
     body.itens.reduce((acc, item) => acc + normalizeMoney(item.valor_frete), 0)
   );
-
   const valorOutrasDespesasItens = round2(
     body.itens.reduce((acc, item) => acc + normalizeMoney(item.valor_outras_despesas), 0)
   );
@@ -492,22 +472,20 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
     items: body.itens.map((item, index) => {
       const quantidade = Number(item.quantidade || 0);
       const valorUnitario = normalizeMoney(item.valor_unitario);
-      const valorBruto = normalizeMoney(
-        item.valor_total ?? quantidade * valorUnitario
-      );
+      const valorBruto = normalizeMoney(item.valor_total ?? quantidade * valorUnitario);
       const unidade = normalizeUnit(item.unidade);
-
       const valorFreteItem = tratarComoDespesa ? 0 : normalizeMoney(item.valor_frete);
       const valorOutrasDespesasItem = normalizeMoney(item.valor_outras_despesas);
 
-      // ─── Monta campos ICMS-ST retido se CST/CSOSN 500 ──────────────────
       const stFields: Record<string, number | undefined> = {};
       if (isStRetido(item)) {
-        const st = resolveIcmsStRetido(item);
-        if (st.icms_vbc_st_retido != null) stFields.icms_vbc_st_retido = st.icms_vbc_st_retido;
-        if (st.icms_p_st != null) stFields.icms_p_st = st.icms_p_st;
-        if (st.icms_valor_substituto != null) stFields.icms_valor_substituto = st.icms_valor_substituto;
-        if (st.icms_valor_st_retido != null) stFields.icms_valor_st_retido = st.icms_valor_st_retido;
+        const st = resolvedStByIndex.get(index);
+        if (st) {
+          stFields.icms_vbc_st_retido = st.icms_vbc_st_retido;
+          stFields.icms_p_st = st.icms_p_st;
+          stFields.icms_valor_substituto = st.icms_valor_substituto;
+          stFields.icms_valor_st_retido = st.icms_valor_st_retido;
+        }
       }
 
       return {
@@ -532,7 +510,6 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
         icms_origem: item.origem || undefined,
         pis_situacao_tributaria: item.pis_situacao_tributaria || undefined,
         cofins_situacao_tributaria: item.cofins_situacao_tributaria || undefined,
-        // ST retido (apenas quando CST/CSOSN 500)
         ...stFields,
       };
     }),
@@ -543,38 +520,16 @@ function buildFocusPayload(body: EmitBody, emitter: EmitterRow) {
   };
 }
 
+// ─── Salva documento Focus ────────────────────────────────────────────────────
+
 async function saveFocusDoc(doc: {
-  order_id: string;
-  store_id: string;
-  emitter_id: string;
-  status?: string | null;
-  reference: string;
-  numero?: string | null;
-  serie?: string | null;
-  chave?: string | null;
-  protocolo?: string | null;
-  url_danfe?: string | null;
-  url_xml?: string | null;
-  error_message?: string | null;
+  order_id: string; store_id: string; emitter_id: string;
+  status?: string | null; reference: string; numero?: string | null;
+  serie?: string | null; chave?: string | null; protocolo?: string | null;
+  url_danfe?: string | null; url_xml?: string | null; error_message?: string | null;
 }) {
   const supabaseUrl = envOrThrow("NEXT_PUBLIC_SUPABASE_URL");
   const serviceRole = envOrThrow("SUPABASE_SERVICE_ROLE_KEY");
-
-  const payload = {
-    order_id: doc.order_id,
-    store_id: doc.store_id,
-    emitter_id: doc.emitter_id,
-    status: doc.status ?? null,
-    reference: doc.reference,
-    numero: doc.numero ?? null,
-    serie: doc.serie ?? null,
-    chave: doc.chave ?? null,
-    protocolo: doc.protocolo ?? null,
-    url_danfe: doc.url_danfe ?? null,
-    url_xml: doc.url_xml ?? null,
-    error_message: doc.error_message ?? null,
-    updated_at: new Date().toISOString(),
-  };
 
   const res = await fetch(
     `${supabaseUrl}/rest/v1/focus_nfe_documents?on_conflict=reference`,
@@ -586,7 +541,8 @@ async function saveFocusDoc(doc: {
         "Content-Type": "application/json",
         Prefer: "resolution=merge-duplicates,return=representation",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...doc, updated_at: new Date().toISOString() }),
+      cache: "no-store",
     }
   );
 
@@ -594,33 +550,62 @@ async function saveFocusDoc(doc: {
     const txt = await res.text().catch(() => "");
     throw new Error(`Falha ao gravar focus_nfe_documents: ${txt || res.status}`);
   }
-
   return res.json().catch(() => null);
 }
+
+// ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
     const token = envOrThrow("FOCUS_NFE_TOKEN");
     const baseUrl = focusBaseUrl();
+    const supabaseUrl = envOrThrow("NEXT_PUBLIC_SUPABASE_URL");
+    const serviceRole = envOrThrow("SUPABASE_SERVICE_ROLE_KEY");
 
     const body = (await req.json()) as EmitBody;
-    const validationErrors = validateBody(body);
 
+    // Validação estrutural
+    const validationErrors = validateBody(body);
     if (validationErrors.length > 0) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "Falha de validação dos dados da NF-e.",
-          validation_errors: validationErrors,
-        },
+        { ok: false, error: "Falha de validação dos dados da NF-e.", validation_errors: validationErrors },
         { status: 400 }
+      );
+    }
+
+    // Pré-validação de saldo ST (antes de consumir qualquer coisa)
+    const stErrors = await preValidateStBalances(supabaseUrl, serviceRole, body.itens);
+    if (stErrors.length > 0) {
+      return NextResponse.json(
+        { ok: false, error: "Saldo ICMS-ST insuficiente.", validation_errors: stErrors },
+        { status: 422 }
       );
     }
 
     const emitter = await getEmitter(body.emitterId || null);
     const reference = String(body.reference || `PED-${body.orderId}`).trim();
-    const focusPayload = buildFocusPayload(body, emitter);
 
+    // Consome saldo ST para cada item CSOSN 500
+    const resolvedStByIndex = new Map<number, ResolvedStFields>();
+
+    for (let i = 0; i < body.itens.length; i++) {
+      const item = body.itens[i];
+      if (!isStRetido(item)) continue;
+
+      const stResult = await resolveStFields(supabaseUrl, serviceRole, item, reference, body.orderId);
+
+      if ("error" in stResult) {
+        // Rollback não é trivial sem transação — loga e retorna erro
+        return NextResponse.json(
+          { ok: false, error: `Erro ao consumir saldo ST do item ${i + 1} (${item.descricao}): ${stResult.error}` },
+          { status: 422 }
+        );
+      }
+
+      resolvedStByIndex.set(i, stResult);
+    }
+
+    const focusPayload = buildFocusPayload(body, emitter, resolvedStByIndex);
     const url = `${baseUrl}/v2/nfe?ref=${encodeURIComponent(reference)}`;
 
     const focusRes = await fetch(url, {
@@ -638,38 +623,23 @@ export async function POST(req: NextRequest) {
 
     if (!focusRes.ok) {
       const errorMessage =
-        json?.mensagem ||
-        json?.message ||
-        json?.erro ||
-        rawText ||
-        `HTTP ${focusRes.status}`;
+        json?.mensagem || json?.message || json?.erro || rawText || `HTTP ${focusRes.status}`;
 
       await saveFocusDoc({
-        order_id: body.orderId,
-        store_id: body.storeId,
-        emitter_id: emitter.id,
-        reference,
-        status: "erro",
+        order_id: body.orderId, store_id: body.storeId, emitter_id: emitter.id,
+        reference, status: "erro",
         numero: normalizeNumero(body.numero) ?? null,
         serie: normalizeSerie(body.serie || emitter.default_serie),
-        error_message:
-          typeof errorMessage === "string"
-            ? errorMessage
-            : JSON.stringify(errorMessage),
+        error_message: typeof errorMessage === "string" ? errorMessage : JSON.stringify(errorMessage),
       });
 
       return NextResponse.json(
         {
-          ok: false,
-          error: errorMessage,
+          ok: false, error: errorMessage,
           focus_status: focusRes.status,
           focus_details: json || rawText || null,
           debug: {
-            emitter: {
-              id: emitter.id,
-              cnpj: emitter.cnpj,
-              legal_name: emitter.legal_name,
-            },
+            emitter: { id: emitter.id, cnpj: emitter.cnpj, legal_name: emitter.legal_name },
             destinatario: {
               documento: body.destinatario.cpf_cnpj,
               ie: body.destinatario.inscricao_estadual,
@@ -677,12 +647,6 @@ export async function POST(req: NextRequest) {
                 body.destinatario.indicador_inscricao_estadual,
                 body.destinatario.inscricao_estadual
               ),
-            },
-            request_mode: {
-              tratar_frete_como_despesa_acessoria:
-                Boolean(body.tratar_frete_como_despesa_acessoria),
-              valor_frete_request: normalizeMoney(body.transporte?.valor_frete),
-              valor_outras_despesas_request: normalizeMoney(body.valor_outras_despesas),
             },
             focus_payload_resumo: {
               valor_produtos: focusPayload.valor_produtos,
@@ -698,11 +662,8 @@ export async function POST(req: NextRequest) {
     }
 
     await saveFocusDoc({
-      order_id: body.orderId,
-      store_id: body.storeId,
-      emitter_id: emitter.id,
-      reference,
-      status: json?.status || "processando",
+      order_id: body.orderId, store_id: body.storeId, emitter_id: emitter.id,
+      reference, status: json?.status || "processando",
       numero: json?.numero || normalizeNumero(body.numero) || null,
       serie: json?.serie || normalizeSerie(body.serie || emitter.default_serie),
       chave: json?.chave || null,
@@ -720,26 +681,17 @@ export async function POST(req: NextRequest) {
       message: "NF-e enviada para processamento.",
       reference,
       focus: json,
-      emitter: {
-        id: emitter.id,
-        cnpj: emitter.cnpj,
-        legal_name: emitter.legal_name,
-      },
-      payload_resumo: {
-        tratar_frete_como_despesa_acessoria:
-          Boolean(body.tratar_frete_como_despesa_acessoria),
-        valor_produtos: focusPayload.valor_produtos,
-        valor_frete: focusPayload.valor_frete,
-        valor_outras_despesas: focusPayload.valor_outras_despesas,
-        valor_total: focusPayload.valor_total,
-      },
+      emitter: { id: emitter.id, cnpj: emitter.cnpj, legal_name: emitter.legal_name },
+      st_consumptions: Object.fromEntries(
+        Array.from(resolvedStByIndex.entries()).map(([i, st]) => [
+          `item_${i + 1}`,
+          { from_balance: st.fromBalance, ...st },
+        ])
+      ),
     });
   } catch (e: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: e?.message || "Erro interno ao emitir NF-e.",
-      },
+      { ok: false, error: e?.message || "Erro interno ao emitir NF-e." },
       { status: 500 }
     );
   }

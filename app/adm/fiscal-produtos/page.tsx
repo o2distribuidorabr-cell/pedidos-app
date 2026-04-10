@@ -44,6 +44,13 @@ type ProductRow = {
   red_cbs_rt_percent: number | null;
   red_ibs_uf_rt_percent: number | null;
   red_ibs_mun_rt_percent: number | null;
+
+  // ICMS-ST retida anteriormente (CSOSN 500)
+  icms_st_ret_base: number | null;
+  icms_st_ret_aliquota: number | null;
+  icms_st_ret_vlr_substituto: number | null;
+  icms_st_ret_valor: number | null;
+  conversion_factor: number | null;
 };
 
 type DraftRow = {
@@ -84,6 +91,13 @@ type DraftRow = {
   red_cbs_rt_percent: string;
   red_ibs_uf_rt_percent: string;
   red_ibs_mun_rt_percent: string;
+
+  // ICMS-ST retida anteriormente (CSOSN 500)
+  icms_st_ret_base: string;
+  icms_st_ret_aliquota: string;
+  icms_st_ret_vlr_substituto: string;
+  icms_st_ret_valor: string;
+  conversion_factor: string;
 };
 
 function toInput(v: number | string | null | undefined) {
@@ -177,7 +191,12 @@ export default function AdmFiscalProdutosPage() {
         ibs_mun_rt_percent,
         red_cbs_rt_percent,
         red_ibs_uf_rt_percent,
-        red_ibs_mun_rt_percent
+        red_ibs_mun_rt_percent,
+        icms_st_ret_base,
+        icms_st_ret_aliquota,
+        icms_st_ret_vlr_substituto,
+        icms_st_ret_valor,
+        conversion_factor
       `)
       .order("name", { ascending: true });
 
@@ -231,6 +250,12 @@ export default function AdmFiscalProdutosPage() {
         red_cbs_rt_percent: toInput(p.red_cbs_rt_percent),
         red_ibs_uf_rt_percent: toInput(p.red_ibs_uf_rt_percent),
         red_ibs_mun_rt_percent: toInput(p.red_ibs_mun_rt_percent),
+
+        icms_st_ret_base: toInput(p.icms_st_ret_base),
+        icms_st_ret_aliquota: toInput(p.icms_st_ret_aliquota),
+        icms_st_ret_vlr_substituto: toInput(p.icms_st_ret_vlr_substituto),
+        icms_st_ret_valor: toInput(p.icms_st_ret_valor),
+        conversion_factor: toInput(p.conversion_factor ?? 1),
       };
     }
 
@@ -321,6 +346,11 @@ export default function AdmFiscalProdutosPage() {
           red_cbs_rt_percent: row.red_cbs_rt_percent,
           red_ibs_uf_rt_percent: row.red_ibs_uf_rt_percent,
           red_ibs_mun_rt_percent: row.red_ibs_mun_rt_percent,
+          icms_st_ret_base: row.icms_st_ret_base || null,
+          icms_st_ret_aliquota: row.icms_st_ret_aliquota || null,
+          icms_st_ret_vlr_substituto: row.icms_st_ret_vlr_substituto || null,
+          icms_st_ret_valor: row.icms_st_ret_valor || null,
+          conversion_factor: row.conversion_factor || "1",
         };
       });
 
@@ -488,6 +518,12 @@ export default function AdmFiscalProdutosPage() {
                       <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">% Red IBS Mun RT</th>
                     </>
                   ) : null}
+
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-blue-600 bg-blue-50">Fator Conversão</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-amber-600 bg-amber-50">ST Base Ret. (R$)</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-amber-600 bg-amber-50">ST Alíq. (%)</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-amber-600 bg-amber-50">ST Vlr Subst. (R$)</th>
+                  <th className="px-3 py-3 text-xs font-semibold uppercase tracking-wide text-amber-600 bg-amber-50">ST Vlr Ret. (R$)</th>
                 </tr>
               </thead>
 
@@ -561,6 +597,22 @@ export default function AdmFiscalProdutosPage() {
                             <td className="px-3 py-3"><TextCell value={row.red_ibs_mun_rt_percent} onChange={(v) => setField(p.id, "red_ibs_mun_rt_percent", v)} width="w-20" /></td>
                           </>
                         ) : null}
+
+                        <td className="px-3 py-3 bg-blue-50">
+                          <TextCell
+                            value={row.conversion_factor}
+                            onChange={(v) => setField(p.id, "conversion_factor", v)}
+                            width="w-24"
+                            placeholder="ex: 6.6667"
+                          />
+                          <div className="mt-1 text-xs text-blue-500">
+                            {row.csosn === "500" || row.icms_cst === "500" ? "⚠️ obrigatório" : ""}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 bg-amber-50"><TextCell value={row.icms_st_ret_base} onChange={(v) => setField(p.id, "icms_st_ret_base", v)} width="w-28" placeholder="ex: 4262.60" /></td>
+                        <td className="px-3 py-3 bg-amber-50"><TextCell value={row.icms_st_ret_aliquota} onChange={(v) => setField(p.id, "icms_st_ret_aliquota", v)} width="w-20" placeholder="ex: 18.00" /></td>
+                        <td className="px-3 py-3 bg-amber-50"><TextCell value={row.icms_st_ret_vlr_substituto} onChange={(v) => setField(p.id, "icms_st_ret_vlr_substituto", v)} width="w-28" placeholder="ex: 568.35" /></td>
+                        <td className="px-3 py-3 bg-amber-50"><TextCell value={row.icms_st_ret_valor} onChange={(v) => setField(p.id, "icms_st_ret_valor", v)} width="w-28" placeholder="ex: 198.92" /></td>
                       </tr>
                     );
                   })
