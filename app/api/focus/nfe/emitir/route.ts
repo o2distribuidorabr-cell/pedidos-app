@@ -118,6 +118,7 @@ type EmitterRow = {
 type ResolvedStFields = {
   icms_vbc_st_retido: number;
   icms_p_st: number;
+  icms_valor_substituto: number;
   icms_valor_st_retido: number;
   fromBalance: boolean;
 };
@@ -345,6 +346,7 @@ async function resolveStFields(
     return {
       icms_vbc_st_retido: round2(Number(item.icms_vbc_st_retido_override)),
       icms_p_st: round2(Number(item.icms_p_st_override)),
+      icms_valor_substituto: 0,
       icms_valor_st_retido: round2(Number(item.icms_valor_st_retido_override)),
       fromBalance: false,
     };
@@ -367,6 +369,7 @@ async function resolveStFields(
   return {
     icms_vbc_st_retido: result.st_base,
     icms_p_st: result.st_rate,
+    icms_valor_substituto: result.st_icms_substitute,
     icms_valor_st_retido: result.st_value,
     fromBalance: true,
   };
@@ -475,9 +478,11 @@ function buildFocusPayload(
       if (isStRetido(item)) {
         const st = resolvedStByIndex.get(index);
         if (st) {
-          stFields.icms_vbc_st_retido = st.icms_vbc_st_retido;
-          stFields.icms_p_st = st.icms_p_st;
-          stFields.icms_valor_st_retido = st.icms_valor_st_retido;
+          // Nomes corretos conforme API Focus NFe para CSOSN 500 / CST 60
+          stFields.icms_base_calculo_retido_st = st.icms_vbc_st_retido;
+          stFields.icms_aliquota_final = st.icms_p_st;
+          stFields.icms_valor_substituto = st.icms_valor_substituto;
+          stFields.icms_valor_retido_st = st.icms_valor_st_retido;
         }
       }
 
