@@ -88,7 +88,6 @@ type EmitBody = {
     // Override manual (opcional — se informado, usa esses valores em vez do saldo)
     icms_vbc_st_retido_override?: number | null;
     icms_p_st_override?: number | null;
-    icms_valor_substituto_override?: number | null;
     icms_valor_st_retido_override?: number | null;
   }>;
 
@@ -119,7 +118,6 @@ type EmitterRow = {
 type ResolvedStFields = {
   icms_vbc_st_retido: number;
   icms_p_st: number;
-  icms_valor_substituto: number;
   icms_valor_st_retido: number;
   fromBalance: boolean;
 };
@@ -231,7 +229,6 @@ async function preValidateStBalances(
     if (
       item.icms_vbc_st_retido_override != null &&
       item.icms_p_st_override != null &&
-      item.icms_valor_substituto_override != null &&
       item.icms_valor_st_retido_override != null
     ) continue;
 
@@ -343,13 +340,11 @@ async function resolveStFields(
   if (
     item.icms_vbc_st_retido_override != null &&
     item.icms_p_st_override != null &&
-    item.icms_valor_substituto_override != null &&
     item.icms_valor_st_retido_override != null
   ) {
     return {
       icms_vbc_st_retido: round2(Number(item.icms_vbc_st_retido_override)),
       icms_p_st: round2(Number(item.icms_p_st_override)),
-      icms_valor_substituto: round2(Number(item.icms_valor_substituto_override)),
       icms_valor_st_retido: round2(Number(item.icms_valor_st_retido_override)),
       fromBalance: false,
     };
@@ -372,7 +367,6 @@ async function resolveStFields(
   return {
     icms_vbc_st_retido: result.st_base,
     icms_p_st: result.st_rate,
-    icms_valor_substituto: result.st_icms_substitute,
     icms_valor_st_retido: result.st_value,
     fromBalance: true,
   };
@@ -483,7 +477,6 @@ function buildFocusPayload(
         if (st) {
           stFields.icms_vbc_st_retido = st.icms_vbc_st_retido;
           stFields.icms_p_st = st.icms_p_st;
-          stFields.icms_valor_substituto = st.icms_valor_substituto;
           stFields.icms_valor_st_retido = st.icms_valor_st_retido;
         }
       }
