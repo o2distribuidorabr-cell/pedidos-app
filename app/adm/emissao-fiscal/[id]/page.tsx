@@ -176,6 +176,7 @@ type ItemIssue = {
 };
 
 type PayloadItem = {
+  product_id: string;
   codigo: string;
   descricao: string;
   unidade: string;
@@ -295,6 +296,7 @@ function buildItemsWithExtraExpenses(items: DraftItem[], extraExpenseTotal: numb
     }
 
     return {
+      product_id: it.product_id,
       codigo: it.codigo,
       descricao: it.descricao,
       unidade: it.unidade,
