@@ -15,12 +15,10 @@ type ParsedNFeItem = {
   qCom: number;
   vUnCom: number;
   vProd: number;
-  // ICMS
   CST: string | null;
   vBC: number;
   pICMS: number;
   vICMS: number;
-  // ST
   modBCST: string | null;
   pMVAST: number;
   vBCST: number;
@@ -67,18 +65,12 @@ type ImportResult = {
   errors: string[];
 };
 
-// ─── XML Parser (sem dependência externa — usa regex robusto) ─────────────────
+// ─── XML Parser ───────────────────────────────────────────────────────────────
 
 function getTag(xml: string, tag: string): string {
-  // Tenta com namespace e sem namespace
-  const patterns = [
-    new RegExp(`<(?:[^:>]+:)?${tag}[^>]*>([\\s\\S]*?)<\\/(?:[^:>]+:)?${tag}>`, "i"),
-  ];
-  for (const re of patterns) {
-    const m = xml.match(re);
-    if (m) return m[1].trim();
-  }
-  return "";
+  const re = new RegExp(`<(?:[^:>]+:)?${tag}[^>]*>([\\s\\S]*?)<\\/(?:[^:>]+:)?${tag}>`, "i");
+  const m = xml.match(re);
+  return m ? m[1].trim() : "";
 }
 
 function getNum(xml: string, tag: string): number {
@@ -97,17 +89,7 @@ function getAllBlocks(xml: string, tag: string): string[] {
   return results;
 }
 
-function extractCSTFromICMS(icmsBlock: string): {
-  cst: string;
-  vBC: number;
-  pICMS: number;
-  vICMS: number;
-  vBCST: number;
-  pICMSST: number;
-  vICMSST: number;
-  modBCST: string;
-  pMVAST: number;
-} {
+function extractCSTFromICMS(icmsBlock: string) {
   return {
     cst: getTag(icmsBlock, "CST") || getTag(icmsBlock, "CSOSN") || "",
     vBC: getNum(icmsBlock, "vBC"),
@@ -122,7 +104,6 @@ function extractCSTFromICMS(icmsBlock: string): {
 }
 
 export function parseNFeXML(xml: string): ParsedNFe {
-  // Remove BOM e espaços
   const clean = xml.replace(/^\uFEFF/, "").trim();
 
   const chNFe =
@@ -140,20 +121,13 @@ export function parseNFeXML(xml: string): ParsedNFe {
   const cnpjEmit = getTag(emitBlock, "CNPJ");
   const xNomeEmit = getTag(emitBlock, "xNome");
 
-  // Pega todos os blocos <det>
   const detBlocks = getAllBlocks(clean, "det");
 
   const items: ParsedNFeItem[] = detBlocks.map((det, idx) => {
     const prod = getTag(det, "prod");
     const imposto = getTag(det, "imposto");
     const icmsOuter = getTag(imposto, "ICMS");
-
-    // Extrai CST de qualquer sub-bloco ICMS (ICMS00, ICMS10, ICMS60, etc.)
-    const icmsInner =
-      icmsOuter ||
-      getAllBlocks(imposto, "ICMS")[0] ||
-      det;
-
+    const icmsInner = icmsOuter || getAllBlocks(imposto, "ICMS")[0] || det;
     const icmsData = extractCSTFromICMS(icmsInner);
 
     return {
@@ -198,14 +172,13 @@ function envOrThrow(name: string): string {
   return v;
 }
 
-// ─── Busca produto no Supabase ─────────────────────────────────────────────────
+// ─── Busca produto ─────────────────────────────────────────────────────────────
 
 async function findProduct(
   supabaseUrl: string,
   headers: Record<string, string>,
   item: ParsedNFeItem
 ): Promise<ProductRow | null> {
-  // Tenta por EAN
   if (item.cEAN && item.cEAN !== "SEM GTIN") {
     const res = await fetch(
       `${supabaseUrl}/rest/v1/products?ean=eq.${encodeURIComponent(item.cEAN)}&select=id,sku,name,ean,conversion_factor&limit=1`,
@@ -217,7 +190,6 @@ async function findProduct(
     }
   }
 
-  // Tenta por SKU (cProd)
   if (item.cProd) {
     const res = await fetch(
       `${supabaseUrl}/rest/v1/products?sku=eq.${encodeURIComponent(item.cProd)}&select=id,sku,name,ean,conversion_factor&limit=1`,
@@ -229,7 +201,6 @@ async function findProduct(
     }
   }
 
-  // Tenta por nome (busca parcial)
   if (item.xProd) {
     const namePart = item.xProd.slice(0, 30);
     const res = await fetch(
@@ -245,7 +216,7 @@ async function findProduct(
   return null;
 }
 
-// ─── Verifica entrada duplicada ────────────────────────────────────────────────
+// ─── Verifica duplicata ────────────────────────────────────────────────────────
 
 async function entryExists(
   supabaseUrl: string,
@@ -264,7 +235,7 @@ async function entryExists(
   return arr.length > 0;
 }
 
-// ─── Salva entrada no banco ────────────────────────────────────────────────────
+// ─── Salva entrada ST ──────────────────────────────────────────────────────────
 
 async function saveStEntry(
   supabaseUrl: string,
@@ -305,6 +276,37 @@ async function saveStEntry(
   return arr[0]?.id ?? "";
 }
 
+// ─── Atualiza produto com dados ST unitários ───────────────────────────────────
+// Após importar, grava os valores unitários no cadastro do produto para
+// que a tela de emissão possa exibi-los e a rota de emissão os use como fallback.
+
+async function updateProductStFields(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  productId: string,
+  stBaseUnit: number,
+  stRate: number,
+  stSubUnit: number,
+  stValueUnit: number
+): Promise<void> {
+  await fetch(
+    `${supabaseUrl}/rest/v1/products?id=eq.${encodeURIComponent(productId)}`,
+    {
+      method: "PATCH",
+      headers: { ...headers, Prefer: "return=minimal" },
+      body: JSON.stringify({
+        icms_st_ret_base: round(stBaseUnit, 2),
+        icms_st_ret_aliquota: round(stRate, 4),
+        icms_st_ret_vlr_substituto: round(stSubUnit, 2),
+        icms_st_ret_valor: round(stValueUnit, 2),
+        last_fiscal_change_at: new Date().toISOString(),
+      }),
+      cache: "no-store",
+    }
+  );
+  // Não lança erro se falhar — a entrada ST já foi salva, isso é complementar
+}
+
 // ─── Handler principal ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -318,7 +320,6 @@ export async function POST(req: NextRequest) {
       "Content-Type": "application/json",
     };
 
-    // Suporta multipart/form-data (upload de arquivo) ou JSON { xml: "..." }
     let xmlString = "";
 
     const contentType = req.headers.get("content-type") || "";
@@ -341,7 +342,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "XML vazio." }, { status: 400 });
     }
 
-    // Parse do XML
     let nfe: ParsedNFe;
     try {
       nfe = parseNFeXML(xmlString);
@@ -355,38 +355,23 @@ export async function POST(req: NextRequest) {
 
     const result: ImportResult = {
       ok: true,
-      nfe: {
-        chave: nfe.chNFe,
-        numero: nfe.nNF,
-        fornecedor: nfe.xNomeEmit,
-        data: nfe.dhEmi,
-      },
+      nfe: { chave: nfe.chNFe, numero: nfe.nNF, fornecedor: nfe.xNomeEmit, data: nfe.dhEmi },
       imported: [],
       skipped: [],
       errors: [],
     };
 
     for (const item of nfe.items) {
-      // Filtra itens sem ST
       if (!item.vBCST || item.vBCST <= 0 || !item.vICMSST || item.vICMSST <= 0) {
-        result.skipped.push({
-          nItem: item.nItem,
-          xProd: item.xProd,
-          reason: "Item sem ICMS-ST (vBCST ou vICMSST zerado).",
-        });
+        result.skipped.push({ nItem: item.nItem, xProd: item.xProd, reason: "Item sem ICMS-ST (vBCST ou vICMSST zerado)." });
         continue;
       }
 
       if (!item.qCom || item.qCom <= 0) {
-        result.skipped.push({
-          nItem: item.nItem,
-          xProd: item.xProd,
-          reason: "Quantidade (qCom) inválida ou zero.",
-        });
+        result.skipped.push({ nItem: item.nItem, xProd: item.xProd, reason: "Quantidade (qCom) inválida ou zero." });
         continue;
       }
 
-      // Busca produto
       const product = await findProduct(supabaseUrl, baseHeaders, item);
       if (!product) {
         result.skipped.push({
@@ -397,20 +382,12 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Verifica duplicata
       const isDuplicate = await entryExists(supabaseUrl, baseHeaders, nfe.chNFe, item.nItem, product.id);
       if (isDuplicate) {
-        result.skipped.push({
-          nItem: item.nItem,
-          xProd: item.xProd,
-          reason: `Entrada já importada para este produto (chave NF-e + nItem já existe).`,
-        });
+        result.skipped.push({ nItem: item.nItem, xProd: item.xProd, reason: "Entrada já importada para este produto." });
         continue;
       }
 
-      // Conversão de unidade
-      // conversion_factor: quantas unidades de venda correspondem a 1 unidade de compra
-      // Ex: compra 1 KG, vende em UN de 150g → factor = 1/0.15 = 6.6667
       const factor = Number(product.conversion_factor) || 1;
       const quantityConverted = round(item.qCom * factor, 4);
 
@@ -423,13 +400,11 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Valores unitários (por unidade de VENDA)
       const st_base_unit = round(item.vBCST / quantityConverted, 6);
       const st_rate = round(item.pICMSST, 4);
       const st_icms_substitute_unit = round(item.vICMS / quantityConverted, 6);
       const st_value_unit = round(item.vICMSST / quantityConverted, 6);
 
-      // Salva entrada
       let entryId = "";
       try {
         entryId = await saveStEntry(supabaseUrl, baseHeaders, {
@@ -455,6 +430,17 @@ export async function POST(req: NextRequest) {
         result.errors.push(`Item ${item.nItem} (${item.xProd}): ${e?.message}`);
         continue;
       }
+
+      // ── Atualiza automaticamente o cadastro do produto com os valores ST unitários
+      await updateProductStFields(
+        supabaseUrl,
+        baseHeaders,
+        product.id,
+        st_base_unit,
+        st_rate,
+        st_icms_substitute_unit,
+        st_value_unit
+      );
 
       result.imported.push({
         product_id: product.id,

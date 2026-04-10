@@ -35,6 +35,15 @@ type ItemPayload = {
   red_cbs_rt_percent?: string | null;
   red_ibs_uf_rt_percent?: string | null;
   red_ibs_mun_rt_percent?: string | null;
+
+  // Fator de conversão (unidade de compra → unidade de venda)
+  conversion_factor?: string | null;
+
+  // ICMS-ST retida anteriormente (CSOSN 500)
+  icms_st_ret_base?: string | null;
+  icms_st_ret_aliquota?: string | null;
+  icms_st_ret_vlr_substituto?: string | null;
+  icms_st_ret_valor?: string | null;
 };
 
 function envOrThrow(name: string): string {
@@ -53,6 +62,13 @@ function cleanNumber(v: unknown) {
   if (!s) return null;
   const n = Number(s);
   return Number.isFinite(n) ? n : null;
+}
+
+function cleanNumberDefault(v: unknown, defaultValue: number) {
+  const s = String(v ?? "").trim().replace(",", ".");
+  if (!s) return defaultValue;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? n : defaultValue;
 }
 
 export async function POST(req: NextRequest) {
@@ -109,6 +125,15 @@ export async function POST(req: NextRequest) {
         red_ibs_uf_rt_percent: cleanNumber(item.red_ibs_uf_rt_percent),
         red_ibs_mun_rt_percent: cleanNumber(item.red_ibs_mun_rt_percent),
 
+        // Fator de conversão — padrão 1 se não informado ou inválido
+        conversion_factor: cleanNumberDefault(item.conversion_factor, 1),
+
+        // ST retida
+        icms_st_ret_base: cleanNumber(item.icms_st_ret_base),
+        icms_st_ret_aliquota: cleanNumber(item.icms_st_ret_aliquota),
+        icms_st_ret_vlr_substituto: cleanNumber(item.icms_st_ret_vlr_substituto),
+        icms_st_ret_valor: cleanNumber(item.icms_st_ret_valor),
+
         last_fiscal_change_at: new Date().toISOString(),
       };
 
@@ -135,17 +160,10 @@ export async function POST(req: NextRequest) {
       updated++;
     }
 
-    return NextResponse.json({
-      ok: true,
-      updated,
-      errors,
-    });
+    return NextResponse.json({ ok: true, updated, errors });
   } catch (e: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: e?.message || "Erro ao salvar produtos fiscais.",
-      },
+      { ok: false, error: e?.message || "Erro ao salvar produtos fiscais." },
       { status: 500 }
     );
   }
