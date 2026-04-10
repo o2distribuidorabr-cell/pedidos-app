@@ -40,6 +40,7 @@ type ProductRow = {
   sku: string | null;
   name: string | null;
   ean: string | null;
+  supplier_sku: string | null;
   conversion_factor: number;
 };
 
@@ -181,7 +182,19 @@ async function findProduct(
 ): Promise<ProductRow | null> {
   if (item.cEAN && item.cEAN !== "SEM GTIN") {
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/products?ean=eq.${encodeURIComponent(item.cEAN)}&select=id,sku,name,ean,conversion_factor&limit=1`,
+      `${supabaseUrl}/rest/v1/products?ean=eq.${encodeURIComponent(item.cEAN)}&select=id,sku,name,ean,supplier_sku,conversion_factor&limit=1`,
+      { headers, cache: "no-store" }
+    );
+    if (res.ok) {
+      const arr = await res.json() as ProductRow[];
+      if (arr[0]) return arr[0];
+    }
+  }
+
+  // Busca por supplier_sku (SKU do fornecedor cadastrado no produto)
+  if (item.cProd) {
+    const res = await fetch(
+      `${supabaseUrl}/rest/v1/products?supplier_sku=eq.${encodeURIComponent(item.cProd)}&select=id,sku,name,ean,supplier_sku,conversion_factor&limit=1`,
       { headers, cache: "no-store" }
     );
     if (res.ok) {
@@ -192,7 +205,7 @@ async function findProduct(
 
   if (item.cProd) {
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/products?sku=eq.${encodeURIComponent(item.cProd)}&select=id,sku,name,ean,conversion_factor&limit=1`,
+      `${supabaseUrl}/rest/v1/products?sku=eq.${encodeURIComponent(item.cProd)}&select=id,sku,name,ean,supplier_sku,conversion_factor&limit=1`,
       { headers, cache: "no-store" }
     );
     if (res.ok) {
@@ -204,7 +217,7 @@ async function findProduct(
   if (item.xProd) {
     const namePart = item.xProd.slice(0, 30);
     const res = await fetch(
-      `${supabaseUrl}/rest/v1/products?name=ilike.*${encodeURIComponent(namePart)}*&select=id,sku,name,ean,conversion_factor&limit=1`,
+      `${supabaseUrl}/rest/v1/products?name=ilike.*${encodeURIComponent(namePart)}*&select=id,sku,name,ean,supplier_sku,conversion_factor&limit=1`,
       { headers, cache: "no-store" }
     );
     if (res.ok) {
