@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { getOrderDeliveryOverview } from "@/lib/delivery";
+import { createOrReplaceDeliveryConfirmation } from "@/lib/deliveryConfirmation";
 
 export const runtime = "nodejs";
 
@@ -114,17 +115,32 @@ export async function GET(_: Request, context: RouteContext) {
 
       // Sempre retorna o código para o cliente — esta API só é chamada pelo portal do franqueado
       // O admin não vê o código porque a página de logística do admin usa uma API diferente
-      confirmationCode = confirmation?.confirmation_code ?? null;
+
+      // Se o código expirou e a entrega ainda não foi confirmada, gera um novo automaticamente
+      let activeConfirmation = confirmation;
+      if (
+        confirmation &&
+        confirmation.status !== "CONFIRMADO" &&
+        (confirmation.status === "EXPIRADO" ||
+          (confirmation.code_expires_at != null &&
+            new Date(confirmation.code_expires_at).getTime() < Date.now()))
+      ) {
+        activeConfirmation = await createOrReplaceDeliveryConfirmation(supabaseAdmin, {
+          orderId: id,
+        });
+      }
+
+      confirmationCode = activeConfirmation?.confirmation_code ?? null;
 
       // Retorna metadados da confirmação (sem o código em si para entrega)
-      if (confirmation) {
+      if (activeConfirmation) {
         (order as any)._confirmationMeta = {
-          status: confirmation.status,
-          confirmedAt: confirmation.confirmed_at,
-          confirmedBy: confirmation.confirmed_by,
-          expiresAt: confirmation.code_expires_at,
-          attempts: confirmation.attempts,
-          maxAttempts: confirmation.max_attempts,
+          status: activeConfirmation.status,
+          confirmedAt: activeConfirmation.confirmed_at,
+          confirmedBy: activeConfirmation.confirmed_by,
+          expiresAt: activeConfirmation.code_expires_at,
+          attempts: activeConfirmation.attempts,
+          maxAttempts: activeConfirmation.max_attempts,
         };
       }
     }
