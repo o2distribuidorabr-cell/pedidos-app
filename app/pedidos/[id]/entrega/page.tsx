@@ -223,6 +223,9 @@ export default function PedidoEntregaPage({ params }: Props) {
   const [pickupCode, setPickupCode] = useState("");
   const [pickupConfirming, setPickupConfirming] = useState(false);
   const [pickupMessage, setPickupMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [deliveryClientCode, setDeliveryClientCode] = useState("");
+  const [deliveryClientConfirming, setDeliveryClientConfirming] = useState(false);
+  const [deliveryClientMessage, setDeliveryClientMessage] = useState<{ text: string; ok: boolean } | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -325,6 +328,34 @@ export default function PedidoEntregaPage({ params }: Props) {
       setPickupMessage({ text: "Erro ao confirmar retirada.", ok: false });
     } finally {
       setPickupConfirming(false);
+    }
+  }
+
+  async function handleDeliveryClientConfirm() {
+    if (!deliveryClientCode.trim()) {
+      setDeliveryClientMessage({ text: "Digite o código de confirmação.", ok: false });
+      return;
+    }
+    setDeliveryClientConfirming(true);
+    setDeliveryClientMessage(null);
+    try {
+      const response = await fetch(`/api/logistica/order/${id}/confirmar-entrega-cliente`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: deliveryClientCode.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        setDeliveryClientMessage({ text: data.message || "Código inválido.", ok: false });
+      } else {
+        setDeliveryClientMessage({ text: "✅ Entrega confirmada com sucesso!", ok: true });
+        setDeliveryClientCode("");
+        loadData(true);
+      }
+    } catch {
+      setDeliveryClientMessage({ text: "Erro ao confirmar entrega.", ok: false });
+    } finally {
+      setDeliveryClientConfirming(false);
     }
   }
 
@@ -489,16 +520,33 @@ export default function PedidoEntregaPage({ params }: Props) {
                   </div>
                 </div>
               ) : (
-                /* ENTREGA EM ANDAMENTO: mostra código para o cliente mostrar ao motorista */
+                /* ENTREGA EM ANDAMENTO: mostra código e opção para confirmar pelo portal */
                 <div className="space-y-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Código de confirmação</div>
-                  <div className="text-center py-2">
-                    <div className="text-4xl font-semibold tracking-[0.1em] text-slate-900">{confirmationCode || "—"}</div>
-                  </div>
-                  <div className="h-px bg-slate-200" />
-                  <div className="rounded-[12px] bg-cyan-50 border border-cyan-100 p-2 text-xs text-cyan-700 text-center">
-                    📱 Quando o motorista chegar, mostre este código para que ele confirme a entrega.
-                  </div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confirmar recebimento</div>
+                  {confirmationCode ? (
+                    <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-3 text-center">
+                      <div className="text-xs text-slate-500 mb-1">Seu código de entrega</div>
+                      <div className="text-3xl font-semibold tracking-[0.15em] text-slate-900">{confirmationCode}</div>
+                    </div>
+                  ) : null}
+                  <div className="text-sm text-slate-600">Quando receber o pedido, confirme o recebimento digitando o código acima.</div>
+                  <input
+                    type="text"
+                    value={deliveryClientCode}
+                    onChange={(e) => setDeliveryClientCode(e.target.value.toUpperCase())}
+                    placeholder="Digite o código"
+                    maxLength={8}
+                    className="h-12 w-full rounded-[18px] border border-slate-200 bg-slate-50 px-4 text-center text-xl font-semibold tracking-[0.2em] text-slate-900 outline-none transition focus:border-cyan-300 focus:bg-white focus:ring-4 focus:ring-cyan-100"
+                  />
+                  {deliveryClientMessage ? (
+                    <div className={`rounded-[14px] border p-3 text-sm font-semibold ${deliveryClientMessage.ok ? "border-green-200 bg-green-50 text-green-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+                      {deliveryClientMessage.text}
+                    </div>
+                  ) : null}
+                  <button type="button" onClick={handleDeliveryClientConfirm} disabled={deliveryClientConfirming || !deliveryClientCode.trim()}
+                    className="inline-flex h-12 w-full items-center justify-center rounded-[18px] bg-cyan-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(8,145,178,0.26)] transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50">
+                    {deliveryClientConfirming ? "Confirmando..." : "Confirmar recebimento"}
+                  </button>
                   {codeExpiresAt ? <div className="text-xs text-slate-400 text-center">Expira em: {formatDateTime(codeExpiresAt)}</div> : null}
                 </div>
               )}
