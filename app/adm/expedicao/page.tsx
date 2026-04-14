@@ -470,7 +470,7 @@ export default function AdmExpedicaoPage() {
       setOrders((prev) => prev.map((o) =>
         o.id === order.id ? { ...o, logistic_status: "EM_SEPARACAO" } : o
       ));
-      setMsg(data.message || "Código de retirada gerado! O franqueado já pode confirmar no portal.");
+      setMsg(data.message || "Código de retirada gerado! O cliente já pode confirmar no portal.");
     } catch (err) {
       console.error("[mark-separation] exception:", err);
       setMsg("Erro ao gerar código de retirada.");
@@ -907,7 +907,7 @@ export default function AdmExpedicaoPage() {
 
                     {order.delivery_mode === "RETIRADA" && order.logistic_status === "EM_SEPARACAO" ? (
                       <div className="mt-3 rounded-[14px] border border-cyan-100 bg-cyan-50 p-3 text-xs text-cyan-700">
-                        🔐 Código de retirada gerado — o franqueado já pode confirmar em <b>Pedidos → Acompanhar entrega</b> no portal. Quando confirmar, o pedido sairá automaticamente desta lista.
+                        🔐 Código de retirada gerado — o cliente já pode confirmar em <b>Pedidos → Acompanhar entrega</b> no portal. Quando confirmar, o pedido sairá automaticamente desta lista.
                       </div>
                     ) : null}
 

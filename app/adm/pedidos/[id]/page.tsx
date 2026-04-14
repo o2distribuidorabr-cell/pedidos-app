@@ -833,7 +833,7 @@ export default function AdmPedidoDetalhePage() {
   async function deleteThisOrder() {
     if (!order) return;
     const ok = window.confirm(
-      "Tem certeza que deseja excluir este pedido? Isso remove do Admin e do Franqueado."
+      "Tem certeza que deseja excluir este pedido? Isso remove do Admin e do Cliente."
     );
     if (!ok) return;
 
@@ -1631,7 +1631,7 @@ export default function AdmPedidoDetalhePage() {
 
           {originalItems && originalItems.length > 0 ? (
             <div className="print-section">
-              <div className="mb-2 print-label">Pedido original do franqueado</div>
+              <div className="mb-2 print-label">Pedido original do cliente</div>
               <table className="print-table">
                 <thead>
                   <tr>
@@ -2189,7 +2189,7 @@ export default function AdmPedidoDetalhePage() {
         {originalItems && originalItems.length > 0 ? (
           <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
             <SectionTitle
-              title="Pedido original do franqueado"
+              title="Pedido original do cliente"
               subtitle={order.edited_at ? `Snapshot salvo em ${fmtDT(order.edited_at)}` : "Snapshot salvo"}
               right={
                 <div className="no-print">

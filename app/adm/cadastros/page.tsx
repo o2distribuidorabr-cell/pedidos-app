@@ -313,7 +313,7 @@ export default function AdmCadastrosPage() {
     <div className="space-y-6">
       <PageHeader
         title="Cadastros"
-        subtitle="Aprovar ou rejeitar solicitações de franqueados"
+        subtitle="Aprovar ou rejeitar solicitações de clientes"
         right={<SecondaryActionButton onClick={loadRequests}>Atualizar</SecondaryActionButton>}
       />
 

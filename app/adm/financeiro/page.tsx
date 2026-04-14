@@ -878,7 +878,7 @@ export default function AdmFinanceiroPage() {
           <Input label="Juros (% ao dia)" value={dailyInterestPercent} onChange={setDailyInterestPercent} placeholder="Ex.: 0,033" />
         </div>
         <div className="mt-4 rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-xs leading-6 text-slate-600">
-          <div><b>Provedor PIX ativo:</b> define qual integração será usada nos próximos QR Codes gerados pelo portal do franqueado.</div>
+          <div><b>Provedor PIX ativo:</b> define qual integração será usada nos próximos QR Codes gerados pelo portal do cliente.</div>
           <div><b>Cálculo:</b> multa = A pagar × (%/100) uma vez • juros = A pagar × (%/100) × dias em atraso.</div>
           <div><b>Pago:</b> quando existir <code>orders.paid_amount</code>, o sistema mostra o valor efetivamente pago.</div>
         </div>

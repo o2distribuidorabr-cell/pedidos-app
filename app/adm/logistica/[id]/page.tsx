@@ -1094,7 +1094,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.message || "Erro.");
         await loadAllData(true);
-        showSuccess("Pedido em separação. Código de retirada gerado — o franqueado pode confirmar no portal.");
+        showSuccess("Pedido em separação. Código de retirada gerado — o cliente pode confirmar no portal.");
         return;
       }
 
@@ -1818,7 +1818,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                 <div>
                   <div className="text-base font-semibold text-slate-900">Pedido de retirada</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    Este pedido não possui entrega — o franqueado retira pessoalmente no centro de distribuição.
+                    Este pedido não possui entrega — o cliente retira pessoalmente no centro de distribuição.
                   </div>
                 </div>
               </div>
@@ -1875,14 +1875,14 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                         {!overview?.confirm_ip && !overview?.confirm_lat && !overview?.confirm_address ? (
                           <div className="text-xs text-slate-400 italic">Dados de localização não disponíveis (confirmação anterior à coleta de IP/coords).</div>
                         ) : null}
-                        <div className="text-xs text-slate-400">O franqueado inseriu o código de retirada no portal — prova de recebimento registrada.</div>
+                        <div className="text-xs text-slate-400">O cliente inseriu o código de retirada no portal — prova de recebimento registrada.</div>
                       </div>
                     </div>
                   ) : (
                     <div className="mt-3">
                       <div className="rounded-[14px] border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
                         🔒 O código de retirada é gerado automaticamente quando o pedido entra em separação
-                        e fica visível <b>somente para o franqueado</b> no portal dele em{" "}
+                        e fica visível <b>somente para o cliente</b> no portal dele em{" "}
                         <b>Pedidos → Acompanhar entrega</b>.
                       </div>
                       <div className="mt-3 text-xs text-slate-500">
@@ -1900,7 +1900,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                       {markingSeparation ? "Processando..." : "Marcar em separação e gerar código"}
                     </SecondaryActionButton>
                     <div className="mt-2 text-xs text-slate-500">
-                      Ao marcar em separação, o código de retirada será gerado automaticamente e o franqueado poderá vê-lo no portal.
+                      Ao marcar em separação, o código de retirada será gerado automaticamente e o cliente poderá vê-lo no portal.
                     </div>
                   </div>
                 ) : null}
@@ -2150,7 +2150,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                   {/* Retirada — aviso no topo, ajuste limitado a Recebido/Em Separação */}
                   {isPickup ? (
                     <div className="rounded-[18px] border border-amber-100 bg-amber-50 p-3 text-xs text-amber-700">
-                      🏪 Pedido de retirada — apenas <b>Recebido</b> e <b>Em separação</b> podem ser ajustados. A confirmação é feita pelo franqueado no portal via código.
+                      🏪 Pedido de retirada — apenas <b>Recebido</b> e <b>Em separação</b> podem ser ajustados. A confirmação é feita pelo cliente no portal via código.
                     </div>
                   ) : null}
 
@@ -2197,7 +2197,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                       })}
                       <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
                         {isPickup
-                          ? "🔒 Retirada confirmada pelo franqueado no portal via código gerado automaticamente."
+                          ? "🔒 Retirada confirmada pelo cliente no portal via código gerado automaticamente."
                           : "🔒 Entregue só é marcado automaticamente — via código de confirmação do cliente ou Lalamove."}
                       </div>
                     </>

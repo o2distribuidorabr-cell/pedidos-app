@@ -439,7 +439,7 @@ export default function PortalShell({
             <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Portal</div>
               <div className="mt-2 text-sm font-semibold text-slate-900">
-                {isAdminMode ? "Administrador" : "Franqueado"}
+                {isAdminMode ? "Administrador" : "Cliente"}
               </div>
               {!isAdminMode ? (
                 <div className="mt-1 text-xs text-slate-500 truncate">{loading ? "..." : storeName}</div>
@@ -464,7 +464,7 @@ export default function PortalShell({
                   {title}
                 </div>
                 <div className="mt-1 truncate text-sm text-slate-500">
-                  {subtitle ?? (isAdminMode ? "Administrativo" : "Franqueado")}
+                  {subtitle ?? (isAdminMode ? "Administrativo" : "Cliente")}
                 </div>
               </div>
             </div>
@@ -518,7 +518,7 @@ export default function PortalShell({
                       ) : null}
 
                       <div className="mt-1 text-xs text-slate-500">
-                        Portal: {isAdminMode ? "Administrador" : "Franqueado"}
+                        Portal: {isAdminMode ? "Administrador" : "Cliente"}
                       </div>
                     </div>
 

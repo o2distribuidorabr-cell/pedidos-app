@@ -49,7 +49,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({
       ok: true,
       message: order?.delivery_mode === "RETIRADA"
-        ? "Pedido em separação. Código de retirada gerado — o franqueado pode confirmar no portal."
+        ? "Pedido em separação. Código de retirada gerado — o cliente pode confirmar no portal."
         : "Pedido marcado em separação.",
       isPickup: order?.delivery_mode === "RETIRADA",
       pickupCode,

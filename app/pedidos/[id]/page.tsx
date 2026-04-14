@@ -538,7 +538,7 @@ export default function PedidoDetalhePage() {
                     </Badge>
 
                     {edited ? (
-                      <Badge tone="blue">Ajustado pela franqueadora</Badge>
+                      <Badge tone="blue">Ajustado pela o2distribuidora</Badge>
                     ) : (
                       <Badge tone="neutral">Pedido original</Badge>
                     )}
@@ -798,7 +798,7 @@ export default function PedidoDetalhePage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                       <div>
                         <div className="text-sm font-semibold text-slate-900">
-                          Pedido original do franqueado ({originalItems.length})
+                          Pedido original do cliente ({originalItems.length})
                         </div>
                         <div className="mt-1 text-sm text-slate-600">
                           Snapshot salvo em {fmtDT(order.edited_at)}.

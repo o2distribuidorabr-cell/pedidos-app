@@ -78,7 +78,7 @@ export default function FranchiseeMenu() {
 
         <div style={styles.title}>
           <div style={styles.titleSmall}>Portal</div>
-          <div style={styles.titleBig}>Franqueado</div>
+          <div style={styles.titleBig}>Cliente</div>
         </div>
 
         <div style={styles.rightInfo}>
