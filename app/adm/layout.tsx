@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { requireAdminOrRedirect } from "@/lib/requireAdmin";
 import PortalShell from "@/app/components/PortalShell";
+import FloatingChat from "@/app/components/FloatingChat";
 
 export default function AdmLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -19,6 +20,7 @@ export default function AdmLayout({ children }: { children: React.ReactNode }) {
   return (
     <PortalShell title="Administrativo" subtitle="Gestão do portal de pedidos">
       {children}
+      <FloatingChat />
     </PortalShell>
   );
 }

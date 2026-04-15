@@ -233,12 +233,16 @@ function AlertPanel({ tone, title, value, subtitle }: { tone: "red" | "yellow" |
 }
 
 // Tabela com scroll horizontal no TOPO, scroll vertical fixo e paginação
-function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
+function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingPaymentId, setEditingPaymentId, savingPaymentId, updatePaymentMethod }: {
   rows: RowUi[];
   onRowClick: (id: string) => void;
   viewMode: "compact" | "full";
   page: number;
   onPageChange: (p: number) => void;
+  editingPaymentId: string | null;
+  setEditingPaymentId: (id: string | null) => void;
+  savingPaymentId: string | null;
+  updatePaymentMethod: (orderId: string, method: string) => Promise<void>;
 }) {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -314,7 +318,24 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Forma pgto.</div>
-                  <div className="mt-0.5"><Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge></div>
+                  <div className="mt-0.5">
+                    {editingPaymentId === r.id ? (
+                      <select autoFocus disabled={savingPaymentId === r.id}
+                        defaultValue={r.payment_method ?? ""}
+                        onBlur={() => setEditingPaymentId(null)}
+                        onChange={(e) => updatePaymentMethod(r.id, e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="">—</option>
+                        <option value="PIX">PIX</option>
+                        <option value="CARTAO">CARTAO</option>
+                        <option value="BOLETO">BOLETO</option>
+                      </select>
+                    ) : (
+                      <button onClick={(e) => { e.stopPropagation(); setEditingPaymentId(r.id); }} title="Clique para editar" className="cursor-pointer">
+                        <Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-500">Plataforma</div>
@@ -412,7 +433,24 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
                   <span className="font-semibold text-slate-900">{r.store_name}</span>,
                   <Badge tone={statusTone(r.status) as any}>{r.status}</Badge>,
                   <Badge tone="neutral">{logisticLabel(r.logistic_status)}</Badge>,
-                  <Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge>,
+                  <span onClick={(e) => e.stopPropagation()}>
+                    {editingPaymentId === r.id ? (
+                      <select autoFocus disabled={savingPaymentId === r.id}
+                        defaultValue={r.payment_method ?? ""}
+                        onBlur={() => setEditingPaymentId(null)}
+                        onChange={(e) => updatePaymentMethod(r.id, e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="">—</option>
+                        <option value="PIX">PIX</option>
+                        <option value="CARTAO">CARTAO</option>
+                        <option value="BOLETO">BOLETO</option>
+                      </select>
+                    ) : (
+                      <button onClick={() => setEditingPaymentId(r.id)} title="Clique para editar" className="cursor-pointer">
+                        <Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge>
+                      </button>
+                    )}
+                  </span>,
                   <Badge tone={gatewayTone(r.gateway)}>{gatewayLabel(r.gateway)}</Badge>,
                   <span className="text-slate-700">{r.delivery_finished_at ? fmtBR(r.delivery_finished_at) : "—"}</span>,
                   <div className="flex flex-col gap-1">
@@ -432,7 +470,24 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange }: {
                   <Badge tone={statusTone(r.status) as any}>{r.status}</Badge>,
                   <Badge tone="neutral">{logisticLabel(r.logistic_status)}</Badge>,
                   <span className="text-slate-700">{deliveryLabel(r.delivery_mode)}</span>,
-                  <Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge>,
+                  <span onClick={(e) => e.stopPropagation()}>
+                    {editingPaymentId === r.id ? (
+                      <select autoFocus disabled={savingPaymentId === r.id}
+                        defaultValue={r.payment_method ?? ""}
+                        onBlur={() => setEditingPaymentId(null)}
+                        onChange={(e) => updatePaymentMethod(r.id, e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                        <option value="">—</option>
+                        <option value="PIX">PIX</option>
+                        <option value="CARTAO">CARTAO</option>
+                        <option value="BOLETO">BOLETO</option>
+                      </select>
+                    ) : (
+                      <button onClick={() => setEditingPaymentId(r.id)} title="Clique para editar" className="cursor-pointer">
+                        <Badge tone={payMethodTone(r.payment_method)}>{r.payment_method || "—"}</Badge>
+                      </button>
+                    )}
+                  </span>,
                   <Badge tone={gatewayTone(r.gateway)}>{gatewayLabel(r.gateway)}</Badge>,
                   <span className="text-slate-700 whitespace-nowrap">{r.delivery_finished_at ? fmtBR(r.delivery_finished_at) : "—"}</span>,
                   <div className="flex flex-col gap-1">
@@ -556,6 +611,19 @@ export default function AdmFinanceiroPage() {
   const [withCreditFilter, setWithCreditFilter] = useState<string>(() => savedOr("withCreditFilter", "all"));
   const [sortBy, setSortBy] = useState<string>(() => savedOr("sortBy", "created_desc"));
   const [viewMode, setViewMode] = useState<"compact" | "full">(() => savedOr("viewMode", "compact") as "compact" | "full");
+  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
+  const [savingPaymentId, setSavingPaymentId] = useState<string | null>(null);
+
+  async function updatePaymentMethod(orderId: string, method: string) {
+    setSavingPaymentId(orderId);
+    const value = method === "" ? null : method;
+    const { error } = await supabase.from("orders").update({ payment_method: value }).eq("id", orderId);
+    if (!error) {
+      setRows((prev) => prev.map((r) => r.id === orderId ? { ...r, payment_method: value as OrderRow["payment_method"] } : r));
+    }
+    setEditingPaymentId(null);
+    setSavingPaymentId(null);
+  }
 
   // Persiste todos os filtros no sessionStorage sempre que mudarem
   useEffect(() => {
@@ -1007,7 +1075,7 @@ export default function AdmFinanceiroPage() {
             Nenhum dado encontrado com os filtros atuais.
           </div>
         ) : (
-          <FinanceTable rows={rows} onRowClick={(id) => router.push(`/adm/pedidos/${id}`)} viewMode={viewMode} page={page} onPageChange={setPage} />
+          <FinanceTable rows={rows} onRowClick={(id) => router.push(`/adm/pedidos/${id}`)} viewMode={viewMode} page={page} onPageChange={setPage} editingPaymentId={editingPaymentId} setEditingPaymentId={setEditingPaymentId} savingPaymentId={savingPaymentId} updatePaymentMethod={updatePaymentMethod} />
         )}
       </SectionBlock>
     </div>

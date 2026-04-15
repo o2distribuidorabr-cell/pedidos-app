@@ -24,45 +24,18 @@ let msgId = 0;
 export default function ChatAdmPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const INITIAL_MSG: Message = {
-    id: 0,
-    role: "assistant",
-    text: "Olá! Posso responder perguntas sobre os pedidos. Tente perguntar sobre o valor a receber ou vendas de produtos.",
-  };
-
-  const [messages, setMessages] = useState<Message[]>([INITIAL_MSG]);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: ++msgId,
+      role: "assistant",
+      text: "Olá! Posso responder perguntas sobre os pedidos. Tente perguntar sobre o valor a receber ou vendas de produtos.",
+    },
+  ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [openData, setOpenData] = useState<number | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  // Load from localStorage after mount
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("adm_chat_history");
-      if (saved) {
-        const parsed: Message[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Ensure msgId is ahead of stored ids
-          const maxId = Math.max(...parsed.map((m) => m.id));
-          msgId = maxId;
-          setMessages(parsed);
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  // Persist messages to localStorage on every change
-  useEffect(() => {
-    try {
-      localStorage.setItem("adm_chat_history", JSON.stringify(messages));
-    } catch {
-      // ignore
-    }
-  }, [messages]);
 
   useEffect(() => {
     (async () => {
@@ -76,12 +49,6 @@ export default function ChatAdmPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  function clearHistory() {
-    msgId = 0;
-    setMessages([INITIAL_MSG]);
-    localStorage.removeItem("adm_chat_history");
-  }
-
   async function send(question: string) {
     if (!question.trim() || loading) return;
 
@@ -92,15 +59,17 @@ export default function ChatAdmPage() {
 
     try {
       const history = messages
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .filter((m) => !(m.role === "assistant" && m.id === INITIAL_MSG.id))
+        .filter((m, index) => index > 0 && (m.role === "user" || m.role === "assistant"))
         .slice(-10)
         .map((m) => ({ role: m.role, content: m.text }));
 
       const res = await fetch("/api/adm/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question, history }),
+        body: JSON.stringify({
+          question,
+          history,
+        }),
       });
 
       const json = await res.json();
@@ -139,18 +108,10 @@ export default function ChatAdmPage() {
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6 max-w-3xl mx-auto">
-      <div className="flex items-start justify-between gap-4">
-        <PageHeader
-          title="Chat de consultas"
-          subtitle="Faça perguntas em linguagem natural sobre os pedidos"
-        />
-        <button
-          onClick={clearHistory}
-          className="shrink-0 mt-1 text-xs rounded-lg border border-slate-300 px-3 py-1.5 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
-        >
-          Limpar conversa
-        </button>
-      </div>
+      <PageHeader
+        title="Chat de consultas"
+        subtitle="Faça perguntas em linguagem natural sobre os pedidos"
+      />
 
       <Card>
         {/* Messages */}
@@ -170,7 +131,7 @@ export default function ChatAdmPage() {
                 }`}
               >
                 {/* Render **bold** */}
-                {renderText(msg.text)}
+                {renderText(typeof msg.text === "string" ? msg.text : String(msg.text ?? ""))}
 
                 {/* Data accordion */}
                 {msg.data != null && (
