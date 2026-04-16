@@ -793,6 +793,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           created_at: o.created_at,
           delivery_finished_at: o.delivery_finished_at,
           data_entrega: o.delivery_finished_at,
+          pago: !!o.is_paid,
           paid_at: o.paid_at,
           due_date: o.due_date,
           status: o.status,
