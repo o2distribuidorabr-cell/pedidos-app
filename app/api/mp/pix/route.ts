@@ -11,11 +11,8 @@ type Body = {
 };
 
 function todayYMD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // en-CA retorna YYYY-MM-DD; fuso fixo em SP evita virar o dia antes no servidor UTC
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
 function nowHHMM() {

@@ -666,7 +666,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     let q = supabaseAdmin
       .from("orders")
-      .select("id,store_id,created_at,paid_at,due_date,status,logistic_status,payment_method,is_paid,freight_fee,delivery_finished_at,stores(name)")
+      .select("id,store_id,created_at,paid_at,due_date,status,logistic_status,payment_method,is_paid,paid_amount,credit_applied,freight_fee,delivery_finished_at,stores(name)")
       .order("created_at", { ascending: false });
 
     if (storeIds) q = q.in("store_id", storeIds);
@@ -724,7 +724,9 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       is_paid: boolean | null;
       freight_fee: number | null;
       delivery_finished_at: string | null;
-      stores: { name: string }[] | null;
+      paid_amount: number | null;
+      credit_applied: number | null;
+      stores: { name: string } | { name: string }[] | null;
     };
 
     let orders = (data ?? []) as OrderListRow[];
@@ -767,22 +769,44 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       }
     }
 
+    const { aplicar, multaPct, jurosDiaPct } = await getFinanceSettings();
+    const today2 = toISODate(new Date());
+
+    const pedidos = orders.map((o) => {
+        const mercadoria = totalsMap.get(o.id) ?? 0;
+        const frete = Number(o.freight_fee ?? 0);
+        const credito = Number(o.credit_applied ?? 0);
+        const base = Math.max(mercadoria + frete - credito, 0);
+        const is_overdue = !o.is_paid && !!o.due_date && o.due_date < today2;
+        const multa = aplicar && is_overdue ? base * multaPct : 0;
+        const juros = aplicar && is_overdue ? base * jurosDiaPct * daysBetween(o.due_date!, today2) : 0;
+        const paid_amount_num = Number(o.paid_amount ?? 0);
+        // Para pedidos pagos, usa paid_amount se informado (inclui encargos reais)
+        const valor = o.is_paid && paid_amount_num > 0 ? paid_amount_num : Math.max(base + multa + juros, 0);
+
+        return {
+          id: o.id,
+          loja: (Array.isArray(o.stores) ? o.stores[0]?.name : o.stores?.name) ?? o.store_id,
+          created_at: o.created_at,
+          delivery_finished_at: o.delivery_finished_at,
+          data_entrega: o.delivery_finished_at,
+          paid_at: o.paid_at,
+          due_date: o.due_date,
+          status: o.status,
+          logistic_status: o.logistic_status,
+          payment_method: o.payment_method,
+          valor_total_brl: brl.format(valor),
+          valor_total_num: valor,
+      };
+    });
+
+    const total_valor_num = pedidos.reduce((s, p) => s + p.valor_total_num, 0);
+
     return JSON.stringify({
-      total: orders.length,
-      pedidos: orders.map((o) => ({
-        id: o.id,
-        loja: o.stores?.[0]?.name ?? o.store_id,
-        created_at: o.created_at,
-        delivery_finished_at: o.delivery_finished_at,
-        data_entrega: o.delivery_finished_at,
-        paid_at: o.paid_at,
-        due_date: o.due_date,
-        status: o.status,
-        logistic_status: o.logistic_status,
-        payment_method: o.payment_method,
-        valor_total_brl: brl.format((totalsMap.get(o.id) ?? 0) + Number(o.freight_fee ?? 0)),
-        valor_total_num: (totalsMap.get(o.id) ?? 0) + Number(o.freight_fee ?? 0),
-      })),
+      total: pedidos.length,
+      total_valor_brl: brl.format(total_valor_num),
+      total_valor_num,
+      pedidos,
     });
   }
 

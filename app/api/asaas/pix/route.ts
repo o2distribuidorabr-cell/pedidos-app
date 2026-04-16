@@ -80,11 +80,8 @@ function getAsaasBaseUrl() {
 }
 
 function getTodayYMD() {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  // en-CA retorna YYYY-MM-DD; fuso fixo em SP evita virar o dia antes no servidor UTC
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
 }
 
 function onlyDigits(value?: string | null) {
