@@ -6,6 +6,14 @@ function toISODate(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Retorna a data atual no fuso de São Paulo como um Date local (midnight UTC no servidor UTC)
+// Garante que getFullYear/getMonth/getDate reflitam o dia correto em SP, não UTC
+function nowSP(): Date {
+  const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0);
+}
+
 function startOfWeek(d: Date): Date {
   const x = new Date(d);
   const day = x.getDay();
@@ -15,7 +23,7 @@ function startOfWeek(d: Date): Date {
 }
 
 function getPeriodRange(period: string): { startTS: string; endTS: string; label: string } {
-  const now = new Date();
+  const now = nowSP();
 
   if (period === "this_week") {
     const s = startOfWeek(now);
@@ -49,13 +57,11 @@ function daysBetween(d1: string, d2: string) {
 }
 
 function getDateFilterRange(filter: string): { startTS: string; endTS: string; label: string } {
-  const now = new Date();
+  const now = nowSP();
 
   if (filter === "today") {
-    const s = new Date(now);
-    s.setHours(0, 0, 0, 0);
-    const e = new Date(s);
-    e.setDate(e.getDate() + 1);
+    const s = now;
+    const e = new Date(s); e.setDate(e.getDate() + 1);
     return {
       startTS: `${toISODate(s)}T00:00:00`,
       endTS: `${toISODate(e)}T00:00:00`,
@@ -64,11 +70,8 @@ function getDateFilterRange(filter: string): { startTS: string; endTS: string; l
   }
 
   if (filter === "yesterday") {
-    const s = new Date(now);
-    s.setHours(0, 0, 0, 0);
-    s.setDate(s.getDate() - 1);
-    const e = new Date(s);
-    e.setDate(e.getDate() + 1);
+    const s = new Date(now); s.setDate(s.getDate() - 1);
+    const e = now;
     return {
       startTS: `${toISODate(s)}T00:00:00`,
       endTS: `${toISODate(e)}T00:00:00`,
@@ -731,7 +734,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     let orders = (data ?? []) as OrderListRow[];
 
-    const today = toISODate(new Date());
+    const today = toISODate(nowSP());
     const dueFilter = String(args.due_filter ?? "all");
     if (dueFilter === "no_due") {
       orders = orders.filter((o) => !o.due_date);
@@ -745,7 +748,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     } else if (dueFilter === "future") {
       orders = orders.filter((o) => !!o.due_date && o.due_date > today);
     } else if (dueFilter === "due_by_week_end") {
-      const endOfWeek = toISODate(new Date(startOfWeek(new Date()).getTime() + 6 * 86400000));
+      const endOfWeek = toISODate(new Date(startOfWeek(nowSP()).getTime() + 6 * 86400000));
       orders = orders.filter((o) => !o.is_paid && !!o.due_date && o.due_date <= endOfWeek);
     } else if (dueFilter === "with_due") {
       orders = orders.filter((o) => !!o.due_date);
@@ -770,7 +773,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     const { aplicar, multaPct, jurosDiaPct } = await getFinanceSettings();
-    const today2 = toISODate(new Date());
+    const today2 = toISODate(nowSP());
 
     const pedidos = orders.map((o) => {
         const mercadoria = totalsMap.get(o.id) ?? 0;
@@ -830,7 +833,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
   // ── get_overdue_payments ───────────────────────────────────────────────────
   if (name === "get_overdue_payments") {
-    const today = toISODate(new Date());
+    const today = toISODate(nowSP());
 
     // 1) Busca configurações de encargos (mesma fonte do financeiro)
     const { data: settingsRow } = await supabaseAdmin
@@ -1000,7 +1003,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
   }
 
   if (name === "get_financial_summary") {
-    const today = toISODate(new Date());
+    const today = toISODate(nowSP());
 
     // 1) Busca lojas se filtro de loja informado
     let storeIds: string[] | null = null;
@@ -1052,7 +1055,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     else if (dueFilter === "due_soon") orders = orders.filter((o) => !o.is_paid && !!o.due_date && o.due_date >= today && o.due_date <= toISODate(new Date(Date.now() + 3 * 86400000)));
     else if (dueFilter === "today")  orders = orders.filter((o) => !!o.due_date && o.due_date === today);
     else if (dueFilter === "future") orders = orders.filter((o) => !!o.due_date && o.due_date > today);
-    else if (dueFilter === "due_by_week_end") { const endOfWeek = toISODate(new Date(startOfWeek(new Date()).getTime() + 6 * 86400000)); orders = orders.filter((o) => !o.is_paid && !!o.due_date && o.due_date <= endOfWeek); }
+    else if (dueFilter === "due_by_week_end") { const endOfWeek = toISODate(new Date(startOfWeek(nowSP()).getTime() + 6 * 86400000)); orders = orders.filter((o) => !o.is_paid && !!o.due_date && o.due_date <= endOfWeek); }
     else if (dueFilter === "with_due") orders = orders.filter((o) => !!o.due_date);
 
     if (!orders.length) return JSON.stringify({ total_pedidos: 0, total_geral_brl: brl.format(0), em_aberto_brl: brl.format(0), pago_brl: brl.format(0), qtd_vencidos: 0, valor_vencido_brl: brl.format(0) });
