@@ -755,7 +755,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     if (args.pending_only === true) {
-      orders = orders.filter((o) => o.logistic_status !== "ENTREGUE" || !o.is_paid);
+      orders = orders.filter((o) => o.logistic_status !== "ENTREGUE");
     }
 
     const orderIds = orders.map((o) => o.id);

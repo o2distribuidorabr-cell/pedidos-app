@@ -134,7 +134,8 @@ CONTEXTO DA CONVERSA (MUITO IMPORTANTE):
 Dicas de mapeamento de perguntas para tools:
 - Perguntas que começam com "quais pedidos", "me mostre os pedidos", "relacione os pedidos" devem priorizar listagem de pedidos com get_order_list, e não resumo agregado.
 - Qualquer pergunta envolvendo loja específica → get_financial_summary com store_name
-- Qualquer pergunta com filtro de entrega (frete/retirada), logística, vencimento → get_financial_summary
+- Qualquer pergunta com filtro de entrega (frete/retirada) ou modo logístico (frete vs retirada) → get_financial_summary
+- "pedidos que ainda não foram entregues", "não entregues", "pendentes de entrega", "aguardando entrega" → get_order_list com pending_only=true (NÃO use get_financial_summary para esse caso, pois ela não filtra por status de entrega). O total correto é o campo total_valor_brl retornado pelo get_order_list.
 - "a receber", "em aberto", "não pago" → get_financial_summary com paid=false
 - "a receber em pix/cartao" → get_financial_summary com paid=false, payment_method=PIX/CARTAO
 - Se depois de um resumo financeiro o usuário pedir "detalha", "quero detalhes", "me mostre os pedidos" ou equivalente, use get_order_list com os mesmos filtros do resumo anterior. Não invente paid_filter a partir de booleanos; preserve paid/is_paid e due_filter como filtros separados.
