@@ -47,6 +47,13 @@ type OrderRow = {
   edited_by_admin: boolean | null;
   edited_at: string | null;
   original_items: any[] | null;
+
+  delivered_at: string | null;
+  delivery_dispute_deadline: string | null;
+  delivery_confirmation_status: string | null;
+  delivery_disputed_at: string | null;
+  delivery_dispute_reason: string | null;
+  delivery_dispute_notes: string | null;
 };
 
 type StoreInfo = {
@@ -630,7 +637,7 @@ export default function AdmPedidoDetalhePage() {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,delivery_forecast,edited_by_admin,edited_at,original_items"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,credit_applied,due_date,delivery_forecast,edited_by_admin,edited_at,original_items,delivered_at,delivery_dispute_deadline,delivery_confirmation_status,delivery_disputed_at,delivery_dispute_reason,delivery_dispute_notes"
       )
       .eq("id", id)
       .maybeSingle();
@@ -1496,6 +1503,48 @@ export default function AdmPedidoDetalhePage() {
         </div>
       ) : null}
 
+      {/* Alerta de entrega contestada */}
+      {order?.delivery_confirmation_status === "CONTESTADA" ? (
+        <div className="no-print rounded-[24px] border border-orange-300 bg-orange-50 p-4 shadow-sm sm:rounded-[30px] sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-100">
+              <span className="text-lg">⚠️</span>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-semibold text-orange-900">
+                  Entrega contestada pelo franqueado
+                </span>
+                <Badge tone="red">Entrega contestada</Badge>
+              </div>
+              <div className="mt-2 grid gap-1.5 text-sm text-orange-800">
+                <div>
+                  <span className="font-semibold">Motivo:</span>{" "}
+                  {order.delivery_dispute_reason ?? "—"}
+                </div>
+                {order.delivery_dispute_notes ? (
+                  <div>
+                    <span className="font-semibold">Observação:</span>{" "}
+                    {order.delivery_dispute_notes}
+                  </div>
+                ) : null}
+                <div>
+                  <span className="font-semibold">Contestado em:</span>{" "}
+                  {fmtDT(order.delivery_disputed_at)}
+                </div>
+                <div>
+                  <span className="font-semibold">Entregue em:</span>{" "}
+                  {fmtDT(order.delivered_at)}
+                </div>
+              </div>
+              <div className="mt-3 text-xs text-orange-700">
+                O status logístico permanece como <strong>ENTREGUE</strong>. Esta é uma divergência registrada para análise manual.
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div id="print-area" className={printMode ? "print-mode" : ""}>
         <div className="print-only">
           <div className="print-section">
@@ -1777,7 +1826,9 @@ export default function AdmPedidoDetalhePage() {
               {logisticLabel(order.logistic_status)}
             </Badge>
 
-            {lockedByLogistics ? (
+            {order.delivery_confirmation_status === "CONTESTADA" ? (
+              <Badge tone="red">Entrega contestada</Badge>
+            ) : lockedByLogistics ? (
               <Badge tone="green">Fluxo concluído</Badge>
             ) : order.logistic_status === "SAIU_PARA_ENTREGA" ? (
               <Badge tone="blue">Em rota</Badge>

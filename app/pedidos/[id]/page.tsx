@@ -41,6 +41,13 @@ type OrderRow = {
     | "ENTREGUE"
     | "OCORRENCIA"
     | null;
+
+  delivered_at: string | null;
+  delivery_dispute_deadline: string | null;
+  delivery_confirmation_status: string | null;
+  delivery_disputed_at: string | null;
+  delivery_dispute_reason: string | null;
+  delivery_dispute_notes: string | null;
 };
 
 type ProductRow = {
@@ -327,6 +334,15 @@ function MobileOriginalItemCard({ item }: { item: OriginalItem }) {
   );
 }
 
+const DISPUTE_REASONS = [
+  "Não recebi o pedido",
+  "Produto faltando",
+  "Produto errado",
+  "Quantidade divergente",
+  "Produto avariado",
+  "Outro motivo",
+];
+
 export default function PedidoDetalhePage() {
   const router = useRouter();
   const params = useParams();
@@ -337,6 +353,12 @@ export default function PedidoDetalhePage() {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [msg, setMsg] = useState("");
+
+  const [disputeModalOpen, setDisputeModalOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeNotes, setDisputeNotes] = useState("");
+  const [disputeSubmitting, setDisputeSubmitting] = useState(false);
+  const [disputeError, setDisputeError] = useState("");
 
   const [order, setOrder] = useState<OrderRow | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
@@ -389,13 +411,43 @@ export default function PedidoDetalhePage() {
   }, [originalItems]);
 
   const canTrackDelivery = useMemo(() => {
-  if (!order) return false;
-  return (
-    order.logistic_status === "EM_SEPARACAO" ||
-    order.logistic_status === "SAIU_PARA_ENTREGA" ||
-    order.logistic_status === "ENTREGUE"
-  );
-}, [order]);
+    if (!order) return false;
+    return (
+      order.logistic_status === "EM_SEPARACAO" ||
+      order.logistic_status === "SAIU_PARA_ENTREGA" ||
+      order.logistic_status === "ENTREGUE"
+    );
+  }, [order]);
+
+  // Status efetivo da contestação — calcula automaticamente confirmação após prazo
+  const effectiveConfirmationStatus = useMemo(() => {
+    if (!order) return null;
+    if (order.delivery_confirmation_status === "AGUARDANDO_CONTESTACAO") {
+      const deadline = order.delivery_dispute_deadline
+        ? new Date(order.delivery_dispute_deadline)
+        : null;
+      if (deadline && deadline < new Date()) {
+        return "CONFIRMADA_AUTOMATICAMENTE";
+      }
+    }
+    return order.delivery_confirmation_status ?? null;
+  }, [order]);
+
+  const canDispute = useMemo(() => {
+    if (!order) return false;
+    if (order.logistic_status !== "ENTREGUE") return false;
+    if (effectiveConfirmationStatus !== "AGUARDANDO_CONTESTACAO") return false;
+    return true;
+  }, [order, effectiveConfirmationStatus]);
+
+  const disputeDeadlineLabel = useMemo(() => {
+    if (!order?.delivery_dispute_deadline) return null;
+    try {
+      return new Date(order.delivery_dispute_deadline).toLocaleString("pt-BR");
+    } catch {
+      return null;
+    }
+  }, [order?.delivery_dispute_deadline]);
 
   useEffect(() => {
     (async () => {
@@ -429,7 +481,7 @@ export default function PedidoDetalhePage() {
     const { data: o, error: oErr } = await supabase
       .from("orders")
       .select(
-        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,delivery_forecast,credit_applied,edited_by_admin,edited_at,original_items,delivery_status"
+        "id,store_id,status,notes,created_at,submitted_at,approved_at,logistic_status,is_paid,paid_at,payment_method,delivery_mode,freight_fee,due_date,delivery_forecast,credit_applied,edited_by_admin,edited_at,original_items,delivery_status,delivered_at,delivery_dispute_deadline,delivery_confirmation_status,delivery_disputed_at,delivery_dispute_reason,delivery_dispute_notes"
       )
       .eq("id", id)
       .maybeSingle();
@@ -479,6 +531,40 @@ export default function PedidoDetalhePage() {
     setWorking(false);
   }
 
+  async function handleContestar() {
+    if (!disputeReason) {
+      setDisputeError("Selecione o motivo da contestação.");
+      return;
+    }
+    setDisputeSubmitting(true);
+    setDisputeError("");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`/api/logistica/order/${orderId}/contestar-entrega`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reason: disputeReason, notes: disputeNotes }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setDisputeError(data.message || "Erro ao registrar contestação.");
+        return;
+      }
+      setDisputeModalOpen(false);
+      setDisputeReason("");
+      setDisputeNotes("");
+      await refresh();
+    } catch {
+      setDisputeError("Erro ao registrar contestação. Tente novamente.");
+    } finally {
+      setDisputeSubmitting(false);
+    }
+  }
+
   const backTo = "/pedidos";
 
   return (
@@ -512,6 +598,146 @@ export default function PedidoDetalhePage() {
           <Card title="Aviso">
             <div className="whitespace-pre-wrap text-sm text-red-600">{msg}</div>
           </Card>
+        ) : null}
+
+        {/* Card de contestação de entrega */}
+        {!loading && order && order.logistic_status === "ENTREGUE" ? (
+          <div
+            className={[
+              "rounded-[24px] border p-4 shadow-sm md:rounded-[30px] md:p-6",
+              effectiveConfirmationStatus === "CONTESTADA"
+                ? "border-orange-200 bg-orange-50"
+                : effectiveConfirmationStatus === "CONFIRMADA_AUTOMATICAMENTE"
+                ? "border-green-200 bg-green-50"
+                : "border-amber-200 bg-amber-50",
+            ].join(" ")}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                {effectiveConfirmationStatus === "CONTESTADA" ? (
+                  <>
+                    <div className="text-sm font-semibold text-orange-800">
+                      Entrega contestada
+                    </div>
+                    <div className="mt-1 text-sm text-orange-700">
+                      Contestação registrada em {fmtDT(order.delivery_disputed_at)}.
+                      Motivo: <span className="font-semibold">{order.delivery_dispute_reason}</span>.
+                      {order.delivery_dispute_notes ? (
+                        <> Observação: {order.delivery_dispute_notes}</>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 text-xs text-orange-600">
+                      Nossa equipe analisará a contestação e entrará em contato em breve.
+                    </div>
+                  </>
+                ) : effectiveConfirmationStatus === "CONFIRMADA_AUTOMATICAMENTE" ? (
+                  <>
+                    <div className="text-sm font-semibold text-green-800">
+                      Entrega confirmada automaticamente
+                    </div>
+                    <div className="mt-1 text-sm text-green-700">
+                      O prazo de contestação expirou e a entrega foi confirmada automaticamente.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-sm font-semibold text-amber-900">
+                      Este pedido foi marcado como entregue
+                    </div>
+                    <div className="mt-1 text-sm text-amber-800">
+                      Caso exista divergência, você pode contestar até{" "}
+                      <span className="font-semibold">{disputeDeadlineLabel ?? "—"}</span>.
+                      Após esse prazo, a entrega será considerada confirmada automaticamente.
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {effectiveConfirmationStatus === "AGUARDANDO_CONTESTACAO" ? (
+                <div className="shrink-0">
+                  <SecondaryActionButton
+                    onClick={() => {
+                      setDisputeError("");
+                      setDisputeReason("");
+                      setDisputeNotes("");
+                      setDisputeModalOpen(true);
+                    }}
+                    disabled={!canDispute}
+                  >
+                    Contestar entrega
+                  </SecondaryActionButton>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {/* Modal de contestação */}
+        {disputeModalOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-[24px] border border-slate-200 bg-white p-6 shadow-2xl">
+              <div className="text-base font-semibold text-slate-900">
+                Contestar entrega
+              </div>
+              <div className="mt-1 text-sm text-slate-600">
+                Informe o motivo e detalhes da divergência.
+              </div>
+
+              <div className="mt-5 grid gap-4">
+                <div className="grid gap-1">
+                  <div className="text-xs font-semibold text-slate-600">
+                    Motivo da contestação <span className="text-red-500">*</span>
+                  </div>
+                  <select
+                    value={disputeReason}
+                    onChange={(e) => setDisputeReason(e.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none"
+                  >
+                    <option value="">Selecione o motivo...</option>
+                    {DISPUTE_REASONS.map((r) => (
+                      <option key={r} value={r}>
+                        {r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid gap-1">
+                  <div className="text-xs font-semibold text-slate-600">
+                    Observação (opcional)
+                  </div>
+                  <textarea
+                    value={disputeNotes}
+                    onChange={(e) => setDisputeNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Descreva a divergência com mais detalhes..."
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none resize-none"
+                  />
+                </div>
+
+                {disputeError ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {disputeError}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <SecondaryActionButton
+                  onClick={() => setDisputeModalOpen(false)}
+                  disabled={disputeSubmitting}
+                >
+                  Cancelar
+                </SecondaryActionButton>
+                <PrimaryActionButton
+                  onClick={handleContestar}
+                  disabled={disputeSubmitting || !disputeReason}
+                >
+                  {disputeSubmitting ? "Registrando..." : "Confirmar contestação"}
+                </PrimaryActionButton>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {loading ? (

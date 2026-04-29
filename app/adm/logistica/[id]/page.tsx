@@ -2195,11 +2195,26 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                           </button>
                         );
                       })}
-                      <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
-                        {isPickup
-                          ? "🔒 Retirada confirmada pelo cliente no portal via código gerado automaticamente."
-                          : "🔒 Entregue só é marcado automaticamente — via código de confirmação do cliente ou Lalamove."}
-                      </div>
+                      {isPickup ? (
+                        <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                          🔒 Retirada confirmada pelo cliente no portal via código gerado automaticamente.
+                        </div>
+                      ) : (
+                        <>
+                          <div className="h-px bg-slate-100" />
+                          <button
+                            type="button"
+                            disabled={settingStatus === "ENTREGUE"}
+                            onClick={() => handleSetStatus("ENTREGUE")}
+                            className="inline-flex h-12 w-full items-center justify-center rounded-[18px] bg-green-600 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(22,163,74,0.20)] transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {settingStatus === "ENTREGUE" ? "Confirmando..." : "✓ Confirmar entrega"}
+                          </button>
+                          <div className="rounded-[18px] border border-slate-100 bg-slate-50 p-3 text-xs text-slate-500">
+                            Ao confirmar, o franqueado terá 24h para contestar a entrega caso haja divergência.
+                          </div>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
