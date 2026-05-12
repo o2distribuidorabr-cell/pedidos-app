@@ -233,7 +233,7 @@ function AlertPanel({ tone, title, value, subtitle }: { tone: "red" | "yellow" |
 }
 
 // Tabela com scroll horizontal no TOPO, scroll vertical fixo e paginação
-function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingPaymentId, setEditingPaymentId, savingPaymentId, updatePaymentMethod }: {
+function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingPaymentId, setEditingPaymentId, savingPaymentId, updatePaymentMethod, editingDueDateId, setEditingDueDateId, savingDueDateId, updateDueDate }: {
   rows: RowUi[];
   onRowClick: (id: string) => void;
   viewMode: "compact" | "full";
@@ -243,6 +243,10 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingP
   setEditingPaymentId: (id: string | null) => void;
   savingPaymentId: string | null;
   updatePaymentMethod: (orderId: string, method: string) => Promise<void>;
+  editingDueDateId: string | null;
+  setEditingDueDateId: (id: string | null) => void;
+  savingDueDateId: string | null;
+  updateDueDate: (orderId: string, date: string) => Promise<void>;
 }) {
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -344,8 +348,22 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingP
                 <div>
                   <div className="text-xs text-slate-500">Vencimento</div>
                   <div className="mt-0.5 flex items-center gap-1.5 flex-wrap">
-                    <span className="text-slate-800 text-xs">{fmtYMDToBR(r.due_date)}</span>
-                    {dueBadge}
+                    {editingDueDateId === r.id ? (
+                      <input
+                        type="date"
+                        autoFocus
+                        disabled={savingDueDateId === r.id}
+                        defaultValue={r.due_date ?? ""}
+                        onBlur={(e) => { updateDueDate(r.id, e.target.value); }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <button onClick={(e) => { e.stopPropagation(); setEditingDueDateId(r.id); }} title="Clique para editar" className="cursor-pointer flex items-center gap-1.5 flex-wrap">
+                        <span className="text-slate-800 text-xs">{fmtYMDToBR(r.due_date)}</span>
+                        {dueBadge}
+                      </button>
+                    )}
                   </div>
                   {!r.is_paid && r.encargos > 0 ? <div className="text-xs text-slate-500">+{money(r.encargos)} encargos</div> : null}
                 </div>
@@ -453,12 +471,25 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingP
                   </span>,
                   <Badge tone={gatewayTone(r.gateway)}>{gatewayLabel(r.gateway)}</Badge>,
                   <span className="text-slate-700">{r.delivery_finished_at ? fmtBR(r.delivery_finished_at) : "—"}</span>,
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2 whitespace-nowrap">
-                      <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>{dueBadge}
-                    </div>
-                    {!r.is_paid && r.encargos > 0 ? <div className="text-xs text-slate-500 whitespace-nowrap">+{money(r.encargos)} encargos</div> : null}
-                  </div>,
+                  <span onClick={(e) => e.stopPropagation()}>
+                    {editingDueDateId === r.id ? (
+                      <input
+                        type="date"
+                        autoFocus
+                        disabled={savingDueDateId === r.id}
+                        defaultValue={r.due_date ?? ""}
+                        onBlur={(e) => updateDueDate(r.id, e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <button onClick={() => setEditingDueDateId(r.id)} title="Clique para editar" className="cursor-pointer flex flex-col gap-1">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>{dueBadge}
+                        </div>
+                        {!r.is_paid && r.encargos > 0 ? <div className="text-xs text-slate-500 whitespace-nowrap">+{money(r.encargos)} encargos</div> : null}
+                      </button>
+                    )}
+                  </span>,
                   <span className="font-semibold text-slate-900 whitespace-nowrap">{money(r.total)}</span>,
                   <span className="font-semibold text-slate-900 whitespace-nowrap">{money(r.a_pagar_exib)}</span>,
                   <Badge tone={r.is_paid ? "green" : "red"}>{r.is_paid ? "Pago" : "Em aberto"}</Badge>,
@@ -490,12 +521,25 @@ function FinanceTable({ rows, onRowClick, viewMode, page, onPageChange, editingP
                   </span>,
                   <Badge tone={gatewayTone(r.gateway)}>{gatewayLabel(r.gateway)}</Badge>,
                   <span className="text-slate-700 whitespace-nowrap">{r.delivery_finished_at ? fmtBR(r.delivery_finished_at) : "—"}</span>,
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2 whitespace-nowrap">
-                      <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>{dueBadge}
-                    </div>
-                    {!r.is_paid && r.encargos > 0 ? <div className="text-xs text-slate-500 whitespace-nowrap">+{money(r.encargos)} ({r.days_late}d)</div> : null}
-                  </div>,
+                  <span onClick={(e) => e.stopPropagation()}>
+                    {editingDueDateId === r.id ? (
+                      <input
+                        type="date"
+                        autoFocus
+                        disabled={savingDueDateId === r.id}
+                        defaultValue={r.due_date ?? ""}
+                        onBlur={(e) => updateDueDate(r.id, e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-1.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    ) : (
+                      <button onClick={() => setEditingDueDateId(r.id)} title="Clique para editar" className="cursor-pointer flex flex-col gap-1">
+                        <div className="flex items-center gap-2 whitespace-nowrap">
+                          <span className="text-slate-800">{fmtYMDToBR(r.due_date)}</span>{dueBadge}
+                        </div>
+                        {!r.is_paid && r.encargos > 0 ? <div className="text-xs text-slate-500 whitespace-nowrap">+{money(r.encargos)} ({r.days_late}d)</div> : null}
+                      </button>
+                    )}
+                  </span>,
                   <span className="whitespace-nowrap font-semibold text-slate-900">{money(r.mercadoria)}</span>,
                   <span className="whitespace-nowrap text-slate-700">{r.delivery_mode === "FRETE" ? money(r.frete) : "—"}</span>,
                   <span className="whitespace-nowrap font-semibold text-slate-900">{money(r.total)}</span>,
@@ -613,6 +657,19 @@ export default function AdmFinanceiroPage() {
   const [viewMode, setViewMode] = useState<"compact" | "full">(() => savedOr("viewMode", "compact") as "compact" | "full");
   const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
   const [savingPaymentId, setSavingPaymentId] = useState<string | null>(null);
+  const [editingDueDateId, setEditingDueDateId] = useState<string | null>(null);
+  const [savingDueDateId, setSavingDueDateId] = useState<string | null>(null);
+
+  async function updateDueDate(orderId: string, date: string) {
+    setSavingDueDateId(orderId);
+    const value = date || null;
+    const { error } = await supabase.from("orders").update({ due_date: value }).eq("id", orderId);
+    if (!error) {
+      setRows((prev) => prev.map((r) => r.id === orderId ? { ...r, due_date: value } : r));
+    }
+    setEditingDueDateId(null);
+    setSavingDueDateId(null);
+  }
 
   async function updatePaymentMethod(orderId: string, method: string) {
     setSavingPaymentId(orderId);
@@ -1075,7 +1132,7 @@ export default function AdmFinanceiroPage() {
             Nenhum dado encontrado com os filtros atuais.
           </div>
         ) : (
-          <FinanceTable rows={rows} onRowClick={(id) => router.push(`/adm/pedidos/${id}`)} viewMode={viewMode} page={page} onPageChange={setPage} editingPaymentId={editingPaymentId} setEditingPaymentId={setEditingPaymentId} savingPaymentId={savingPaymentId} updatePaymentMethod={updatePaymentMethod} />
+          <FinanceTable rows={rows} onRowClick={(id) => router.push(`/adm/pedidos/${id}`)} viewMode={viewMode} page={page} onPageChange={setPage} editingPaymentId={editingPaymentId} setEditingPaymentId={setEditingPaymentId} savingPaymentId={savingPaymentId} updatePaymentMethod={updatePaymentMethod} editingDueDateId={editingDueDateId} setEditingDueDateId={setEditingDueDateId} savingDueDateId={savingDueDateId} updateDueDate={updateDueDate} />
         )}
       </SectionBlock>
     </div>

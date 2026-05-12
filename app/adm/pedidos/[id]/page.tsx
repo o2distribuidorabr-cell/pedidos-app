@@ -847,17 +847,11 @@ export default function AdmPedidoDetalhePage() {
     setSaving(true);
     setMsg("");
 
-    const delItems = await supabase.from("order_items").delete().eq("order_id", order.id);
-    if (delItems.error) {
+    const res = await fetch(`/api/adm/orders/${order.id}/delete`, { method: "DELETE" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
       setSaving(false);
-      setMsg(`Erro ao excluir itens: ${delItems.error.message}`);
-      return;
-    }
-
-    const delOrder = await supabase.from("orders").delete().eq("id", order.id);
-    if (delOrder.error) {
-      setSaving(false);
-      setMsg(`Erro ao excluir pedido: ${delOrder.error.message}`);
+      setMsg(`Erro ao excluir pedido: ${json.error ?? res.statusText}`);
       return;
     }
 
@@ -1987,6 +1981,13 @@ export default function AdmPedidoDetalhePage() {
                   value={order.payment_method ?? "PIX"}
                   onChange={(v) => updateOrder({ payment_method: v as any })}
                   options={PAY_METHODS.map((m) => ({ value: m, label: m }))}
+                />
+
+                <Input
+                  label="Vencimento"
+                  type="date"
+                  value={order.due_date ?? ""}
+                  onChange={(v) => updateOrder({ due_date: v || null })}
                 />
               </div>
 

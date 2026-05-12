@@ -349,11 +349,13 @@ export default function AdmPedidosPage() {
     setDeleting(true);
     const ids = Array.from(selected);
 
-    const delItems = await supabase.from("order_items").delete().in("order_id", ids);
-    if (delItems.error) console.error("delete order_items error:", delItems.error);
-
-    const delOrders = await supabase.from("orders").delete().in("id", ids);
-    if (delOrders.error) console.error("delete orders error:", delOrders.error);
+    await Promise.all(
+      ids.map((id) =>
+        fetch(`/api/adm/orders/${id}/delete`, { method: "DELETE" }).catch((e) =>
+          console.error("delete order error:", id, e)
+        )
+      )
+    );
 
     setSelected(new Set());
     await loadOrders();
