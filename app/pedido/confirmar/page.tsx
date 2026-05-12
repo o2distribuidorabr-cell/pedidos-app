@@ -180,6 +180,7 @@ export default function ConfirmarPedidoPage() {
   const [deliveryMode, setDeliveryMode] = useState<"RETIRADA" | "FRETE">("RETIRADA");
   const [freightFee, setFreightFee] = useState<number>(0);
   const [storeFreightFee, setStoreFreightFee] = useState<number>(0);
+  const [storeDefaultPaymentMethod, setStoreDefaultPaymentMethod] = useState<"PIX" | "CARTAO" | "BOLETO" | null>(null);
 
   const itemsTotal = useMemo(
     () =>
@@ -281,6 +282,7 @@ export default function ConfirmarPedidoPage() {
 
       setStoreName(stName);
       setStoreFreightFee(stFreight);
+      setStoreDefaultPaymentMethod(st?.default_payment_method ?? null);
 
       const rawDelivery = localStorage.getItem("delivery_info");
       const dParsed = rawDelivery
@@ -333,8 +335,6 @@ export default function ConfirmarPedidoPage() {
     const freight_fee =
       delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
 
-    const defaultPaymentMethod = st?.default_payment_method ?? null;
-
     const { data: orderInserted, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -347,7 +347,7 @@ export default function ConfirmarPedidoPage() {
         approved_at: null,
         delivery_mode,
         freight_fee,
-        ...(defaultPaymentMethod ? { payment_method: defaultPaymentMethod } : {}),
+        ...(storeDefaultPaymentMethod ? { payment_method: storeDefaultPaymentMethod } : {}),
       })
       .select("id")
       .single();
