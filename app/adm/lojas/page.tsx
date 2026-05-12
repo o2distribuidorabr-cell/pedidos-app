@@ -32,6 +32,9 @@ type StoreRow = {
   billing_email?: string | null;
   billing_phone?: string | null;
   asaas_customer_id?: string | null;
+
+  default_payment_method?: "PIX" | "CARTAO" | "BOLETO" | null;
+  default_payment_days?: number | null;
 };
 
 type CnpjaResponse = {
@@ -379,6 +382,9 @@ export default function AdmLojasPage() {
   const [billingPhone, setBillingPhone] = useState("");
   const [asaasCustomerId, setAsaasCustomerId] = useState("");
 
+  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<"PIX" | "CARTAO" | "BOLETO" | "">("");
+  const [defaultPaymentDays, setDefaultPaymentDays] = useState<string>("");
+
   const [tradeName, setTradeName] = useState("");
   const [companyStatus, setCompanyStatus] = useState("");
   const [companyFounded, setCompanyFounded] = useState("");
@@ -434,7 +440,7 @@ export default function AdmLojasPage() {
 
     const baseSelect = "id,name,city,state,active,freight_fee,code";
     const fullSelect =
-      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id";
+      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id,default_payment_method,default_payment_days";
 
     let data: any[] | null = null;
 
@@ -466,6 +472,8 @@ export default function AdmLojasPage() {
         billing_email: null,
         billing_phone: null,
         asaas_customer_id: null,
+        default_payment_method: null,
+        default_payment_days: null,
       }));
     } else {
       data = first.data ?? [];
@@ -548,6 +556,9 @@ export default function AdmLojasPage() {
     setBillingPhone("");
     setAsaasCustomerId("");
 
+    setDefaultPaymentMethod("");
+    setDefaultPaymentDays("");
+
     resetConsultationExtras();
   }
 
@@ -575,6 +586,9 @@ export default function AdmLojasPage() {
     setBillingEmail(s.billing_email ?? "");
     setBillingPhone(s.billing_phone ?? "");
     setAsaasCustomerId(s.asaas_customer_id ?? "");
+
+    setDefaultPaymentMethod((s.default_payment_method ?? "") as any);
+    setDefaultPaymentDays(s.default_payment_days != null ? String(s.default_payment_days) : "");
 
     resetConsultationExtras();
   }
@@ -776,6 +790,9 @@ export default function AdmLojasPage() {
       billing_email: (billingEmail || "").trim() || null,
       billing_phone: (billingPhone || "").trim() || null,
       asaas_customer_id: (asaasCustomerId || "").trim() || null,
+
+      default_payment_method: (defaultPaymentMethod || null) as "PIX" | "CARTAO" | "BOLETO" | null,
+      default_payment_days: defaultPaymentDays.trim() !== "" ? Number(defaultPaymentDays) : null,
     };
 
     if (editingId) {
@@ -1158,6 +1175,24 @@ export default function AdmLojasPage() {
                     value={billingPhone}
                     onChange={setBillingPhone}
                     placeholder="(xx) xxxxx-xxxx"
+                  />
+                  <Select
+                    label="Forma de pagamento padrão"
+                    value={defaultPaymentMethod}
+                    onChange={(v) => setDefaultPaymentMethod(v as any)}
+                    options={[
+                      { value: "", label: "Nenhuma" },
+                      { value: "PIX", label: "PIX" },
+                      { value: "CARTAO", label: "Cartão" },
+                      { value: "BOLETO", label: "Boleto" },
+                    ]}
+                  />
+                  <Input
+                    label="Prazo de pagamento padrão (dias)"
+                    value={defaultPaymentDays}
+                    onChange={setDefaultPaymentDays}
+                    placeholder="Ex.: 7"
+                    type="number"
                   />
                 </div>
               </FormSection>

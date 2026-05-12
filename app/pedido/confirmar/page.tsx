@@ -29,6 +29,8 @@ type StoreRow = {
   id: string;
   name: string;
   freight_fee?: number | null;
+  default_payment_method?: "PIX" | "CARTAO" | "BOLETO" | null;
+  default_payment_days?: number | null;
 };
 
 type DeliveryInfo = {
@@ -263,7 +265,7 @@ export default function ConfirmarPedidoPage() {
 
       const { data: store, error: sErr } = await supabase
         .from("stores")
-        .select("id,name,freight_fee")
+        .select("id,name,freight_fee,default_payment_method,default_payment_days")
         .eq("id", sId)
         .maybeSingle();
 
@@ -331,6 +333,8 @@ export default function ConfirmarPedidoPage() {
     const freight_fee =
       delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
 
+    const defaultPaymentMethod = st?.default_payment_method ?? null;
+
     const { data: orderInserted, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -343,6 +347,7 @@ export default function ConfirmarPedidoPage() {
         approved_at: null,
         delivery_mode,
         freight_fee,
+        ...(defaultPaymentMethod ? { payment_method: defaultPaymentMethod } : {}),
       })
       .select("id")
       .single();
