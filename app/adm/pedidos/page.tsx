@@ -44,7 +44,7 @@ const LOG_OPTIONS: UnifiedLogisticStatus[] = [
   // "SAIU_PARA_ENTREGA" e "ENTREGUE" removidos — só via botão de dispatch ou automático
 ];
 
-type TabKey = "OPEN" | "DELIVERED";
+type TabKey = "RECEBIDO" | "EM_SEPARACAO" | "SAIU_PARA_ENTREGA" | "ENTREGUE";
 type OrdersAdminListRow = OrderRow;
 
 function isOrdersAdminListRowArray(v: unknown): v is OrdersAdminListRow[] {
@@ -265,7 +265,7 @@ export default function AdmPedidosPage() {
   const [dispatchSaving, setDispatchSaving] = useState(false);
   const [q, setQ] = useState("");
 
-  const [tab, setTab] = useState<TabKey>("OPEN");
+  const [tab, setTab] = useState<TabKey>("RECEBIDO");
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -303,24 +303,25 @@ export default function AdmPedidosPage() {
   }, []);
 
   const ordersByTab = useMemo(() => {
-    const delivered = orders.filter((o) => (o.logistic_status ?? "") === "ENTREGUE");
-    const open = orders.filter((o) => (o.logistic_status ?? "") !== "ENTREGUE");
-    return { open, delivered };
+    return {
+      RECEBIDO: orders.filter((o) => (o.logistic_status ?? "RECEBIDO") === "RECEBIDO"),
+      EM_SEPARACAO: orders.filter((o) => o.logistic_status === "EM_SEPARACAO"),
+      SAIU_PARA_ENTREGA: orders.filter((o) => o.logistic_status === "SAIU_PARA_ENTREGA"),
+      ENTREGUE: orders.filter((o) => o.logistic_status === "ENTREGUE"),
+    };
   }, [orders]);
 
-  const counts = useMemo(() => {
-    return {
-      open: ordersByTab.open.length,
-      delivered: ordersByTab.delivered.length,
-    };
-  }, [ordersByTab]);
+  const counts = useMemo(() => ({
+    RECEBIDO: ordersByTab.RECEBIDO.length,
+    EM_SEPARACAO: ordersByTab.EM_SEPARACAO.length,
+    SAIU_PARA_ENTREGA: ordersByTab.SAIU_PARA_ENTREGA.length,
+    ENTREGUE: ordersByTab.ENTREGUE.length,
+  }), [ordersByTab]);
 
   const filtered = useMemo(() => {
-    const base = tab === "DELIVERED" ? ordersByTab.delivered : ordersByTab.open;
-
+    const base = ordersByTab[tab];
     const qq = q.trim().toLowerCase();
     if (!qq) return base;
-
     return base.filter(
       (o) =>
         o.id.toLowerCase().includes(qq) ||
@@ -448,7 +449,7 @@ export default function AdmPedidosPage() {
   }
 
   const summary = useMemo(() => {
-    const base = tab === "DELIVERED" ? ordersByTab.delivered : ordersByTab.open;
+    const base = ordersByTab[tab];
     const totalValue = base.reduce((acc, o) => acc + (Number(o.total_with_freight) || 0), 0);
     const paid = base.filter((o) => !!o.is_paid).length;
     const unpaid = base.filter((o) => !o.is_paid).length;
@@ -489,7 +490,7 @@ export default function AdmPedidosPage() {
       <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6">
         <SectionTitle
           title="Visão geral"
-          subtitle={`Acompanhamento da aba ${tab === "OPEN" ? "Em aberto" : "Entregues"}`}
+          subtitle={`Acompanhamento da aba ${tab === "RECEBIDO" ? "Recebidos" : tab === "EM_SEPARACAO" ? "Em separação" : tab === "SAIU_PARA_ENTREGA" ? "Saiu para entrega" : "Entregues"}`}
         />
 
         <div className="mt-5 grid gap-3 sm:mt-6 sm:gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -508,26 +509,25 @@ export default function AdmPedidosPage() {
         />
 
         <div className="mt-5 flex flex-col gap-4 xl:mt-6 xl:flex-row xl:items-end xl:justify-between">
-          <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:flex-wrap">
-            {tab === "OPEN" ? (
-              <>
-                <PrimaryActionButton fullWidth onClick={() => setTab("OPEN")}>
-                  Em aberto ({counts.open})
+          <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap">
+            {(["RECEBIDO", "EM_SEPARACAO", "SAIU_PARA_ENTREGA", "ENTREGUE"] as TabKey[]).map((t) => {
+              const labels: Record<TabKey, string> = {
+                RECEBIDO: "Recebidos",
+                EM_SEPARACAO: "Em separação",
+                SAIU_PARA_ENTREGA: "Saiu p/ entrega",
+                ENTREGUE: "Entregues",
+              };
+              const isActive = tab === t;
+              return isActive ? (
+                <PrimaryActionButton key={t} fullWidth onClick={() => setTab(t)}>
+                  {labels[t]} ({counts[t]})
                 </PrimaryActionButton>
-                <SecondaryActionButton fullWidth onClick={() => setTab("DELIVERED")}>
-                  Entregues ({counts.delivered})
+              ) : (
+                <SecondaryActionButton key={t} fullWidth onClick={() => setTab(t)}>
+                  {labels[t]} ({counts[t]})
                 </SecondaryActionButton>
-              </>
-            ) : (
-              <>
-                <SecondaryActionButton fullWidth onClick={() => setTab("OPEN")}>
-                  Em aberto ({counts.open})
-                </SecondaryActionButton>
-                <PrimaryActionButton fullWidth onClick={() => setTab("DELIVERED")}>
-                  Entregues ({counts.delivered})
-                </PrimaryActionButton>
-              </>
-            )}
+              );
+            })}
           </div>
 
           <div className="w-full xl:w-[360px]">
@@ -540,9 +540,6 @@ export default function AdmPedidosPage() {
           </div>
         </div>
 
-        <div className="mt-3 text-xs leading-5 text-slate-500">
-          Regra: o fluxo logístico unificado é <b>Recebido → Em separação → Saiu para entrega → Entregue</b>. Apenas <b>Entregue</b> vai para a aba final.
-        </div>
       </div>
 
       {loading ? (
