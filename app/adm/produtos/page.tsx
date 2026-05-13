@@ -14,6 +14,7 @@ type ProductRow = {
   unit_price: number | null;
   step_qty: number | null;
   pack_qty: number | null;
+  pack_unit: string | null;
   active: boolean | null;
 
   ncm?: string | null;
@@ -217,7 +218,8 @@ export default function AdmProdutosPage() {
   const [unit, setUnit] = useState("un");
   const [unitPrice, setUnitPrice] = useState("0");
   const [stepQty, setStepQty] = useState("1");
-  const [packQty, setPackQty] = useState("1");
+  const [packQty, setPackQty] = useState("");
+  const [packUnit, setPackUnit] = useState("cx");
   const [active, setActive] = useState(true);
 
   const [ncm, setNcm] = useState("");
@@ -252,7 +254,7 @@ export default function AdmProdutosPage() {
 
     const baseSelect = "id,sku,name,unit,unit_price,step_qty,pack_qty,active";
     const fullSelect =
-      "id,sku,name,unit,unit_price,step_qty,pack_qty,active,ncm,cest,cfop,ean,origin,icms_cst,pis_cst,cofins_cst";
+      "id,sku,name,unit,unit_price,step_qty,pack_qty,pack_unit,active,ncm,cest,cfop,ean,origin,icms_cst,pis_cst,cofins_cst";
 
     const first = await supabase.from("products").select(fullSelect).order("name", { ascending: true });
 
@@ -419,7 +421,8 @@ export default function AdmProdutosPage() {
     setUnit(p.unit ?? "un");
     setUnitPrice(String(p.unit_price ?? 0));
     setStepQty(String(p.step_qty ?? 1));
-    setPackQty(String(p.pack_qty ?? 1));
+    setPackQty(p.pack_qty != null ? String(p.pack_qty) : "");
+    setPackUnit(p.pack_unit ?? "cx");
     setActive(p.active ?? true);
     setMsg("");
 
@@ -485,7 +488,8 @@ export default function AdmProdutosPage() {
       unit: unit.trim() || "un",
       unit_price: toNumber(unitPrice),
       step_qty: toDecimal3(stepQty),
-      pack_qty: toDecimal3(packQty),
+      pack_qty: packQty.trim() ? toDecimal3(packQty) : null,
+      pack_unit: packUnit || "cx",
       active: !!active,
 
       ncm: ncmNorm || null,
@@ -735,9 +739,26 @@ export default function AdmProdutosPage() {
               <Input label="Preço padrão" value={unitPrice} onChange={setUnitPrice} placeholder="0,00" />
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid gap-4 md:grid-cols-3">
               <Input label="Passo (step_qty)" value={stepQty} onChange={setStepQty} placeholder="Ex.: 1 ou 0,397" />
-              <Input label="Lote / caixa (pack_qty)" value={packQty} onChange={setPackQty} placeholder="1" />
+              <Input label="Itens por embalagem" value={packQty} onChange={setPackQty} placeholder="Ex.: 120" />
+              <Select
+                label="Tipo de embalagem"
+                value={packUnit}
+                onChange={setPackUnit}
+                options={[
+                  { value: "cx", label: "Caixa (cx)" },
+                  { value: "pct", label: "Pacote (pct)" },
+                  { value: "fardo", label: "Fardo" },
+                  { value: "balde", label: "Balde" },
+                  { value: "frasco", label: "Frasco" },
+                  { value: "vidro", label: "Vidro" },
+                  { value: "rolo", label: "Rolo" },
+                  { value: "saco", label: "Saco" },
+                  { value: "lata", label: "Lata" },
+                  { value: "un", label: "Unidade (un)" },
+                ]}
+              />
             </div>
 
             <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">

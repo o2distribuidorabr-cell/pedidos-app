@@ -78,6 +78,8 @@ type ProductEmbed = {
   sku: string | null;
   name: string | null;
   unit: string | null;
+  pack_qty: number | null;
+  pack_unit: string | null;
   ncm?: string | null;
   cest?: string | null;
   cfop?: string | null;
@@ -674,7 +676,7 @@ export default function AdmPedidoDetalhePage() {
     const { data: it, error: itErr } = await supabase
       .from("order_items")
       .select(
-        "id,qty,unit,unit_cost,product_id, products:products (sku,name,unit,ncm,cest,cfop,cfop_default,ean,origin,icms_cst,pis_cst,cofins_cst)"
+        "id,qty,unit,unit_cost,product_id, products:products (sku,name,unit,pack_qty,pack_unit,ncm,cest,cfop,cfop_default,ean,origin,icms_cst,pis_cst,cofins_cst)"
       )
       .eq("order_id", id);
 
@@ -1129,19 +1131,32 @@ export default function AdmPedidoDetalhePage() {
 
     const line = removed ? 0 : qtyNum * unitCost;
 
-    const pack = getPackInfo(name);
-    const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
-
-    const packCell = !pack ? (
-      <span className="text-slate-500">-</span>
-    ) : (
-      <div className="leading-tight">
-        <div className="font-semibold text-slate-800">{packBaseText(pack)}</div>
-        <div className="text-xs text-slate-500">
-          {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
+    const dbPackQty = Number(it.products?.pack_qty ?? 0);
+    let packCell: React.ReactNode;
+    if (dbPackQty > 0) {
+      const numPacks = Math.ceil(qtyNum / dbPackQty);
+      const unitLbl = (it.products?.unit ?? it.unit ?? "").toLowerCase().includes("kg") ? "kg" : "u";
+      const packUnit = it.products?.pack_unit || "cx";
+      packCell = (
+        <div className="leading-tight">
+          <div className="font-semibold text-slate-800">{fmtNumBR(dbPackQty)}{unitLbl}/{packUnit}</div>
+          <div className="text-xs text-slate-500">{packUnit.toUpperCase()}: {fmtNumBR(numPacks)}</div>
         </div>
-      </div>
-    );
+      );
+    } else {
+      const pack = getPackInfo(name);
+      const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+      packCell = !pack ? (
+        <span className="text-slate-500">-</span>
+      ) : (
+        <div className="leading-tight">
+          <div className="font-semibold text-slate-800">{packBaseText(pack)}</div>
+          <div className="text-xs text-slate-500">
+            {pack.packLabel.toUpperCase()}: {fmtNumBR(packsQty ?? 0)}
+          </div>
+        </div>
+      );
+    }
 
     if (!editMode) {
       return [
@@ -1258,6 +1273,10 @@ export default function AdmPedidoDetalhePage() {
           }
 
           .no-print {
+            display: none !important;
+          }
+
+          #print-area > *:not(.print-only) {
             display: none !important;
           }
 
@@ -1544,78 +1563,43 @@ export default function AdmPedidoDetalhePage() {
           <div className="print-section">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <div className="print-title">ESPELHO DO PEDIDO</div>
-                <div className="print-subtitle">
-                  Documento interno para conferência operacional, financeira e logística
-                </div>
+                <div className="print-title">PEDIDO</div>
+                <div className="print-value">{storeInfo?.name ?? "-"}</div>
+                {storeInfo?.legal_name ? <div className="print-subtitle">{storeInfo.legal_name}</div> : null}
               </div>
               <div className="text-right">
-                <div className="print-label">Pedido</div>
-                <div className="print-value">{order.id}</div>
+                <div className="print-label">Nº do pedido</div>
+                <div style={{ fontSize: 10 }}>{order.id}</div>
+                <div className="mt-2 print-label">Data</div>
+                <div className="print-value">{order.submitted_at ? fmtDT(order.submitted_at) : fmtDT(order.created_at)}</div>
+                {order.delivery_forecast ? (
+                  <>
+                    <div className="mt-1 print-label">Previsão de entrega</div>
+                    <div className="print-value">{order.delivery_forecast}</div>
+                  </>
+                ) : null}
+                {order.payment_method ? (
+                  <>
+                    <div className="mt-1 print-label">Forma de pagamento</div>
+                    <div className="print-value">{order.payment_method === "PIX" ? "PIX" : order.payment_method === "CARTAO" ? "Cartão" : order.payment_method === "BOLETO" ? "Boleto" : order.payment_method}</div>
+                  </>
+                ) : null}
+                {order.due_date ? (
+                  <>
+                    <div className="mt-1 print-label">Vencimento</div>
+                    <div className="print-value">{order.due_date}</div>
+                  </>
+                ) : null}
               </div>
             </div>
-
-            <div className="mt-3 print-grid-4">
-              <div className="print-box">
-                <div className="print-label">Status</div>
-                <div className="print-value">{order.status || "-"}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Status logístico</div>
-                <div className="print-value">{logisticLabel(order.logistic_status)}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Pagamento</div>
+            {(storeInfo?.address_street || storeInfo?.city) ? (
+              <div className="mt-3" style={{ borderTop: "1px solid #ccc", paddingTop: 6 }}>
+                <div className="print-label">Endereço de entrega</div>
                 <div className="print-value">
-                  {order.is_paid ? "Pago" : overdue ? "Pendente vencido" : "Pendente"}
+                  {[storeInfo?.address_street, storeInfo?.address_number, storeInfo?.address_complement, storeInfo?.address_neighborhood, storeInfo?.city, storeInfo?.state, storeInfo?.address_zip ? `CEP ${storeInfo.address_zip}` : null].filter(Boolean).join(", ")}
                 </div>
               </div>
-              <div className="print-box">
-                <div className="print-label">Forma / Entrega</div>
-                <div className="print-value">
-                  {(order.payment_method ?? "-") + " / " + (order.delivery_mode ?? "-")}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="print-section">
-            <div className="print-grid-2">
-              <div>
-                <div className="print-label">Destinatário / Loja</div>
-                <div className="print-value">{storeInfo?.name ?? "-"}</div>
-
-                <div className="mt-2 print-label">Razão social</div>
-                <div className="print-value">{storeInfo?.legal_name ?? "-"}</div>
-
-                <div className="mt-2 print-label">CNPJ / IE</div>
-                <div className="print-value">
-                  {fmtCNPJ(storeInfo?.cnpj)} {storeInfo?.ie ? ` • IE ${storeInfo.ie}` : ""}
-                </div>
-              </div>
-
-              <div>
-                <div className="print-label">Endereço</div>
-                <div className="print-value">
-                  {[
-                    storeInfo?.address_street,
-                    storeInfo?.address_number,
-                    storeInfo?.address_complement,
-                    storeInfo?.address_neighborhood,
-                    storeInfo?.city,
-                    storeInfo?.state,
-                    storeInfo?.address_zip ? `CEP ${storeInfo.address_zip}` : null,
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || "-"}
-                </div>
-
-                <div className="mt-2 print-label">Contato NF-e</div>
-                <div className="print-value">
-                  {[storeInfo?.email_nf, storeInfo?.phone_nf].filter(Boolean).join(" • ") || "-"}
-                </div>
-              </div>
-            </div>
+            ) : null}
           </div>
 
           <div className="print-section">
@@ -1623,12 +1607,12 @@ export default function AdmPedidoDetalhePage() {
               <thead>
                 <tr>
                   <th style={{ width: "12%" }}>SKU</th>
-                  <th style={{ width: "34%" }}>Produto</th>
+                  <th style={{ width: "36%" }}>Produto</th>
                   <th style={{ width: "8%" }}>Unid.</th>
                   <th style={{ width: "11%" }}>Preço</th>
                   <th style={{ width: "8%" }}>Qtd</th>
-                  <th style={{ width: "13%" }}>Qtd/Caixa</th>
-                  <th style={{ width: "14%" }}>Total</th>
+                  <th style={{ width: "13%" }}>Qtd/Emb.</th>
+                  <th style={{ width: "12%" }}>Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -1637,33 +1621,30 @@ export default function AdmPedidoDetalhePage() {
                   const name = it.products?.name ?? "-";
                   const unit = it.products?.unit ?? it.unit ?? "-";
                   const unitCost = Number(it.unit_cost ?? 0);
+                  const qtyNum = Number(it.qty ?? 0);
+                  const line = qtyNum * unitCost;
 
-                  const edit = itemEdits[it.id];
-                  const removed = editMode ? (edit?.removed ?? false) : false;
-                  const qtyStr = editMode ? (edit?.qty ?? String(it.qty ?? 0)) : String(it.qty ?? 0);
-                  const qtyNum = Number(qtyStr.replace(",", ".")) || 0;
-                  const line = removed ? 0 : qtyNum * unitCost;
-
-                  const pack = getPackInfo(name);
-                  const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+                  const dbPackQty = Number(it.products?.pack_qty ?? 0);
+                  let printPackCell: string;
+                  if (dbPackQty > 0) {
+                    const numPacks = Math.ceil(qtyNum / dbPackQty);
+                    const unitLbl = unit.toLowerCase().includes("kg") ? "kg" : "u";
+                    const packUnit = it.products?.pack_unit || "cx";
+                    printPackCell = `${fmtNumBR(dbPackQty)}${unitLbl}/${packUnit} • ${packUnit.toUpperCase()}: ${fmtNumBR(numPacks)}`;
+                  } else {
+                    const pack = getPackInfo(name);
+                    const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
+                    printPackCell = !pack ? "-" : `${packBaseText(pack)} • ${pack.packLabel.toUpperCase()}: ${fmtNumBR(packsQty ?? 0)}`;
+                  }
 
                   return (
                     <tr key={it.id}>
                       <td>{sku}</td>
-                      <td>
-                        <div>{name}</div>
-                        {removed ? <div style={{ fontSize: "10px", marginTop: 2 }}>REMOVIDO</div> : null}
-                      </td>
+                      <td>{name}</td>
                       <td>{unit}</td>
                       <td>{fmtBRL(unitCost)}</td>
                       <td>{fmtNumBR(qtyNum)}</td>
-                      <td>
-                        {!pack
-                          ? "-"
-                          : `${packBaseText(pack)} • ${pack.packLabel.toUpperCase()}: ${fmtNumBR(
-                              packsQty ?? 0
-                            )}`}
-                      </td>
+                      <td>{printPackCell}</td>
                       <td>{fmtBRL(line)}</td>
                     </tr>
                   );
@@ -1672,136 +1653,26 @@ export default function AdmPedidoDetalhePage() {
             </table>
           </div>
 
-          {originalItems && originalItems.length > 0 ? (
-            <div className="print-section">
-              <div className="mb-2 print-label">Pedido original do cliente</div>
-              <table className="print-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: "12%" }}>SKU</th>
-                    <th style={{ width: "34%" }}>Produto</th>
-                    <th style={{ width: "8%" }}>Unid.</th>
-                    <th style={{ width: "11%" }}>Preço</th>
-                    <th style={{ width: "8%" }}>Qtd</th>
-                    <th style={{ width: "13%" }}>Qtd/Caixa</th>
-                    <th style={{ width: "14%" }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {originalItems.map((it) => {
-                    const unitCost = Number(it.unit_cost ?? 0);
-                    const line = Number(it.qty ?? 0) * unitCost;
-
-                    const name = it.name ?? "-";
-                    const pack = getPackInfo(name);
-                    const qtyNum = Number(it.qty ?? 0);
-                    const packsQty = pack ? ceilPacks(qtyNum, pack) : null;
-
-                    return (
-                      <tr key={it.id}>
-                        <td>{it.sku ?? "-"}</td>
-                        <td>{it.name ?? "-"}</td>
-                        <td>{it.product_unit ?? it.unit ?? "-"}</td>
-                        <td>{fmtBRL(unitCost)}</td>
-                        <td>{fmtNumBR(qtyNum)}</td>
-                        <td>
-                          {!pack
-                            ? "-"
-                            : `${packBaseText(pack)} • ${pack.packLabel.toUpperCase()}: ${fmtNumBR(
-                                packsQty ?? 0
-                              )}`}
-                        </td>
-                        <td>{fmtBRL(line)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-
           <div className="print-section">
-            <div className="print-grid-4">
-              <div className="print-total-box">
-                <div className="print-total-label">Itens</div>
-                <div className="print-total-value">{fmtBRL(totalItens)}</div>
-              </div>
-              <div className="print-total-box">
-                <div className="print-total-label">Frete</div>
-                <div className="print-total-value">{fmtBRL(frete)}</div>
-              </div>
-              <div className="print-total-box">
-                <div className="print-total-label">Crédito abatido</div>
-                <div className="print-total-value">- {fmtBRL(creditApplied)}</div>
-              </div>
-              <div className="print-total-box">
-                <div className="print-total-label">Total líquido</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              {frete > 0 && (
+                <div className="print-total-box" style={{ minWidth: 120 }}>
+                  <div className="print-total-label">Frete</div>
+                  <div className="print-total-value">{fmtBRL(frete)}</div>
+                </div>
+              )}
+              {creditApplied > 0 && (
+                <div className="print-total-box" style={{ minWidth: 120 }}>
+                  <div className="print-total-label">Crédito abatido</div>
+                  <div className="print-total-value">- {fmtBRL(creditApplied)}</div>
+                </div>
+              )}
+              <div className="print-total-box" style={{ minWidth: 140 }}>
+                <div className="print-total-label">Total</div>
                 <div className="print-total-value">{fmtBRL(totalLiquido)}</div>
               </div>
             </div>
           </div>
-
-          <div className="print-section">
-            <div className="print-grid-3">
-              <div className="print-box">
-                <div className="print-label">Criado em</div>
-                <div className="print-value">{fmtDT(order.created_at)}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Enviado em</div>
-                <div className="print-value">{fmtDT(order.submitted_at)}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Aprovado em</div>
-                <div className="print-value">{fmtDT(order.approved_at)}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Data de vencimento</div>
-                <div className="print-value">{order.due_date || "-"}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Previsão de entrega</div>
-                <div className="print-value">{order.delivery_forecast || "-"}</div>
-              </div>
-              <div className="print-box">
-                <div className="print-label">Pago em</div>
-                <div className="print-value">{fmtDT(order.paid_at)}</div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 10 }}>
-              <div className="print-label">Observações</div>
-              <div className="print-note-box">{order.notes || "-"}</div>
-            </div>
-          </div>
-
-          {(focusDoc?.status || focusDoc?.numero || focusDoc?.serie || focusDoc?.chave) ? (
-            <div className="print-section">
-              <div className="mb-2 print-label">Informações fiscais / NF-e</div>
-              <div className="print-grid-4">
-                <div className="print-box">
-                  <div className="print-label">Status</div>
-                  <div className="print-value">{focusDoc?.status || "-"}</div>
-                </div>
-                <div className="print-box">
-                  <div className="print-label">Número</div>
-                  <div className="print-value">{focusDoc?.numero || "-"}</div>
-                </div>
-                <div className="print-box">
-                  <div className="print-label">Série</div>
-                  <div className="print-value">{focusDoc?.serie || "-"}</div>
-                </div>
-                <div className="print-box">
-                  <div className="print-label">Protocolo</div>
-                  <div className="print-value">{focusDoc?.protocolo || "-"}</div>
-                </div>
-              </div>
-              <div style={{ marginTop: 10 }}>
-                <div className="print-label">Chave</div>
-                <div className="print-note-box">{focusDoc?.chave || "-"}</div>
-              </div>
-            </div>
-          ) : null}
         </div>
 
         <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm sm:rounded-[30px] sm:p-5 md:p-6 print-section">
