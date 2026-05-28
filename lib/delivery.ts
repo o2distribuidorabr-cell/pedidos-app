@@ -108,6 +108,37 @@ export async function updateOrderDeliveryFields(
     if (mappedLogisticStatus) {
       payload.logistic_status = mappedLogisticStatus;
     }
+
+    if (deliveryStatus === "ENTREGUE") {
+      const now = new Date();
+      const deadline = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      payload.delivered_at = now.toISOString();
+      payload.delivery_dispute_deadline = deadline.toISOString();
+      payload.delivery_confirmation_status = "AGUARDANDO_CONTESTACAO";
+
+      // Vencimento automático: usa prazo padrão da loja a partir da data de entrega
+      const { data: orderData } = await supabase
+        .from("orders")
+        .select("due_date,store_id")
+        .eq("id", orderId)
+        .single();
+
+      if (!orderData?.due_date && orderData?.store_id) {
+        const { data: storeData } = await supabase
+          .from("stores")
+          .select("default_payment_days")
+          .eq("id", orderData.store_id)
+          .single();
+
+        const days = storeData?.default_payment_days ?? null;
+        if (days != null && days > 0) {
+          const due = new Date(now);
+          due.setDate(due.getDate() + days);
+          const ymd = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+          payload.due_date = ymd;
+        }
+      }
+    }
   }
 
   if (driverName !== undefined) payload.delivery_driver_name = driverName;

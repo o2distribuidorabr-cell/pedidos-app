@@ -79,7 +79,7 @@ export async function GET(_: Request, context: RouteContext) {
     url.searchParams.set("simples", "true");
     url.searchParams.set("registrations", "ALL");
     url.searchParams.set("strategy", "CACHE_IF_FRESH");
-    url.searchParams.set("maxAge", "1");
+    url.searchParams.set("maxAge", "30");
 
     const resp = await fetch(url.toString(), {
       method: "GET",
@@ -88,6 +88,7 @@ export async function GET(_: Request, context: RouteContext) {
         Authorization: apiKey,
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
     });
 
     const text = await resp.text();
@@ -303,8 +304,14 @@ export async function GET(_: Request, context: RouteContext) {
       },
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Erro interno ao consultar CNPJ.";
-    return NextResponse.json({ ok: false, message }, { status: 500 });
+    const isTimeout =
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError");
+    const message = isTimeout
+      ? "A consulta ao CNPJ demorou muito. Tente novamente em instantes."
+      : error instanceof Error
+      ? error.message
+      : "Erro interno ao consultar CNPJ.";
+    return NextResponse.json({ ok: false, message }, { status: isTimeout ? 504 : 500 });
   }
 }

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep *)",
+      "Bash(npx tsc *)",
+      "Bash(cd \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\" && pwd)",
+      "Bash(curl -s -X POST \"https://portalamericanburger.netlify.app/api/debug-whatsapp\" -H \"Content-Type: application/json\" -d \"{\\\\\"secret\\\\\":\\\\\"ABPortal-Wh-7x2k9mR\\\\\",\\\\\"to\\\\\":\\\\\"553194290025\\\\\"}\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\api\\\\financeiro\\\\gerar-cobrancas\")",
+      "Bash(Out-Null)",
+      "Bash(mkdir -p \"C:/Users/Pedro Andrade/Documents/ab-portal/app/api/financeiro/gerar-cobrancas\" && echo \"ok\")",
+      "PowerShell($result = & { Push-Location \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\"; $out = npx tsc --noEmit 2>&1; Pop-Location; $out }; if \\($result\\) { $result | Select-Object -First 60 } else { \"sem erros\" })",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\o2-pedidos\\\\app\" -Force)",
+      "Bash(dir \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\api\" /s /b)",
+      "Bash(node -e \"require\\('@netlify/functions'\\)\")"
+    ]
+  }
+}
