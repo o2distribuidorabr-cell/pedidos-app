@@ -473,9 +473,9 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
   const [driverPhone, setDriverPhone] = useState("");
   const [deliveryNotes, setDeliveryNotes] = useState("");
   const [occurrenceNotes, setOccurrenceNotes] = useState("");
-  const [driverNameDirty, setDriverNameDirty] = useState(false);
-  const [driverPhoneDirty, setDriverPhoneDirty] = useState(false);
-  const [deliveryNotesDirty, setDeliveryNotesDirty] = useState(false);
+  const driverNameDirtyRef = useRef(false);
+  const driverPhoneDirtyRef = useRef(false);
+  const deliveryNotesDirtyRef = useRef(false);
   const [lastGeneratedCode, setLastGeneratedCode] = useState<string | null>(null);
 
   const [serviceType, setServiceType] = useState("");
@@ -672,19 +672,19 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       setDriverName(nextOverview?.delivery_driver_name ?? "");
       setDriverPhone(nextOverview?.delivery_driver_phone ?? "");
       setDeliveryNotes(nextOverview?.delivery_notes ?? "");
-      setDriverNameDirty(false); setDriverPhoneDirty(false); setDeliveryNotesDirty(false);
+      driverNameDirtyRef.current = false; driverPhoneDirtyRef.current = false; deliveryNotesDirtyRef.current = false;
       didInitialFormLoadRef.current = true;
     } else {
-      if (!driverNameDirty) setDriverName(nextOverview?.delivery_driver_name ?? "");
-      if (!driverPhoneDirty) setDriverPhone(nextOverview?.delivery_driver_phone ?? "");
-      if (!deliveryNotesDirty) setDeliveryNotes(nextOverview?.delivery_notes ?? "");
+      if (!driverNameDirtyRef.current) setDriverName(nextOverview?.delivery_driver_name ?? "");
+      if (!driverPhoneDirtyRef.current) setDriverPhone(nextOverview?.delivery_driver_phone ?? "");
+      if (!deliveryNotesDirtyRef.current) setDeliveryNotes(nextOverview?.delivery_notes ?? "");
     }
 
     if (followVehicle && nextOverview?.last_lat != null && nextOverview?.last_lng != null &&
       (nextOverview.last_lat !== prevLat || nextOverview.last_lng !== prevLng)) {
       setMapKey((k) => k + 1);
     }
-  }, [overview?.last_lat, overview?.last_lng, followVehicle, driverNameDirty, driverPhoneDirty, deliveryNotesDirty]);
+  }, [overview?.last_lat, overview?.last_lng, followVehicle]);
 
   const loadAllData = useCallback(async (isRefresh = false) => {
     try {
@@ -999,7 +999,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Erro ao salvar motorista.");
-      setDriverNameDirty(false); setDriverPhoneDirty(false); setDeliveryNotesDirty(false);
+      driverNameDirtyRef.current = false; driverPhoneDirtyRef.current = false; deliveryNotesDirtyRef.current = false;
       await loadAllData(true);
       showSuccess(data.message || "Dados atualizados.");
     } catch (error) { showError(error instanceof Error ? error.message : "Erro ao salvar motorista."); }
@@ -1015,7 +1015,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Erro.");
-      setDriverNameDirty(false); setDriverPhoneDirty(false); setDeliveryNotesDirty(false);
+      driverNameDirtyRef.current = false; driverPhoneDirtyRef.current = false; deliveryNotesDirtyRef.current = false;
       await loadAllData(true);
       showSuccess(data.message || "Pedido marcado em separação.");
     } catch (error) { showError(error instanceof Error ? error.message : "Erro."); }
@@ -1038,7 +1038,7 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.message || "Erro ao iniciar entrega.");
       setLastGeneratedCode(data.confirmationCode ?? null);
-      setDriverNameDirty(false); setDriverPhoneDirty(false); setDeliveryNotesDirty(false);
+      driverNameDirtyRef.current = false; driverPhoneDirtyRef.current = false; deliveryNotesDirtyRef.current = false;
       await loadAllData(true);
       showSuccess(data.message || "Entrega iniciada.");
     } catch (error) { showError(error instanceof Error ? error.message : "Erro."); }
@@ -1924,19 +1924,19 @@ export default function AdmLogisticaDetalhePage({ params }: Props) {
                 </div>
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
-                    <Input label="Nome do motorista *" value={driverName} onChange={(v) => { setDriverName(v); setDriverNameDirty(true); if (v.trim()) setShowDriverValidation(false); }} placeholder="Ex.: Carlos Henrique" />
+                    <Input label="Nome do motorista *" value={driverName} onChange={(v) => { setDriverName(v); driverNameDirtyRef.current = true; if (v.trim()) setShowDriverValidation(false); }} placeholder="Ex.: Carlos Henrique" />
                     {showDriverValidation && !driverNameValid ? (
                       <div className="mt-1 text-xs font-semibold text-red-500">Nome do motorista é obrigatório</div>
                     ) : null}
                   </div>
                   <div>
-                    <Input label="Telefone do motorista *" value={driverPhone} onChange={(v) => { setDriverPhone(v); setDriverPhoneDirty(true); if (v.trim()) setShowDriverValidation(false); }} placeholder="Ex.: 31999999999" />
+                    <Input label="Telefone do motorista *" value={driverPhone} onChange={(v) => { setDriverPhone(v); driverPhoneDirtyRef.current = true; if (v.trim()) setShowDriverValidation(false); }} placeholder="Ex.: 31999999999" />
                     {showDriverValidation && !driverPhoneValid ? (
                       <div className="mt-1 text-xs font-semibold text-red-500">Telefone do motorista é obrigatório</div>
                     ) : null}
                   </div>
                   <div className="md:col-span-2">
-                    <Input label="Observações logísticas" value={deliveryNotes} onChange={(v) => { setDeliveryNotes(v); setDeliveryNotesDirty(true); }} placeholder="Ex.: portaria, condomínio, entrega urgente" />
+                    <Input label="Observações logísticas" value={deliveryNotes} onChange={(v) => { setDeliveryNotes(v); deliveryNotesDirtyRef.current = true; }} placeholder="Ex.: portaria, condomínio, entrega urgente" />
                   </div>
                 </div>
                 {showDriverValidation && !driverDataValid ? (
