@@ -262,11 +262,8 @@ export default function ConfirmarPedidoPage() {
     [itemsTotal, freightApplied]
   );
 
-  // Crédito pré-pago
-  const hasCreditPrepago = useMemo(
-    () => availablePaymentMethods.some((m) => m.payment_method === "CREDIT_PREPAGO"),
-    [availablePaymentMethods]
-  );
+  // Crédito pré-pago — disponível sempre que houver saldo, independente da config de métodos
+  const hasCreditPrepago = creditBalance > 0;
   const nonCreditMethods = useMemo(
     () => availablePaymentMethods.filter((m) => m.payment_method !== "CREDIT_PREPAGO"),
     [availablePaymentMethods]
@@ -408,9 +405,8 @@ export default function ConfirmarPedidoPage() {
       const defaultMethod = nonCredit.find((m) => m.is_default) ?? nonCredit[0] ?? null;
       setSelectedPaymentMethod(defaultMethod?.payment_method ?? null);
 
-      // Carrega saldo de crédito pré-pago se a loja tem essa opção
-      const hasPrepago = methods.some((m) => m.payment_method === "CREDIT_PREPAGO");
-      if (hasPrepago && sId) {
+      // Carrega saldo de crédito pré-pago — sempre, independente da configuração de métodos
+      if (sId) {
         const { data: balData } = await supabase
           .from("v_store_credit_balance")
           .select("balance")
@@ -418,7 +414,7 @@ export default function ConfirmarPedidoPage() {
           .maybeSingle();
         const bal = Number((balData as any)?.balance ?? 0) || 0;
         setCreditBalance(bal);
-        if (bal > 0) setUseCredit(true); // ativa crédito automaticamente se houver saldo
+        if (bal > 0) setUseCredit(true); // ativa automaticamente se houver saldo
       }
 
       const rawDelivery = localStorage.getItem("delivery_info");
