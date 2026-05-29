@@ -232,6 +232,11 @@ export default function ConfirmarPedidoPage() {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<StorePaymentMethod["payment_method"] | null>(null);
   const [payingWithCard, setPayingWithCard] = useState(false);
 
+  // Modal de pagamento + crédito pré-pago
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [creditBalance, setCreditBalance] = useState(0);
+  const [useCredit, setUseCredit] = useState(false);
+
   const itemsTotal = useMemo(
     () =>
       items.reduce(
@@ -257,17 +262,44 @@ export default function ConfirmarPedidoPage() {
     [itemsTotal, freightApplied]
   );
 
-  // Acréscimo do método de pagamento (ex: 4,25% no cartão online)
+  // Crédito pré-pago
+  const hasCreditPrepago = useMemo(
+    () => availablePaymentMethods.some((m) => m.payment_method === "CREDIT_PREPAGO"),
+    [availablePaymentMethods]
+  );
+  const nonCreditMethods = useMemo(
+    () => availablePaymentMethods.filter((m) => m.payment_method !== "CREDIT_PREPAGO"),
+    [availablePaymentMethods]
+  );
+  const creditToApply = useMemo(() => {
+    if (!useCredit || creditBalance <= 0) return 0;
+    return Math.min(creditBalance, grandTotal);
+  }, [useCredit, creditBalance, grandTotal]);
+  const baseAfterCredit = useMemo(
+    () => Math.max(grandTotal - creditToApply, 0),
+    [grandTotal, creditToApply]
+  );
+  const fullyPaidByCredit = creditToApply > 0 && baseAfterCredit <= 0;
+
+  // Acréscimo aplicado apenas sobre o valor restante após abatimento do crédito
   const selectedMethodData = useMemo(
     () => availablePaymentMethods.find((m) => m.payment_method === selectedPaymentMethod) ?? null,
     [availablePaymentMethods, selectedPaymentMethod]
   );
   const feePercent = Number(selectedMethodData?.fee_percent ?? 0) || 0;
   const feeAmount = useMemo(
-    () => (feePercent > 0 ? Math.round(grandTotal * feePercent) / 100 : 0),
-    [grandTotal, feePercent]
+    () => (feePercent > 0 ? Math.round(baseAfterCredit * feePercent) / 100 : 0),
+    [baseAfterCredit, feePercent]
   );
-  const totalWithFee = useMemo(() => grandTotal + feeAmount, [grandTotal, feeAmount]);
+  const finalPayAmount = useMemo(
+    () => baseAfterCredit + feeAmount,
+    [baseAfterCredit, feeAmount]
+  );
+  // totalWithFee = valor final a pagar (inclui crédito abatido + fee sobre o restante)
+  const totalWithFee = useMemo(
+    () => creditToApply + finalPayAmount,
+    [creditToApply, finalPayAmount]
+  );
 
   function persistDelivery(mode: "RETIRADA" | "FRETE", fee: number) {
     const payload: DeliveryInfo = {
@@ -371,9 +403,23 @@ export default function ConfirmarPedidoPage() {
 
       setAvailablePaymentMethods(methods);
 
-      // Pré-seleciona o método padrão (ou o único disponível)
-      const defaultMethod = methods.find((m) => m.is_default) ?? methods[0] ?? null;
+      // Pré-seleciona o método padrão entre os não-crédito
+      const nonCredit = methods.filter((m) => m.payment_method !== "CREDIT_PREPAGO");
+      const defaultMethod = nonCredit.find((m) => m.is_default) ?? nonCredit[0] ?? null;
       setSelectedPaymentMethod(defaultMethod?.payment_method ?? null);
+
+      // Carrega saldo de crédito pré-pago se a loja tem essa opção
+      const hasPrepago = methods.some((m) => m.payment_method === "CREDIT_PREPAGO");
+      if (hasPrepago && sId) {
+        const { data: balData } = await supabase
+          .from("v_store_credit_balance")
+          .select("balance")
+          .eq("store_id", sId)
+          .maybeSingle();
+        const bal = Number((balData as any)?.balance ?? 0) || 0;
+        setCreditBalance(bal);
+        if (bal > 0) setUseCredit(true); // ativa crédito automaticamente se houver saldo
+      }
 
       const rawDelivery = localStorage.getItem("delivery_info");
       const dParsed = rawDelivery
@@ -398,26 +444,17 @@ export default function ConfirmarPedidoPage() {
 
   async function onSubmit() {
     setMsg("");
+    setShowPaymentModal(false);
 
     const { data: auth } = await supabase.auth.getUser();
     const user = auth?.user;
 
-    if (!user) {
-      router.push("/login");
-      return;
-    }
+    if (!user) { router.push("/login"); return; }
+    if (!storeId) { setMsg("Seu usuário não tem loja vinculada."); return; }
+    if (items.length === 0) { setMsg("Carrinho vazio."); return; }
 
-    if (!storeId) {
-      setMsg("Seu usuário não tem loja vinculada (profiles.store_id).");
-      return;
-    }
-
-    if (items.length === 0) {
-      setMsg("Carrinho vazio.");
-      return;
-    }
-
-    if (!selectedPaymentMethod) {
+    // Validação: se não totalmente coberto por crédito, precisa de um método
+    if (!fullyPaidByCredit && !selectedPaymentMethod) {
       setMsg("Selecione uma forma de pagamento para continuar.");
       return;
     }
@@ -425,24 +462,26 @@ export default function ConfirmarPedidoPage() {
     const isCreditCard =
       selectedPaymentMethod === "CREDIT_CARD" ||
       selectedPaymentMethod === "CREDIT_CARD_ONLINE";
-    const requiresPayment =
+    const requiresPayment = !fullyPaidByCredit && (
       availablePaymentMethods.find((m) => m.payment_method === selectedPaymentMethod)
-        ?.requires_payment_before_submit ?? isCreditCard;
+        ?.requires_payment_before_submit ?? isCreditCard
+    );
 
     setSending(true);
     if (isCreditCard) setPayingWithCard(true);
 
     const now = new Date().toISOString();
     const delivery_mode: "RETIRADA" | "FRETE" = deliveryMode;
-    const freight_fee =
-      delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
-    const orderPaymentMethod = mapToOrderPaymentMethod(selectedPaymentMethod);
+    const freight_fee = delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
+    const orderPaymentMethod = fullyPaidByCredit
+      ? "PREPAGO"
+      : mapToOrderPaymentMethod(selectedPaymentMethod!);
 
-    // ── Pedido com cartão de crédito: status inicial = awaiting_payment ────
-    // ── Outros métodos (PIX, etc.): status inicial = submitted (fluxo atual) ─
+    // Crédito totalmente cobre → submitted; cartão → awaiting_payment; resto → submitted
     const orderStatus = requiresPayment ? "awaiting_payment" : "submitted";
     const submittedAt = requiresPayment ? null : now;
 
+    // ── 1. Cria o pedido ────────────────────────────────────────────────────
     const { data: orderInserted, error: orderError } = await supabase
       .from("orders")
       .insert({
@@ -456,6 +495,7 @@ export default function ConfirmarPedidoPage() {
         delivery_mode,
         freight_fee,
         payment_method: orderPaymentMethod,
+        credit_applied: creditToApply > 0 ? creditToApply : null,
       })
       .select("id")
       .single();
@@ -469,6 +509,7 @@ export default function ConfirmarPedidoPage() {
 
     const order_id = String(orderInserted.id);
 
+    // ── 2. Cria os itens ────────────────────────────────────────────────────
     const rows = items.map((it) => ({
       order_id,
       product_id: it.product_id,
@@ -487,7 +528,40 @@ export default function ConfirmarPedidoPage() {
       return;
     }
 
-    // ── Fluxo cartão de crédito ────────────────────────────────────────────
+    // ── 3. Debita crédito pré-pago (se usado) ──────────────────────────────
+    if (creditToApply > 0) {
+      const { error: creditError } = await supabase.rpc("remove_store_credit", {
+        p_store_id: storeId,
+        p_amount: creditToApply,
+        p_note: `Pedido ${order_id.slice(0, 8).toUpperCase()}`,
+      });
+
+      if (creditError) {
+        // Tenta reverter o pedido
+        await supabase.from("order_items").delete().eq("order_id", order_id);
+        await supabase.from("orders").delete().eq("id", order_id);
+        setSending(false);
+        setPayingWithCard(false);
+        setMsg("Saldo de crédito insuficiente ou erro ao debitar. Tente novamente.");
+        return;
+      }
+    }
+
+    // ── 4a. Pedido totalmente coberto pelo crédito ─────────────────────────
+    if (fullyPaidByCredit) {
+      await supabase
+        .from("orders")
+        .update({ is_paid: true, paid_at: now, paid_amount: creditToApply })
+        .eq("id", order_id);
+
+      localStorage.removeItem("cart_items");
+      localStorage.removeItem("delivery_info");
+      setSending(false);
+      router.push("/pedidos");
+      return;
+    }
+
+    // ── 4b. Cartão de crédito (com ou sem crédito parcial) ─────────────────
     if (isCreditCard) {
       try {
         const res = await fetch("/api/asaas/credit-card", {
@@ -506,8 +580,6 @@ export default function ConfirmarPedidoPage() {
 
         localStorage.removeItem("cart_items");
         localStorage.removeItem("delivery_info");
-
-        // Redireciona para a página de pagamento segura da Asaas
         window.location.href = data.invoiceUrl;
         return;
       } catch {
@@ -518,10 +590,9 @@ export default function ConfirmarPedidoPage() {
       }
     }
 
-    // ── Fluxo PIX / outros métodos (comportamento original intacto) ─────────
+    // ── 4c. PIX / outros métodos ────────────────────────────────────────────
     localStorage.removeItem("cart_items");
     localStorage.removeItem("delivery_info");
-
     setSending(false);
     router.push("/pedidos");
   }
@@ -555,16 +626,10 @@ export default function ConfirmarPedidoPage() {
               </SecondaryActionButton>
 
               <PrimaryActionButton
-                onClick={onSubmit}
-                disabled={sending || items.length === 0 || !selectedPaymentMethod}
+                onClick={() => setShowPaymentModal(true)}
+                disabled={sending || items.length === 0}
               >
-                {payingWithCard
-                  ? "Criando cobrança..."
-                  : sending
-                  ? "Enviando..."
-                  : (selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE")
-                  ? `Pagar (${money(totalWithFee)})`
-                  : `Enviar (${money(grandTotal)})`}
+                {sending ? (payingWithCard ? "Criando cobrança..." : "Enviando...") : "Finalizar pedido"}
               </PrimaryActionButton>
             </div>
           }
@@ -743,167 +808,82 @@ export default function ConfirmarPedidoPage() {
               <div className="xl:sticky xl:top-24">
                 <div className="rounded-[30px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff_0%,#f8fbfd_100%)] p-5 shadow-sm md:p-6">
                   <div className="text-lg font-semibold tracking-[-0.02em] text-slate-900">
-                    Resumo final
+                    Resumo do pedido
                   </div>
-
                   <div className="mt-1 text-sm text-slate-600">
-                    Confira os valores antes do envio.
+                    Confira os valores antes de pagar.
                   </div>
 
                   <div className="mt-6 space-y-4">
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Itens
+                    {/* Contadores */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Produtos</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedItemsCount}</div>
                       </div>
-                      <div className="mt-1 text-2xl font-semibold text-slate-900">
-                        {selectedItemsCount}
-                      </div>
-                      <div className="mt-1 text-xs text-slate-500">
-                        Quantidade total: {selectedUnitsCount}
+                      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Unidades</div>
+                        <div className="mt-1 text-2xl font-semibold text-slate-900">{selectedUnitsCount}</div>
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                    {/* Breakdown de valores */}
+                    <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4 space-y-2">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm text-slate-600">Subtotal dos itens</span>
-                        <span className="text-sm font-semibold text-slate-900">
-                          {money(itemsTotal)}
-                        </span>
+                        <span className="text-sm text-slate-600">Subtotal</span>
+                        <span className="text-sm font-semibold text-slate-900">{money(itemsTotal)}</span>
                       </div>
-
-                      <div className="mt-3 flex items-center justify-between gap-3">
+                      <div className="flex items-center justify-between gap-3">
                         <span className="text-sm text-slate-600">Frete</span>
-                        <span className="text-sm font-semibold text-slate-900">
-                          {money(freightApplied)}
-                        </span>
+                        <span className="text-sm font-semibold text-slate-900">{money(freightApplied)}</span>
                       </div>
+                      <div className="h-px bg-slate-100" />
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-slate-700">Total</span>
+                        <span className="text-xl font-semibold text-slate-900">{money(grandTotal)}</span>
+                      </div>
+                    </div>
 
-                      {feePercent > 0 ? (
-                        <div className="mt-3 flex items-center justify-between gap-3">
-                          <span className="text-sm text-amber-700 font-medium">
-                            Acréscimo cartão ({feePercent}%)
-                          </span>
-                          <span className="text-sm font-semibold text-amber-700">
-                            +{money(feeAmount)}
-                          </span>
+                    {/* Crédito pré-pago — preview se estiver ativo */}
+                    {hasCreditPrepago && creditBalance > 0 && useCredit ? (
+                      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 space-y-1">
+                        <div className="flex items-center justify-between gap-2 text-sm font-semibold text-emerald-800">
+                          <span>🪙 Crédito pré-pago</span>
+                          <span>−{money(creditToApply)}</span>
                         </div>
-                      ) : null}
-
-                      <div className="my-4 h-px bg-slate-200" />
-
-                      <div className="flex items-end justify-between gap-3">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Total do pedido
-                          </div>
-                          <div className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-900">
-                            {money(totalWithFee)}
-                          </div>
-                          {feePercent > 0 ? (
-                            <div className="mt-1 text-xs text-slate-500">
-                              Base: {money(grandTotal)} + acréscimo: {money(feeAmount)}
-                            </div>
-                          ) : null}
+                        <div className="text-xs text-emerald-700">
+                          Saldo disponível: {money(creditBalance)}
                         </div>
-
-                        {deliveryMode === "FRETE" ? (
-                          <Badge tone="yellow">Frete</Badge>
+                        {!fullyPaidByCredit ? (
+                          <div className="text-xs text-emerald-700">
+                            Restante a pagar: <b>{money(baseAfterCredit)}</b>
+                          </div>
                         ) : (
-                          <Badge tone="neutral">Retirada</Badge>
+                          <div className="text-xs font-semibold text-emerald-700">
+                            ✓ Saldo cobre o pedido inteiro
+                          </div>
                         )}
                       </div>
-                    </div>
-
-                    {/* ── Seleção de forma de pagamento ── */}
-                    {availablePaymentMethods.length > 0 ? (
-                      <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Forma de pagamento
-                        </div>
-                        <div className="mt-2 text-xs text-slate-500">
-                          Selecione como deseja pagar este pedido.
-                        </div>
-
-                        <div className="mt-3 grid gap-2">
-                          {availablePaymentMethods.map((m) => {
-                            const active = selectedPaymentMethod === m.payment_method;
-                            const mFee = Number(m.fee_percent ?? 0) || 0;
-                            return (
-                              <button
-                                key={m.payment_method}
-                                type="button"
-                                disabled={sending}
-                                onClick={() => setSelectedPaymentMethod(m.payment_method)}
-                                className={[
-                                  "flex items-center gap-3 rounded-[16px] border px-4 py-3 text-left text-sm font-semibold transition",
-                                  "disabled:cursor-not-allowed disabled:opacity-50",
-                                  active
-                                    ? "border-cyan-300 bg-cyan-50 text-cyan-800 shadow-[0_4px_14px_rgba(8,145,178,0.12)]"
-                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-                                ].join(" ")}
-                              >
-                                <span className="text-lg leading-none">
-                                  {paymentMethodIcon(m.payment_method)}
-                                </span>
-                                <span className="flex-1">{paymentMethodLabel(m.payment_method)}</span>
-                                {mFee > 0 ? (
-                                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                                    +{mFee}%
-                                  </span>
-                                ) : null}
-                                {active ? (
-                                  <span className="ml-auto h-4 w-4 shrink-0 rounded-full bg-cyan-500 text-white flex items-center justify-center text-[9px] font-bold">✓</span>
-                                ) : null}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Aviso cartão de crédito online — acréscimo + redirecionamento */}
-                        {(selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE") ? (
-                          <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                            {feePercent > 0 ? (
-                              <p className="mb-1">
-                                <b>Acréscimo de {feePercent}% ({money(feeAmount)})</b> incluso por pagamento com cartão de crédito online.
-                              </p>
-                            ) : null}
-                            <p>
-                              Você será redirecionado para a página segura de pagamento da Asaas para concluir com cartão de crédito. O pedido só entrará em processamento após a confirmação do pagamento.
-                            </p>
-                          </div>
-                        ) : null}
-                      </div>
                     ) : null}
 
-                    <div className="grid gap-3">
-                      <PrimaryActionButton
-                        onClick={onSubmit}
-                        disabled={sending || items.length === 0 || !selectedPaymentMethod}
-                        fullWidth
-                      >
-                        {payingWithCard
-                          ? "Criando cobrança..."
-                          : sending
-                          ? "Enviando..."
-                          : (selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE")
-                          ? `Pagar e finalizar — ${money(totalWithFee)}`
-                          : "Enviar pedido"}
-                      </PrimaryActionButton>
+                    {/* Botão principal */}
+                    <PrimaryActionButton
+                      onClick={() => setShowPaymentModal(true)}
+                      disabled={sending || items.length === 0}
+                      fullWidth
+                    >
+                      {sending
+                        ? (payingWithCard ? "Criando cobrança..." : "Enviando...")
+                        : "Escolher forma de pagamento"}
+                    </PrimaryActionButton>
 
-                      <SecondaryActionButton
-                        onClick={() => router.push("/pedido")}
-                        disabled={sending}
-                        fullWidth
-                      >
-                        Voltar ao pedido
-                      </SecondaryActionButton>
-                    </div>
-
-                    {items.length === 0 ? (
-                      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                        Seu carrinho está vazio.
-                      </div>
-                    ) : null}
+                    <SecondaryActionButton
+                      onClick={() => router.push("/pedido")}
+                      disabled={sending}
+                      fullWidth
+                    >
+                      Voltar ao pedido
+                    </SecondaryActionButton>
                   </div>
                 </div>
               </div>
@@ -911,6 +891,225 @@ export default function ConfirmarPedidoPage() {
           </div>
         )}
       </div>
+
+      {/* ── Modal de pagamento ──────────────────────────────────────────────── */}
+      {showPaymentModal ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+          onClick={() => { if (!sending) setShowPaymentModal(false); }}
+        >
+          <div
+            className="w-full max-w-lg rounded-t-[32px] sm:rounded-[32px] border border-slate-200 bg-white shadow-2xl max-h-[92vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header do modal */}
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-100 bg-white px-5 py-4 rounded-t-[32px] sm:rounded-t-[32px]">
+              <div>
+                <div className="text-base font-semibold text-slate-900">Como deseja pagar?</div>
+                <div className="text-sm text-slate-500">Total do pedido: <span className="font-semibold text-slate-900">{money(grandTotal)}</span></div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPaymentModal(false)}
+                disabled={sending}
+                className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition disabled:opacity-40"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+
+              {/* ── Seção crédito pré-pago ── */}
+              {hasCreditPrepago ? (
+                <div className={[
+                  "rounded-[22px] border-2 p-4 transition",
+                  useCredit ? "border-emerald-300 bg-emerald-50" : "border-slate-200 bg-white",
+                ].join(" ")}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl leading-none">🪙</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-slate-900">Crédito Pré-Pago</span>
+                        {/* Toggle */}
+                        <button
+                          type="button"
+                          disabled={sending || creditBalance <= 0}
+                          onClick={() => setUseCredit((v) => !v)}
+                          className={[
+                            "relative h-6 w-11 rounded-full transition-colors focus:outline-none disabled:opacity-40",
+                            useCredit ? "bg-emerald-500" : "bg-slate-300",
+                          ].join(" ")}
+                        >
+                          <span className={[
+                            "absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform",
+                            useCredit ? "translate-x-5" : "translate-x-0",
+                          ].join(" ")} />
+                        </button>
+                      </div>
+
+                      {creditBalance > 0 ? (
+                        <>
+                          <div className="mt-2 flex items-center gap-2">
+                            <div className="flex-1 h-2 rounded-full bg-slate-200 overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-emerald-500 transition-all"
+                                style={{ width: `${Math.min(100, (creditToApply / grandTotal) * 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs font-semibold text-slate-600 whitespace-nowrap">
+                              {money(creditToApply)} de {money(grandTotal)}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            Saldo disponível: <span className="font-semibold text-emerald-700">{money(creditBalance)}</span>
+                            {useCredit && creditToApply >= grandTotal
+                              ? " · Cobre o pedido inteiro 🎉"
+                              : useCredit && creditToApply > 0
+                              ? ` · Restante a pagar: ${money(baseAfterCredit)}`
+                              : ""}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="mt-1 text-xs text-slate-400">Sem saldo disponível no momento.</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* ── Formas de pagamento (para o valor restante ou total) ── */}
+              {!fullyPaidByCredit ? (
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3">
+                    {useCredit && creditToApply > 0
+                      ? `Pagar o restante — ${money(baseAfterCredit)}`
+                      : "Selecione a forma de pagamento"}
+                  </div>
+                  <div className="grid gap-2">
+                    {nonCreditMethods.map((m) => {
+                      const active = selectedPaymentMethod === m.payment_method;
+                      const mFee = Number(m.fee_percent ?? 0) || 0;
+                      const mFeeAmt = mFee > 0 ? Math.round(baseAfterCredit * mFee) / 100 : 0;
+                      const displayAmt = baseAfterCredit + mFeeAmt;
+
+                      return (
+                        <button
+                          key={m.payment_method}
+                          type="button"
+                          disabled={sending}
+                          onClick={() => setSelectedPaymentMethod(m.payment_method)}
+                          className={[
+                            "flex items-center gap-4 rounded-[20px] border-2 p-4 text-left transition",
+                            "disabled:cursor-not-allowed disabled:opacity-50",
+                            active
+                              ? "border-cyan-400 bg-cyan-50 shadow-[0_4px_20px_rgba(8,145,178,0.15)]"
+                              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50",
+                          ].join(" ")}
+                        >
+                          {/* Ícone grande */}
+                          <span className="text-3xl leading-none shrink-0">{paymentMethodIcon(m.payment_method)}</span>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <div className={[
+                              "text-sm font-semibold",
+                              active ? "text-cyan-900" : "text-slate-900",
+                            ].join(" ")}>
+                              {paymentMethodLabel(m.payment_method)}
+                            </div>
+                            <div className="text-xs text-slate-500 mt-0.5">
+                              {mFee > 0
+                                ? `+${mFee}% acréscimo · Total: ${money(displayAmt)}`
+                                : money(displayAmt)}
+                            </div>
+                          </div>
+
+                          {/* Check */}
+                          <div className={[
+                            "h-5 w-5 shrink-0 rounded-full border-2 flex items-center justify-center transition",
+                            active ? "border-cyan-500 bg-cyan-500" : "border-slate-300 bg-white",
+                          ].join(" ")}>
+                            {active ? <span className="text-white text-[10px] font-bold">✓</span> : null}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Aviso cartão */}
+                  {(selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE") ? (
+                    <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      {feePercent > 0 ? (
+                        <p className="mb-1 font-semibold">Acréscimo de {feePercent}% = {money(feeAmount)} sobre {money(baseAfterCredit)}</p>
+                      ) : null}
+                      <p>Você será redirecionado para a página segura de pagamento da Asaas. O pedido entra em processamento após a confirmação.</p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* ── Breakdown final ── */}
+              <div className="rounded-[18px] bg-slate-50 border border-slate-200 px-4 py-3 space-y-2">
+                <div className="flex items-center justify-between gap-2 text-sm text-slate-600">
+                  <span>Subtotal + frete</span>
+                  <span className="font-semibold text-slate-900">{money(grandTotal)}</span>
+                </div>
+                {creditToApply > 0 ? (
+                  <div className="flex items-center justify-between gap-2 text-sm text-emerald-700">
+                    <span>🪙 Crédito aplicado</span>
+                    <span className="font-semibold">−{money(creditToApply)}</span>
+                  </div>
+                ) : null}
+                {feeAmount > 0 && !fullyPaidByCredit ? (
+                  <div className="flex items-center justify-between gap-2 text-sm text-amber-700">
+                    <span>Acréscimo ({feePercent}%)</span>
+                    <span className="font-semibold">+{money(feeAmount)}</span>
+                  </div>
+                ) : null}
+                <div className="h-px bg-slate-200" />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-slate-700">
+                    {fullyPaidByCredit ? "Pago com crédito" : "A pagar agora"}
+                  </span>
+                  <span className="text-xl font-semibold text-slate-900">
+                    {fullyPaidByCredit ? money(creditToApply) : money(finalPayAmount)}
+                  </span>
+                </div>
+              </div>
+
+              {/* ── Botão confirmar ── */}
+              <div className="grid gap-2 pt-1">
+                <PrimaryActionButton
+                  onClick={onSubmit}
+                  disabled={sending || (!fullyPaidByCredit && !selectedPaymentMethod)}
+                  fullWidth
+                >
+                  {sending
+                    ? (payingWithCard ? "Criando cobrança..." : "Processando...")
+                    : fullyPaidByCredit
+                    ? `Pagar com crédito — ${money(creditToApply)}`
+                    : (selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE")
+                    ? `Ir para o pagamento — ${money(finalPayAmount)}`
+                    : selectedPaymentMethod
+                    ? `Confirmar pedido — ${money(finalPayAmount)}`
+                    : "Selecione uma forma de pagamento"}
+                </PrimaryActionButton>
+
+                <SecondaryActionButton
+                  onClick={() => setShowPaymentModal(false)}
+                  disabled={sending}
+                  fullWidth
+                >
+                  Cancelar
+                </SecondaryActionButton>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      ) : null}
+
     </PortalShell>
   );
 }
