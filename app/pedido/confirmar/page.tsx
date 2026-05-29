@@ -495,7 +495,7 @@ export default function ConfirmarPedidoPage() {
         delivery_mode,
         freight_fee,
         payment_method: orderPaymentMethod,
-        credit_applied: creditToApply > 0 ? creditToApply : null,
+        credit_applied: creditToApply > 0 ? creditToApply : 0,
       })
       .select("id")
       .single();
