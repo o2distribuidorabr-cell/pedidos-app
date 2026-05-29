@@ -347,7 +347,8 @@ export default function AdmLogisticaPage() {
           .order("order_created_at", { ascending: false }),
         supabase
           .from("orders")
-          .select("id,store_id,status,created_at,submitted_at,approved_at,logistic_status"),
+          .select("id,store_id,status,created_at,submitted_at,approved_at,logistic_status")
+          .neq("status", "awaiting_payment"),
       ]);
 
       if (logisticsRes.error) {

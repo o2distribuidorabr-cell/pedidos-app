@@ -518,6 +518,7 @@ export default function FinanceiroFranqueadoPage() {
       .from("orders")
       .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,logistic_status,delivery_mode,freight_fee,credit_applied,due_date")
       .eq("store_id", sId)
+      .neq("status", "awaiting_payment")
       .order("created_at", { ascending: false });
 
     if (statusFilter !== "all") q = q.eq("status", statusFilter);

@@ -276,6 +276,7 @@ export default function AdmPedidosPage() {
     const { data, error } = await supabase
       .from("v_orders_admin_list")
       .select("*")
+      .neq("status", "awaiting_payment")
       .order("created_at", { ascending: false });
 
     if (error) {

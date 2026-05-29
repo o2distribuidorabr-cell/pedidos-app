@@ -583,6 +583,7 @@ export default function HistoricoPedidosPage() {
         "id, store_id, status, notes, created_at, submitted_at, approved_at, is_paid, paid_at, payment_method, logistic_status, delivery_mode, freight_fee, credit_applied, due_date, delivery_forecast, edited_by_admin, edited_at"
       )
       .eq("store_id", sId)
+      .neq("status", "awaiting_payment")
       .order("created_at", { ascending: false });
 
     if (oErr) {

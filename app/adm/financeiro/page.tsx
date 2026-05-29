@@ -788,6 +788,7 @@ export default function AdmFinanceiroPage() {
     setMsg("");
     let q = supabase.from("orders")
       .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,paid_amount,logistic_status,delivery_mode,freight_fee,credit_applied,due_date,delivery_finished_at")
+      .neq("status", "awaiting_payment")
       .order("created_at", { ascending: false });
 
     if (storeSelected.length > 0) q = q.in("store_id", storeSelected);
