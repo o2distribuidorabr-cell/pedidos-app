@@ -31,6 +31,7 @@ type StoreRow = {
   freight_fee?: number | null;
   default_payment_method?: "PIX" | "CARTAO" | "BOLETO" | null;
   default_payment_days?: number | null;
+  credit_card_provider?: string | null;
 };
 
 // Formas de pagamento disponíveis para a loja (tabela store_payment_methods)
@@ -237,6 +238,9 @@ export default function ConfirmarPedidoPage() {
   const [creditBalance, setCreditBalance] = useState(0);
   const [useCredit, setUseCredit] = useState(false);
 
+  // Provedor de cartão de crédito desta loja (ASAAS ou MERCADOPAGO)
+  const [creditCardProvider, setCreditCardProvider] = useState<string>("ASAAS");
+
   const itemsTotal = useMemo(
     () =>
       items.reduce(
@@ -283,7 +287,13 @@ export default function ConfirmarPedidoPage() {
     () => availablePaymentMethods.find((m) => m.payment_method === selectedPaymentMethod) ?? null,
     [availablePaymentMethods, selectedPaymentMethod]
   );
-  const feePercent = Number(selectedMethodData?.fee_percent ?? 0) || 0;
+  // Mercado Pago não cobra acréscimo ao franqueado — taxa absorvida internamente
+  const isCreditCardMethod =
+    selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE";
+  const feePercent =
+    isCreditCardMethod && creditCardProvider === "MERCADOPAGO"
+      ? 0
+      : Number(selectedMethodData?.fee_percent ?? 0) || 0;
   const feeAmount = useMemo(
     () => (feePercent > 0 ? Math.round(baseAfterCredit * feePercent) / 100 : 0),
     [baseAfterCredit, feePercent]
@@ -357,7 +367,7 @@ export default function ConfirmarPedidoPage() {
 
       const { data: store, error: sErr } = await supabase
         .from("stores")
-        .select("id,name,freight_fee,default_payment_method,default_payment_days")
+        .select("id,name,freight_fee,default_payment_method,default_payment_days,credit_card_provider")
         .eq("id", sId)
         .maybeSingle();
 
@@ -374,6 +384,7 @@ export default function ConfirmarPedidoPage() {
       setStoreName(stName);
       setStoreFreightFee(stFreight);
       setStoreDefaultPaymentMethod(st?.default_payment_method ?? null);
+      setCreditCardProvider(st?.credit_card_provider ?? "ASAAS");
 
       // Carrega formas de pagamento disponíveis para esta loja (store_payment_methods)
       const { data: spmRows } = await supabase
@@ -559,8 +570,13 @@ export default function ConfirmarPedidoPage() {
 
     // ── 4b. Cartão de crédito (com ou sem crédito parcial) ─────────────────
     if (isCreditCard) {
+      // Roteia para o provedor configurado na loja
+      const cardApiUrl = creditCardProvider === "MERCADOPAGO"
+        ? "/api/mp/credit-card"
+        : "/api/asaas/credit-card";
+
       try {
-        const res = await fetch("/api/asaas/credit-card", {
+        const res = await fetch(cardApiUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orderId: order_id, paymentMethodCode: selectedPaymentMethod }),
@@ -985,7 +1001,10 @@ export default function ConfirmarPedidoPage() {
                   <div className="grid gap-2">
                     {nonCreditMethods.map((m) => {
                       const active = selectedPaymentMethod === m.payment_method;
-                      const mFee = Number(m.fee_percent ?? 0) || 0;
+                      const mIsCreditCard = m.payment_method === "CREDIT_CARD" || m.payment_method === "CREDIT_CARD_ONLINE";
+                      const mFee = (mIsCreditCard && creditCardProvider === "MERCADOPAGO")
+                        ? 0
+                        : Number(m.fee_percent ?? 0) || 0;
                       const mFeeAmt = mFee > 0 ? Math.round(baseAfterCredit * mFee) / 100 : 0;
                       const displayAmt = baseAfterCredit + mFeeAmt;
 
@@ -1039,7 +1058,7 @@ export default function ConfirmarPedidoPage() {
                       {feePercent > 0 ? (
                         <p className="mb-1 font-semibold">Acréscimo de {feePercent}% = {money(feeAmount)} sobre {money(baseAfterCredit)}</p>
                       ) : null}
-                      <p>Você será redirecionado para a página segura de pagamento da Asaas. O pedido entra em processamento após a confirmação.</p>
+                      <p>Você será redirecionado para a página segura de pagamento{creditCardProvider === "MERCADOPAGO" ? " do Mercado Pago" : " da Asaas"}. O pedido entra em processamento após a confirmação.</p>
                     </div>
                   ) : null}
                 </div>

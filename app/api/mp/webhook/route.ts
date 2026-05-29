@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Webhook do Mercado Pago — PIX apenas
+// Conta: o2distribuidora (token: MERCADOPAGO_ACCESS_TOKEN)
+//
+// Pagamentos de cartão de crédito (conta smartpay) usam /api/mp/cc-webhook.
+// ──────────────────────────────────────────────────────────────────────────────
+
 async function fetchPayment(paymentId: string) {
   const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN!;
   const resp = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
   });
   const data = await resp.json();
-  if (!resp.ok) throw new Error(`Erro ao consultar pagamento MP: ${JSON.stringify(data)}`);
+  if (!resp.ok) throw new Error(`Erro ao consultar pagamento MP (PIX): ${JSON.stringify(data)}`);
   return data;
 }
 
@@ -22,16 +30,28 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, error: "Sem SUPABASE_SERVICE_ROLE_KEY / NEXT_PUBLIC_SUPABASE_URL" }, { status: 200 });
     }
 
-    // MP manda algo como { action, api_version, data: { id }, type }
-    const body = await req.json();
-    const paymentId = body?.data?.id ? String(body.data.id) : null;
+    // MP envia { action, api_version, data: { id }, type }
+    let paymentId: string | null = null;
+
+    try {
+      const body = await req.json();
+      if (body?.data?.id) paymentId = String(body.data.id);
+    } catch {
+      // body parse falhou — tenta query params
+    }
+
+    if (!paymentId) {
+      const url = new URL(req.url);
+      const qId = url.searchParams.get("data.id") || url.searchParams.get("id");
+      if (qId) paymentId = qId;
+    }
 
     if (!paymentId) return NextResponse.json({ ok: true, ignored: true }, { status: 200 });
 
-    // Busca pagamento completo
+    // Busca pagamento completo usando token da o2distribuidora (PIX)
     const payment = await fetchPayment(paymentId);
 
-    const status: string = payment?.status; // approved/pending/rejected...
+    const status: string = payment?.status;
     const orderId: string | null = payment?.external_reference ?? null;
     const paidAt: string | null = payment?.date_approved ?? null;
 
@@ -41,7 +61,7 @@ export async function POST(req: Request) {
 
     const isPaid = status === "approved";
 
-    // Atualiza o pedido
+    // Atualiza o pedido (PIX — comportamento original)
     const { error } = await supabase
       .from("orders")
       .update({
@@ -57,9 +77,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, error: error.message }, { status: 200 });
     }
 
-    return NextResponse.json({ ok: true }, { status: 200 });
+    return NextResponse.json({ ok: true, action: "pix_updated", orderId, paymentId, status });
   } catch (e: any) {
-    // webhook: responda 200 para não ficar em retry infinito
+    // Webhook sempre responde 200 para evitar retry infinito
     return NextResponse.json({ ok: true, error: String(e?.message ?? e) }, { status: 200 });
   }
+}
+
+// Útil para validação de URL pelo painel do MP
+export async function GET() {
+  return NextResponse.json({ ok: true, route: "/api/mp/webhook", account: "o2distribuidora" });
 }

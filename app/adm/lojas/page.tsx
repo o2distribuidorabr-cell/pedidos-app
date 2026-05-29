@@ -35,6 +35,7 @@ type StoreRow = {
 
   default_payment_method?: "PIX" | "CARTAO" | "BOLETO" | null;
   default_payment_days?: number | null;
+  credit_card_provider?: "ASAAS" | "MERCADOPAGO" | null;
 };
 
 type CnpjaResponse = {
@@ -398,6 +399,9 @@ export default function AdmLojasPage() {
   // Formas de pagamento disponíveis para a loja (nova tabela store_payment_methods)
   const [storePaymentMethods, setStorePaymentMethods] = useState<Set<StorePMValue>>(new Set());
 
+  // Provedor de cartão de crédito online
+  const [creditCardProvider, setCreditCardProvider] = useState<"ASAAS" | "MERCADOPAGO">("ASAAS");
+
   const [tradeName, setTradeName] = useState("");
   const [companyStatus, setCompanyStatus] = useState("");
   const [companyFounded, setCompanyFounded] = useState("");
@@ -453,7 +457,7 @@ export default function AdmLojasPage() {
 
     const baseSelect = "id,name,city,state,active,freight_fee,code";
     const fullSelect =
-      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id,default_payment_method,default_payment_days";
+      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id,default_payment_method,default_payment_days,credit_card_provider";
 
     let data: any[] | null = null;
 
@@ -487,6 +491,7 @@ export default function AdmLojasPage() {
         asaas_customer_id: null,
         default_payment_method: null,
         default_payment_days: null,
+        credit_card_provider: null,
       }));
     } else {
       data = first.data ?? [];
@@ -572,6 +577,7 @@ export default function AdmLojasPage() {
     setDefaultPaymentMethod("");
     setDefaultPaymentDays("");
     setStorePaymentMethods(new Set());
+    setCreditCardProvider("ASAAS");
 
     resetConsultationExtras();
   }
@@ -603,6 +609,7 @@ export default function AdmLojasPage() {
 
     setDefaultPaymentMethod((s.default_payment_method ?? "") as any);
     setDefaultPaymentDays(s.default_payment_days != null ? String(s.default_payment_days) : "");
+    setCreditCardProvider((s.credit_card_provider ?? "ASAAS") as "ASAAS" | "MERCADOPAGO");
 
     resetConsultationExtras();
 
@@ -822,6 +829,7 @@ export default function AdmLojasPage() {
 
       default_payment_method: (defaultPaymentMethod || null) as "PIX" | "CARTAO" | "BOLETO" | null,
       default_payment_days: defaultPaymentDays.trim() !== "" ? Number(defaultPaymentDays) : null,
+      credit_card_provider: creditCardProvider,
     };
 
     let savedStoreId: string | null = editingId;
@@ -1324,8 +1332,19 @@ export default function AdmLojasPage() {
                 </div>
 
                 {storePaymentMethods.has("CREDIT_CARD_ONLINE") ? (
-                  <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                    <b>Cartão de crédito online ativo:</b> será cobrado <b>+4,25%</b> sobre o valor total do pedido. Esse acréscimo é exibido claramente para o franqueado na tela de confirmação de pedido.
+                  <div className="mt-4 space-y-3">
+                    <Select
+                      label="Provedor do cartão de crédito online"
+                      value={creditCardProvider}
+                      onChange={(v) => setCreditCardProvider(v as "ASAAS" | "MERCADOPAGO")}
+                      options={[
+                        { value: "ASAAS", label: "Asaas" },
+                        { value: "MERCADOPAGO", label: "Mercado Pago" },
+                      ]}
+                    />
+                    <div className="rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <b>Cartão de crédito online ativo:</b> será cobrado <b>+4,25%</b> sobre o valor total do pedido. Provedor selecionado: <b>{creditCardProvider === "MERCADOPAGO" ? "Mercado Pago" : "Asaas"}</b>. O acréscimo é exibido claramente para o franqueado na tela de confirmação.
+                    </div>
                   </div>
                 ) : null}
               </FormSection>
