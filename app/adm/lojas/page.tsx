@@ -89,6 +89,16 @@ type CnpjaResponse = {
   };
 };
 
+// ── Opções de formas de pagamento por loja ──────────────────────────────────
+const STORE_PM_OPTIONS = [
+  { value: "PIX_1D",             label: "Pix — 1 dia",               feePercent: 0    },
+  { value: "PIX_7D",             label: "Pix — 7 dias",              feePercent: 0    },
+  { value: "CREDIT_CARD_ONLINE", label: "Cartão de crédito online",  feePercent: 4.25 },
+  { value: "CREDIT_PREPAGO",     label: "Crédito Pré-Pago",          feePercent: 0    },
+] as const;
+
+type StorePMValue = (typeof STORE_PM_OPTIONS)[number]["value"];
+
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", {
     style: "currency",
@@ -385,6 +395,9 @@ export default function AdmLojasPage() {
   const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<"PIX" | "CARTAO" | "BOLETO" | "">("");
   const [defaultPaymentDays, setDefaultPaymentDays] = useState<string>("");
 
+  // Formas de pagamento disponíveis para a loja (nova tabela store_payment_methods)
+  const [storePaymentMethods, setStorePaymentMethods] = useState<Set<StorePMValue>>(new Set());
+
   const [tradeName, setTradeName] = useState("");
   const [companyStatus, setCompanyStatus] = useState("");
   const [companyFounded, setCompanyFounded] = useState("");
@@ -558,11 +571,12 @@ export default function AdmLojasPage() {
 
     setDefaultPaymentMethod("");
     setDefaultPaymentDays("");
+    setStorePaymentMethods(new Set());
 
     resetConsultationExtras();
   }
 
-  function startEdit(s: StoreRow) {
+  async function startEdit(s: StoreRow) {
     setEditingId(s.id);
     setName(s.name ?? "");
     setCity(s.city ?? "");
@@ -591,6 +605,21 @@ export default function AdmLojasPage() {
     setDefaultPaymentDays(s.default_payment_days != null ? String(s.default_payment_days) : "");
 
     resetConsultationExtras();
+
+    // Carrega formas de pagamento da loja
+    const { data: pmData } = await supabase
+      .from("store_payment_methods")
+      .select("payment_method")
+      .eq("store_id", s.id)
+      .eq("enabled", true);
+
+    const validValues = new Set(STORE_PM_OPTIONS.map((o) => o.value as string));
+    const enabled = new Set<StorePMValue>(
+      (pmData ?? [])
+        .map((r: any) => String(r.payment_method) as StorePMValue)
+        .filter((v) => validValues.has(v))
+    );
+    setStorePaymentMethods(enabled);
   }
 
   async function fillFromCNPJ() {
@@ -795,6 +824,8 @@ export default function AdmLojasPage() {
       default_payment_days: defaultPaymentDays.trim() !== "" ? Number(defaultPaymentDays) : null,
     };
 
+    let savedStoreId: string | null = editingId;
+
     if (editingId) {
       const { error } = await supabase.from("stores").update(payload).eq("id", editingId);
       if (error) {
@@ -803,11 +834,56 @@ export default function AdmLojasPage() {
         return;
       }
     } else {
-      const { error } = await supabase.from("stores").insert(payload);
+      const { data: inserted, error } = await supabase
+        .from("stores")
+        .insert(payload)
+        .select("id")
+        .single();
       if (error) {
         setWorking(false);
         setMsg(formatSbError("Falha ao criar loja.", error));
         return;
+      }
+      savedStoreId = (inserted as any)?.id ?? null;
+    }
+
+    // Salva formas de pagamento (store_payment_methods)
+    if (savedStoreId) {
+      // Remove todos os métodos existentes da loja
+      const { error: delError } = await supabase
+        .from("store_payment_methods")
+        .delete()
+        .eq("store_id", savedStoreId);
+
+      if (delError) {
+        console.warn("Aviso: não foi possível limpar store_payment_methods:", delError.message);
+      }
+
+      // Insere os métodos selecionados
+      const selectedOptions = STORE_PM_OPTIONS.filter((opt) =>
+        storePaymentMethods.has(opt.value)
+      );
+
+      if (selectedOptions.length > 0) {
+        const methodRows = selectedOptions.map((opt, idx) => ({
+          store_id: savedStoreId,
+          payment_method: opt.value,
+          enabled: true,
+          fee_percent: opt.feePercent,
+          is_default: idx === 0,
+          requires_payment_before_submit: opt.value === "CREDIT_CARD_ONLINE",
+        }));
+
+        const { error: insError } = await supabase
+          .from("store_payment_methods")
+          .insert(methodRows);
+
+        if (insError) {
+          setWorking(false);
+          setMsg(formatSbError("Loja salva, mas falha ao salvar formas de pagamento.", insError));
+          await loadStores();
+          return;
+        }
       }
     }
 
@@ -1177,7 +1253,7 @@ export default function AdmLojasPage() {
                     placeholder="(xx) xxxxx-xxxx"
                   />
                   <Select
-                    label="Forma de pagamento padrão"
+                    label="Forma de pagamento padrão (legado)"
                     value={defaultPaymentMethod}
                     onChange={(v) => setDefaultPaymentMethod(v as any)}
                     options={[
@@ -1195,6 +1271,63 @@ export default function AdmLojasPage() {
                     type="number"
                   />
                 </div>
+              </FormSection>
+
+              <FormSection
+                title="Formas de pagamento disponíveis"
+                subtitle="Selecione as opções de pagamento que esta unidade poderá utilizar ao fechar um pedido. O acréscimo percentual é aplicado automaticamente sobre o total do pedido."
+              >
+                <div className="grid gap-3">
+                  {STORE_PM_OPTIONS.map((opt) => {
+                    const checked = storePaymentMethods.has(opt.value);
+                    return (
+                      <label
+                        key={opt.value}
+                        className={[
+                          "flex cursor-pointer items-center gap-3 rounded-[16px] border px-4 py-3 transition select-none",
+                          checked
+                            ? "border-cyan-300 bg-cyan-50"
+                            : "border-slate-200 bg-white hover:bg-slate-50",
+                        ].join(" ")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setStorePaymentMethods((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(opt.value);
+                              else next.delete(opt.value);
+                              return next;
+                            });
+                          }}
+                          className="h-4 w-4 shrink-0 rounded border-slate-300 accent-cyan-600"
+                        />
+                        <div className="flex flex-1 items-center justify-between gap-2 min-w-0">
+                          <span
+                            className={[
+                              "text-sm font-semibold",
+                              checked ? "text-cyan-800" : "text-slate-900",
+                            ].join(" ")}
+                          >
+                            {opt.label}
+                          </span>
+                          {opt.feePercent > 0 ? (
+                            <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                              +{opt.feePercent}%
+                            </span>
+                          ) : null}
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {storePaymentMethods.has("CREDIT_CARD_ONLINE") ? (
+                  <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <b>Cartão de crédito online ativo:</b> será cobrado <b>+4,25%</b> sobre o valor total do pedido. Esse acréscimo é exibido claramente para o franqueado na tela de confirmação de pedido.
+                  </div>
+                ) : null}
               </FormSection>
 
               {editingId ? (

@@ -343,6 +343,66 @@ const DISPUTE_REASONS = [
   "Outro motivo",
 ];
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Banner: pedido aguardando pagamento com cartão de crédito
+// Busca a invoiceUrl salva em order_payments e exibe link para concluir.
+// ──────────────────────────────────────────────────────────────────────────────
+function AwaitingPaymentBanner({ orderId }: { orderId: string }) {
+  const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
+  const [loadingUrl, setLoadingUrl] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("order_payments")
+        .select("invoice_url")
+        .eq("order_id", orderId)
+        .eq("gateway", "ASAAS")
+        .eq("billing_type", "CREDIT_CARD")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      setInvoiceUrl((data as any)?.invoice_url ?? null);
+      setLoadingUrl(false);
+    })();
+  }, [orderId]);
+
+  return (
+    <div className="rounded-[24px] border border-amber-300 bg-amber-50 p-4 shadow-sm md:rounded-[30px] md:p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-amber-900">
+            💳 Pagamento pendente
+          </div>
+          <div className="mt-1 text-sm text-amber-800">
+            Este pedido aguarda a confirmação do pagamento com cartão de crédito.
+            Após o pagamento ser aprovado pela Asaas, o pedido será enviado
+            automaticamente para a franqueadora.
+          </div>
+        </div>
+
+        {!loadingUrl ? (
+          invoiceUrl ? (
+            <a
+              href={invoiceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-11 shrink-0 items-center justify-center rounded-[16px] bg-amber-500 px-5 text-sm font-semibold text-white shadow-md transition hover:bg-amber-600"
+            >
+              Concluir pagamento
+            </a>
+          ) : (
+            <div className="shrink-0 rounded-[14px] border border-amber-200 bg-amber-100 px-4 py-2 text-xs text-amber-700">
+              Link de pagamento não encontrado. Entre em contato com o suporte.
+            </div>
+          )
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function PedidoDetalhePage() {
   const router = useRouter();
   const params = useParams();
@@ -750,11 +810,18 @@ export default function PedidoDetalhePage() {
           </Card>
         ) : (
           <>
+            {/* ── Banner: pedido aguardando pagamento com cartão ── */}
+            {order.status === "awaiting_payment" ? (
+              <AwaitingPaymentBanner orderId={orderId!} />
+            ) : null}
+
             <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#fbfdff_0%,#f6fafc_100%)] p-4 shadow-sm md:rounded-[30px] md:p-6">
               <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={statusTone(order.status)}>{order.status}</Badge>
+                    <Badge tone={order.status === "awaiting_payment" ? "yellow" : statusTone(order.status)}>
+                      {order.status === "awaiting_payment" ? "Aguardando pagamento" : order.status}
+                    </Badge>
                     <Badge tone={logisticTone(order.logistic_status)}>
                       {logisticLabel(order.logistic_status)}
                     </Badge>

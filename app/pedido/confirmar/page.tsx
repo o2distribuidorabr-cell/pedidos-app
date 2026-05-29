@@ -33,6 +33,51 @@ type StoreRow = {
   default_payment_days?: number | null;
 };
 
+// Formas de pagamento disponíveis para a loja (tabela store_payment_methods)
+type StorePaymentMethod = {
+  payment_method:
+    | "PIX"
+    | "PIX_1D"
+    | "PIX_7D"
+    | "CREDIT_CARD"
+    | "CREDIT_CARD_ONLINE"
+    | "BOLETO"
+    | "CREDIT_PREPAGO";
+  is_default: boolean;
+  requires_payment_before_submit: boolean;
+  fee_percent?: number | null;
+};
+
+// Mapeamento entre payment_method interno e o enum da tabela orders
+type OrderPaymentMethod = "PIX" | "CARTAO" | "BOLETO" | "PREPAGO";
+
+function mapToOrderPaymentMethod(m: StorePaymentMethod["payment_method"]): OrderPaymentMethod {
+  if (m === "CREDIT_CARD" || m === "CREDIT_CARD_ONLINE") return "CARTAO";
+  if (m === "BOLETO") return "BOLETO";
+  if (m === "CREDIT_PREPAGO") return "PREPAGO";
+  return "PIX"; // PIX, PIX_1D, PIX_7D
+}
+
+function paymentMethodLabel(m: StorePaymentMethod["payment_method"]) {
+  const labels: Record<string, string> = {
+    PIX: "PIX",
+    PIX_1D: "Pix — 1 dia",
+    PIX_7D: "Pix — 7 dias",
+    CREDIT_CARD: "Cartão de crédito",
+    CREDIT_CARD_ONLINE: "Cartão de crédito online",
+    BOLETO: "Boleto",
+    CREDIT_PREPAGO: "Crédito Pré-Pago",
+  };
+  return labels[m] ?? m;
+}
+
+function paymentMethodIcon(m: StorePaymentMethod["payment_method"]) {
+  if (m === "CREDIT_CARD" || m === "CREDIT_CARD_ONLINE") return "💳";
+  if (m === "BOLETO") return "📄";
+  if (m === "CREDIT_PREPAGO") return "🪙";
+  return "⚡"; // PIX, PIX_1D, PIX_7D
+}
+
 type DeliveryInfo = {
   delivery_mode: "RETIRADA" | "FRETE";
   freight_fee: number;
@@ -182,6 +227,11 @@ export default function ConfirmarPedidoPage() {
   const [storeFreightFee, setStoreFreightFee] = useState<number>(0);
   const [storeDefaultPaymentMethod, setStoreDefaultPaymentMethod] = useState<"PIX" | "CARTAO" | "BOLETO" | null>(null);
 
+  // Formas de pagamento disponíveis e selecionada
+  const [availablePaymentMethods, setAvailablePaymentMethods] = useState<StorePaymentMethod[]>([]);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<StorePaymentMethod["payment_method"] | null>(null);
+  const [payingWithCard, setPayingWithCard] = useState(false);
+
   const itemsTotal = useMemo(
     () =>
       items.reduce(
@@ -206,6 +256,18 @@ export default function ConfirmarPedidoPage() {
     () => itemsTotal + freightApplied,
     [itemsTotal, freightApplied]
   );
+
+  // Acréscimo do método de pagamento (ex: 4,25% no cartão online)
+  const selectedMethodData = useMemo(
+    () => availablePaymentMethods.find((m) => m.payment_method === selectedPaymentMethod) ?? null,
+    [availablePaymentMethods, selectedPaymentMethod]
+  );
+  const feePercent = Number(selectedMethodData?.fee_percent ?? 0) || 0;
+  const feeAmount = useMemo(
+    () => (feePercent > 0 ? Math.round(grandTotal * feePercent) / 100 : 0),
+    [grandTotal, feePercent]
+  );
+  const totalWithFee = useMemo(() => grandTotal + feeAmount, [grandTotal, feeAmount]);
 
   function persistDelivery(mode: "RETIRADA" | "FRETE", fee: number) {
     const payload: DeliveryInfo = {
@@ -284,6 +346,35 @@ export default function ConfirmarPedidoPage() {
       setStoreFreightFee(stFreight);
       setStoreDefaultPaymentMethod(st?.default_payment_method ?? null);
 
+      // Carrega formas de pagamento disponíveis para esta loja (store_payment_methods)
+      const { data: spmRows } = await supabase
+        .from("store_payment_methods")
+        .select("payment_method,is_default,requires_payment_before_submit,fee_percent")
+        .eq("store_id", sId)
+        .eq("enabled", true)
+        .order("is_default", { ascending: false });
+
+      let methods: StorePaymentMethod[] = (spmRows ?? []) as StorePaymentMethod[];
+
+      // Fallback: se a tabela ainda estiver vazia para esta loja, usa default_payment_method
+      if (methods.length === 0) {
+        const legacyMethod = st?.default_payment_method;
+        if (legacyMethod === "CARTAO") {
+          methods = [{ payment_method: "CREDIT_CARD", is_default: true, requires_payment_before_submit: true }];
+        } else if (legacyMethod === "BOLETO") {
+          methods = [{ payment_method: "BOLETO", is_default: true, requires_payment_before_submit: false }];
+        } else {
+          // PIX (padrão) — comportamento original mantido
+          methods = [{ payment_method: "PIX", is_default: true, requires_payment_before_submit: false }];
+        }
+      }
+
+      setAvailablePaymentMethods(methods);
+
+      // Pré-seleciona o método padrão (ou o único disponível)
+      const defaultMethod = methods.find((m) => m.is_default) ?? methods[0] ?? null;
+      setSelectedPaymentMethod(defaultMethod?.payment_method ?? null);
+
       const rawDelivery = localStorage.getItem("delivery_info");
       const dParsed = rawDelivery
         ? (JSON.parse(rawDelivery) as Partial<DeliveryInfo>)
@@ -326,34 +417,52 @@ export default function ConfirmarPedidoPage() {
       return;
     }
 
+    if (!selectedPaymentMethod) {
+      setMsg("Selecione uma forma de pagamento para continuar.");
+      return;
+    }
+
+    const isCreditCard =
+      selectedPaymentMethod === "CREDIT_CARD" ||
+      selectedPaymentMethod === "CREDIT_CARD_ONLINE";
+    const requiresPayment =
+      availablePaymentMethods.find((m) => m.payment_method === selectedPaymentMethod)
+        ?.requires_payment_before_submit ?? isCreditCard;
+
     setSending(true);
+    if (isCreditCard) setPayingWithCard(true);
 
     const now = new Date().toISOString();
-    const status = "submitted";
-
     const delivery_mode: "RETIRADA" | "FRETE" = deliveryMode;
     const freight_fee =
       delivery_mode === "FRETE" ? Number(storeFreightFee || 0) : 0;
+    const orderPaymentMethod = mapToOrderPaymentMethod(selectedPaymentMethod);
+
+    // ── Pedido com cartão de crédito: status inicial = awaiting_payment ────
+    // ── Outros métodos (PIX, etc.): status inicial = submitted (fluxo atual) ─
+    const orderStatus = requiresPayment ? "awaiting_payment" : "submitted";
+    const submittedAt = requiresPayment ? null : now;
 
     const { data: orderInserted, error: orderError } = await supabase
       .from("orders")
       .insert({
         store_id: storeId,
-        status,
+        status: orderStatus,
         notes: notes.trim() || null,
         created_by: user.id,
         created_at: now,
-        submitted_at: now,
+        submitted_at: submittedAt,
         approved_at: null,
         delivery_mode,
         freight_fee,
-        ...(storeDefaultPaymentMethod ? { payment_method: storeDefaultPaymentMethod } : {}),
+        payment_method: orderPaymentMethod,
       })
       .select("id")
       .single();
 
     if (orderError || !orderInserted?.id) {
       setSending(false);
+      setPayingWithCard(false);
       setMsg(orderError?.message || "Erro ao criar pedido.");
       return;
     }
@@ -373,10 +482,43 @@ export default function ConfirmarPedidoPage() {
 
     if (itemsError) {
       setSending(false);
+      setPayingWithCard(false);
       setMsg(itemsError.message);
       return;
     }
 
+    // ── Fluxo cartão de crédito ────────────────────────────────────────────
+    if (isCreditCard) {
+      try {
+        const res = await fetch("/api/asaas/credit-card", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: order_id, paymentMethodCode: selectedPaymentMethod }),
+        });
+        const data = await res.json();
+
+        if (!res.ok || !data.ok || !data.invoiceUrl) {
+          setMsg(data.details || data.error || "Erro ao gerar cobrança com cartão. Tente novamente.");
+          setSending(false);
+          setPayingWithCard(false);
+          return;
+        }
+
+        localStorage.removeItem("cart_items");
+        localStorage.removeItem("delivery_info");
+
+        // Redireciona para a página de pagamento segura da Asaas
+        window.location.href = data.invoiceUrl;
+        return;
+      } catch {
+        setMsg("Erro de conexão ao criar cobrança. Tente novamente.");
+        setSending(false);
+        setPayingWithCard(false);
+        return;
+      }
+    }
+
+    // ── Fluxo PIX / outros métodos (comportamento original intacto) ─────────
     localStorage.removeItem("cart_items");
     localStorage.removeItem("delivery_info");
 
@@ -414,9 +556,15 @@ export default function ConfirmarPedidoPage() {
 
               <PrimaryActionButton
                 onClick={onSubmit}
-                disabled={sending || items.length === 0}
+                disabled={sending || items.length === 0 || !selectedPaymentMethod}
               >
-                {sending ? "Enviando..." : `Enviar (${money(grandTotal)})`}
+                {payingWithCard
+                  ? "Criando cobrança..."
+                  : sending
+                  ? "Enviando..."
+                  : (selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE")
+                  ? `Pagar (${money(totalWithFee)})`
+                  : `Enviar (${money(grandTotal)})`}
               </PrimaryActionButton>
             </div>
           }
@@ -630,6 +778,17 @@ export default function ConfirmarPedidoPage() {
                         </span>
                       </div>
 
+                      {feePercent > 0 ? (
+                        <div className="mt-3 flex items-center justify-between gap-3">
+                          <span className="text-sm text-amber-700 font-medium">
+                            Acréscimo cartão ({feePercent}%)
+                          </span>
+                          <span className="text-sm font-semibold text-amber-700">
+                            +{money(feeAmount)}
+                          </span>
+                        </div>
+                      ) : null}
+
                       <div className="my-4 h-px bg-slate-200" />
 
                       <div className="flex items-end justify-between gap-3">
@@ -638,8 +797,13 @@ export default function ConfirmarPedidoPage() {
                             Total do pedido
                           </div>
                           <div className="mt-1 text-3xl font-semibold tracking-[-0.03em] text-slate-900">
-                            {money(grandTotal)}
+                            {money(totalWithFee)}
                           </div>
+                          {feePercent > 0 ? (
+                            <div className="mt-1 text-xs text-slate-500">
+                              Base: {money(grandTotal)} + acréscimo: {money(feeAmount)}
+                            </div>
+                          ) : null}
                         </div>
 
                         {deliveryMode === "FRETE" ? (
@@ -650,13 +814,80 @@ export default function ConfirmarPedidoPage() {
                       </div>
                     </div>
 
+                    {/* ── Seleção de forma de pagamento ── */}
+                    {availablePaymentMethods.length > 0 ? (
+                      <div className="rounded-[22px] border border-slate-200 bg-slate-50 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Forma de pagamento
+                        </div>
+                        <div className="mt-2 text-xs text-slate-500">
+                          Selecione como deseja pagar este pedido.
+                        </div>
+
+                        <div className="mt-3 grid gap-2">
+                          {availablePaymentMethods.map((m) => {
+                            const active = selectedPaymentMethod === m.payment_method;
+                            const mFee = Number(m.fee_percent ?? 0) || 0;
+                            return (
+                              <button
+                                key={m.payment_method}
+                                type="button"
+                                disabled={sending}
+                                onClick={() => setSelectedPaymentMethod(m.payment_method)}
+                                className={[
+                                  "flex items-center gap-3 rounded-[16px] border px-4 py-3 text-left text-sm font-semibold transition",
+                                  "disabled:cursor-not-allowed disabled:opacity-50",
+                                  active
+                                    ? "border-cyan-300 bg-cyan-50 text-cyan-800 shadow-[0_4px_14px_rgba(8,145,178,0.12)]"
+                                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+                                ].join(" ")}
+                              >
+                                <span className="text-lg leading-none">
+                                  {paymentMethodIcon(m.payment_method)}
+                                </span>
+                                <span className="flex-1">{paymentMethodLabel(m.payment_method)}</span>
+                                {mFee > 0 ? (
+                                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                                    +{mFee}%
+                                  </span>
+                                ) : null}
+                                {active ? (
+                                  <span className="ml-auto h-4 w-4 shrink-0 rounded-full bg-cyan-500 text-white flex items-center justify-center text-[9px] font-bold">✓</span>
+                                ) : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Aviso cartão de crédito online — acréscimo + redirecionamento */}
+                        {(selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE") ? (
+                          <div className="mt-3 rounded-[14px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            {feePercent > 0 ? (
+                              <p className="mb-1">
+                                <b>Acréscimo de {feePercent}% ({money(feeAmount)})</b> incluso por pagamento com cartão de crédito online.
+                              </p>
+                            ) : null}
+                            <p>
+                              Você será redirecionado para a página segura de pagamento da Asaas para concluir com cartão de crédito. O pedido só entrará em processamento após a confirmação do pagamento.
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+
                     <div className="grid gap-3">
                       <PrimaryActionButton
                         onClick={onSubmit}
-                        disabled={sending || items.length === 0}
+                        disabled={sending || items.length === 0 || !selectedPaymentMethod}
                         fullWidth
                       >
-                        {sending ? "Enviando..." : "Enviar pedido"}
+                        {payingWithCard
+                          ? "Criando cobrança..."
+                          : sending
+                          ? "Enviando..."
+                          : (selectedPaymentMethod === "CREDIT_CARD" || selectedPaymentMethod === "CREDIT_CARD_ONLINE")
+                          ? `Pagar e finalizar — ${money(totalWithFee)}`
+                          : "Enviar pedido"}
                       </PrimaryActionButton>
 
                       <SecondaryActionButton

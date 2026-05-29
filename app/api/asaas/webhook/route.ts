@@ -11,7 +11,7 @@ type AsaasWebhookBody = {
     value?: number | string | null;
     netValue?: number | string | null;
     originalValue?: number | string | null;
-    billingType?: string | null;
+    billingType?: string | null;  // "PIX" | "CREDIT_CARD" | "BOLETO" | etc.
     status?: string | null;
     dueDate?: string | null;
     paymentDate?: string | null;
@@ -100,10 +100,15 @@ export async function POST(req: Request) {
       );
     }
 
+    // Detecta o tipo de cobrança para tratar crédito separado do PIX
+    const billingType = clean(body?.payment?.billingType);
+    const isCreditCardPayment =
+      String(billingType || "").toUpperCase() === "CREDIT_CARD";
+
     // 1) tenta localizar primeiro no log já gravado
     const { data: existingLog, error: existingLogError } = await admin
       .from("order_payments")
-      .select("id,order_id,store_id,gateway,payment_id,status,amount,external_reference")
+      .select("id,order_id,store_id,gateway,payment_id,status,amount,external_reference,billing_type")
       .eq("gateway", "ASAAS")
       .eq("payment_id", paymentId)
       .maybeSingle();
@@ -186,6 +191,49 @@ export async function POST(req: Request) {
     if (isPaidEvent(eventName, paymentStatus)) {
       const paidAt = normalizeAsaasPaidAt(body);
 
+      // Verifica se é cartão de crédito pelo payload do webhook OU pelo log salvo
+      const isCreditCard =
+        isCreditCardPayment ||
+        String(existingLog?.billing_type || "").toUpperCase() === "CREDIT_CARD";
+
+      if (isCreditCard) {
+        // ── Cartão de crédito ────────────────────────────────────────────────
+        // Marca como pago E submete o pedido (status → submitted, submitted_at).
+        // O pedido só entra na fila da franqueadora após confirmação do cartão.
+        const { error: updateOrderError } = await admin
+          .from("orders")
+          .update({
+            is_paid: true,
+            paid_at: paidAt,
+            payment_method: "CARTAO",
+            paid_amount: amount,
+            status: "submitted",
+            submitted_at: paidAt,
+          })
+          .eq("id", orderId);
+
+        if (updateOrderError) {
+          return NextResponse.json(
+            {
+              error: "Erro ao atualizar pedido (cartão) como pago e enviado.",
+              details: updateOrderError.message,
+            },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json({
+          ok: true,
+          action: "order_credit_card_paid_and_submitted",
+          gateway: "ASAAS",
+          orderId,
+          paymentId,
+          event: eventName,
+          status: paymentStatus,
+        });
+      }
+
+      // ── PIX (comportamento original — inalterado) ────────────────────────
       const { error: updateOrderError } = await admin
         .from("orders")
         .update({
