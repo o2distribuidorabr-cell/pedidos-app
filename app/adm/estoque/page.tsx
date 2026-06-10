@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { PageHeader, Card, Input, Badge } from "@/app/components/ui";
@@ -12,6 +12,8 @@ type StockRow = {
   name: string | null;
   unit: string | null;
   track_stock: boolean;
+  manual_cost: number | null;
+  has_entries: boolean;
   current_qty: number;
   avg_cost: number;
   selling_price: number | null;
@@ -20,9 +22,102 @@ type StockRow = {
 function fmt(n: number, decimals = 2) {
   return n.toLocaleString("pt-BR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-
 function fmtCurrency(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Input de custo inline — mostra edição quando clicado
+function CostCell({
+  row,
+  onSave,
+}: {
+  row: StockRow;
+  onSave: (productId: string, value: number) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(row.avg_cost > 0 ? row.avg_cost : row.manual_cost ?? ""));
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Sincroniza quando o row muda externamente
+  useEffect(() => {
+    if (!editing) {
+      setVal(String(row.avg_cost > 0 ? row.avg_cost : row.manual_cost ?? ""));
+    }
+  }, [row.avg_cost, row.manual_cost, editing]);
+
+  function handleClick() {
+    if (row.has_entries) return; // custo calculado por entradas — não editável manualmente
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }
+
+  async function handleBlur() {
+    setEditing(false);
+    const n = parseFloat(val.replace(",", "."));
+    if (!Number.isFinite(n) || n < 0) return;
+    if (n === (row.manual_cost ?? 0) && !row.has_entries) return; // sem mudança
+    setSaving(true);
+    await onSave(row.product_id, n);
+    setSaving(false);
+  }
+
+  if (row.has_entries) {
+    return (
+      <div className="flex items-center justify-end gap-1.5">
+        <span className="tabular-nums text-slate-600">{fmtCurrency(row.avg_cost)}</span>
+        <span
+          className="inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold bg-emerald-100 text-emerald-700 cursor-default"
+          title="Calculado automaticamente pelo preço médio das entradas"
+        >
+          auto
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-1.5">
+      {editing ? (
+        <input
+          ref={inputRef}
+          type="number"
+          min="0"
+          step="any"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onBlur={handleBlur}
+          onKeyDown={(e) => { if (e.key === "Enter") inputRef.current?.blur(); if (e.key === "Escape") { setEditing(false); } }}
+          className="w-28 rounded-[10px] border border-slate-300 bg-white px-2 py-1 text-right text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-slate-900/20"
+          disabled={saving}
+          autoFocus
+        />
+      ) : (
+        <button
+          onClick={handleClick}
+          title="Clique para definir custo manual"
+          className="group flex items-center gap-1 rounded-[8px] px-2 py-1 hover:bg-slate-100 transition text-right"
+        >
+          <span className="tabular-nums text-slate-600">
+            {row.avg_cost > 0 ? fmtCurrency(row.avg_cost) : <span className="text-amber-500 text-xs">definir custo</span>}
+          </span>
+          <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 text-slate-300 group-hover:text-slate-500 flex-shrink-0">
+            <path d="M11.013 1.427a1.75 1.75 0 012.474 2.474L4.91 12.48l-3.535.49a.75.75 0 01-.857-.857l.49-3.536 8.006-8.15zm1.06 1.06a.25.25 0 00-.353 0L3.527 10.75l-.235 1.7 1.7-.236 8.08-8.196a.25.25 0 000-.354l-.999-1zm-10.573 9.5l-.016.115.115-.016-.099-.099z"/>
+          </svg>
+        </button>
+      )}
+      {row.avg_cost === 0 && !editing && (
+        <span className="inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold bg-amber-100 text-amber-700">
+          manual
+        </span>
+      )}
+      {row.avg_cost > 0 && !row.has_entries && !editing && (
+        <span className="inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold bg-slate-100 text-slate-500">
+          manual
+        </span>
+      )}
+    </div>
+  );
 }
 
 export default function EstoquePage() {
@@ -46,7 +141,7 @@ export default function EstoquePage() {
     setLoading(true);
     const { data, error } = await supabase
       .from("v_stock_balance")
-      .select("product_id,sku,name,unit,track_stock,current_qty,avg_cost,selling_price")
+      .select("product_id,sku,name,unit,track_stock,manual_cost,has_entries,current_qty,avg_cost,selling_price")
       .order("name");
     if (!error && data) setRows(data as StockRow[]);
     setLoading(false);
@@ -55,16 +150,24 @@ export default function EstoquePage() {
   async function toggleTrackStock(row: StockRow) {
     setTogglingId(row.product_id);
     const newVal = !row.track_stock;
-    const { error } = await supabase
-      .from("products")
-      .update({ track_stock: newVal })
-      .eq("id", row.product_id);
+    const { error } = await supabase.from("products").update({ track_stock: newVal }).eq("id", row.product_id);
     if (!error) {
-      setRows((prev) =>
-        prev.map((r) => r.product_id === row.product_id ? { ...r, track_stock: newVal } : r)
-      );
+      setRows((prev) => prev.map((r) => r.product_id === row.product_id ? { ...r, track_stock: newVal } : r));
     }
     setTogglingId(null);
+  }
+
+  async function saveManualCost(productId: string, value: number) {
+    const { error } = await supabase.from("products").update({ manual_cost: value }).eq("id", productId);
+    if (!error) {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.product_id === productId
+            ? { ...r, manual_cost: value, avg_cost: r.has_entries ? r.avg_cost : value }
+            : r
+        )
+      );
+    }
   }
 
   const tracked = rows.filter((r) => r.track_stock);
@@ -75,8 +178,7 @@ export default function EstoquePage() {
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((r) =>
-        (r.sku ?? "").toLowerCase().includes(q) ||
-        (r.name ?? "").toLowerCase().includes(q)
+        (r.sku ?? "").toLowerCase().includes(q) || (r.name ?? "").toLowerCase().includes(q)
       );
     }
     if (filter === "zero") list = list.filter((r) => r.track_stock && Number(r.current_qty) <= 0);
@@ -87,6 +189,7 @@ export default function EstoquePage() {
   const totalValue = tracked.reduce((acc, r) => acc + Math.max(0, Number(r.current_qty)) * Number(r.avg_cost), 0);
   const zeroCount  = tracked.filter((r) => Number(r.current_qty) <= 0).length;
   const lowCount   = tracked.filter((r) => Number(r.current_qty) > 0 && Number(r.current_qty) < 10).length;
+  const noCostCount = tracked.filter((r) => Number(r.avg_cost) === 0).length;
 
   return (
     <div className="space-y-6">
@@ -95,40 +198,38 @@ export default function EstoquePage() {
         subtitle="Saldo atual por produto"
         right={
           <div className="flex gap-2">
-            <Link
-              href="/adm/estoque/entrada"
-              className="inline-flex h-10 items-center gap-2 rounded-[14px] bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-700 transition"
-            >
+            <Link href="/adm/estoque/entrada" className="inline-flex h-10 items-center gap-2 rounded-[14px] bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-700 transition">
               + Entrada
             </Link>
-            <Link
-              href="/adm/estoque/inventario"
-              className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
-            >
+            <Link href="/adm/estoque/inventario" className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
               Inventário
             </Link>
-            <Link
-              href="/adm/estoque/relatorio"
-              className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
-            >
+            <Link href="/adm/estoque/movimentacao" className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
+              Movimentação
+            </Link>
+            <Link href="/adm/estoque/relatorio" className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
               Relatório
             </Link>
           </div>
         }
       />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Card>
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Valor em estoque</p>
           <p className="mt-1 text-2xl font-bold text-slate-900">{fmtCurrency(totalValue)}</p>
         </Card>
         <Card>
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Produtos sem estoque</p>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Sem estoque</p>
           <p className="mt-1 text-2xl font-bold text-red-600">{zeroCount}</p>
         </Card>
         <Card>
           <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Estoque baixo (&lt;10)</p>
           <p className="mt-1 text-2xl font-bold text-amber-600">{lowCount}</p>
+        </Card>
+        <Card>
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Sem custo</p>
+          <p className={`mt-1 text-2xl font-bold ${noCostCount > 0 ? "text-amber-600" : "text-slate-400"}`}>{noCostCount}</p>
         </Card>
       </div>
 
@@ -142,10 +243,7 @@ export default function EstoquePage() {
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={[
-                  "px-3 py-2 rounded-[10px] text-sm font-medium transition",
-                  filter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200",
-                ].join(" ")}
+                className={["px-3 py-2 rounded-[10px] text-sm font-medium transition", filter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"].join(" ")}
               >
                 {f === "all" ? "Todos" : f === "zero" ? "Zerados" : "Baixo"}
               </button>
@@ -153,11 +251,7 @@ export default function EstoquePage() {
           </div>
           <button
             onClick={() => setShowHidden((v) => !v)}
-            className={[
-              "px-3 py-2 rounded-[10px] text-sm font-medium transition flex items-center gap-1.5",
-              showHidden ? "bg-slate-200 text-slate-800" : "bg-slate-100 text-slate-500 hover:bg-slate-200",
-            ].join(" ")}
-            title={showHidden ? "Ocultar produtos desativados do estoque" : "Mostrar produtos ocultos no estoque"}
+            className={["px-3 py-2 rounded-[10px] text-sm font-medium transition flex items-center gap-1.5", showHidden ? "bg-slate-200 text-slate-800" : "bg-slate-100 text-slate-500 hover:bg-slate-200"].join(" ")}
           >
             {showHidden ? (
               <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/></svg>
@@ -180,7 +274,10 @@ export default function EstoquePage() {
                   <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide">SKU</th>
                   <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide">Produto</th>
                   <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide text-right">Saldo</th>
-                  <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide text-right">Custo médio</th>
+                  <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide text-right">
+                    Custo
+                    <span className="ml-1 font-normal text-slate-400 normal-case">clique para editar</span>
+                  </th>
                   <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide text-right">Valor total</th>
                   <th className="pb-3 pr-4 font-semibold text-slate-500 text-xs uppercase tracking-wide text-right">Preço venda</th>
                   <th className="pb-3 font-semibold text-slate-500 text-xs uppercase tracking-wide text-center">Ativo</th>
@@ -209,7 +306,9 @@ export default function EstoquePage() {
                           {fmt(qty, 2)} {r.unit ?? ""}
                         </span>
                       </td>
-                      <td className="py-3 pr-4 text-right tabular-nums text-slate-600">{fmtCurrency(cost)}</td>
+                      <td className="py-3 pr-4">
+                        <CostCell row={r} onSave={saveManualCost} />
+                      </td>
                       <td className="py-3 pr-4 text-right tabular-nums text-slate-600">{fmtCurrency(totalVal)}</td>
                       <td className="py-3 pr-4 text-right tabular-nums text-slate-600">
                         {r.selling_price != null ? fmtCurrency(Number(r.selling_price)) : "—"}
@@ -219,16 +318,9 @@ export default function EstoquePage() {
                           onClick={() => toggleTrackStock(r)}
                           disabled={toggling}
                           title={r.track_stock ? "Clique para ocultar do estoque" : "Clique para ativar no estoque"}
-                          className={[
-                            "inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none",
-                            toggling ? "opacity-50 cursor-wait" : "cursor-pointer",
-                            r.track_stock ? "bg-emerald-500" : "bg-slate-200",
-                          ].join(" ")}
+                          className={["inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none", toggling ? "opacity-50 cursor-wait" : "cursor-pointer", r.track_stock ? "bg-emerald-500" : "bg-slate-200"].join(" ")}
                         >
-                          <span className={[
-                            "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200",
-                            r.track_stock ? "translate-x-6" : "translate-x-1",
-                          ].join(" ")} />
+                          <span className={["inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200", r.track_stock ? "translate-x-6" : "translate-x-1"].join(" ")} />
                         </button>
                       </td>
                     </tr>

@@ -130,6 +130,7 @@ const routePermissionMap: RoutePermissionRule[] = [
   { prefix: "/adm/emitentes", permission: "can_emitters" },
   { prefix: "/adm/financeiro", permission: "can_financial" },
   { prefix: "/adm/credito", permission: "can_credit" },
+  { prefix: "/adm/estoque/movimentacao", permission: "can_stock" },
   { prefix: "/adm/estoque", permission: "can_stock" },
   { prefix: "/adm/pedidos", permission: "can_orders" },
   { prefix: "/adm/dashboard", permission: "can_dashboard" },
@@ -379,6 +380,7 @@ export default function PortalShell({
     { label: "Estoque", href: "/adm/estoque", allowed: (p) => p.can_stock },
     { label: "Entrada de estoque", href: "/adm/estoque/entrada", allowed: (p) => p.can_stock },
     { label: "Inventário", href: "/adm/estoque/inventario", allowed: (p) => p.can_stock },
+    { label: "Movimentação", href: "/adm/estoque/movimentacao", allowed: (p) => p.can_stock },
     { label: "Relatório de margem", href: "/adm/estoque/relatorio", allowed: (p) => p.can_stock },
   ];
 
