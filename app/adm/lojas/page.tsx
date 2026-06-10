@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/components/ui";
+import * as XLSX from "xlsx";
 
 type StoreRow = {
   id: string;
@@ -994,6 +995,22 @@ export default function AdmLojasPage() {
     return creditMode === "ADD" ? creditBalance + amt : Math.max(creditBalance - amt, 0);
   }, [creditStoreId, creditAmount, creditMode, creditBalance]);
 
+  function exportXLS() {
+    const rows = stores
+      .filter((s) => s.cnpj || s.legal_name)
+      .map((s) => ({
+        "Razão Social": s.legal_name ?? "",
+        "CNPJ": formatCNPJ(s.cnpj),
+        "Nome Fantasia": s.name,
+        "Cidade/UF": [s.city, s.state].filter(Boolean).join("/"),
+      }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 50 }, { wch: 20 }, { wch: 40 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Lojas");
+    XLSX.writeFile(wb, "franqueados.xlsx");
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -1001,6 +1018,9 @@ export default function AdmLojasPage() {
         subtitle="Cadastre, consulte CNPJ, edite e administre os dados comerciais, fiscais e financeiros das unidades."
         right={
           <div className="flex flex-wrap gap-2">
+            <SecondaryActionButton onClick={exportXLS}>
+              Exportar XLS
+            </SecondaryActionButton>
             <SecondaryActionButton onClick={() => router.push("/adm/financeiro")}>
               Financeiro
             </SecondaryActionButton>

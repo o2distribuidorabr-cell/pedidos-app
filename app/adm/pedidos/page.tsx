@@ -394,6 +394,16 @@ export default function AdmPedidosPage() {
     const { error } = await supabase.from("orders").update(patch).eq("id", id);
     if (error) { console.error("updateOrder error:", error); return; }
     setOrders((prev) => prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o)));
+
+    // Baixa automática no estoque quando pedido é aprovado
+    if (patch.status === "approved") {
+      fetch("/api/estoque/baixa-pedido", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: id }),
+      }).catch((e) => console.error("[baixa-pedido]", e));
+    }
+
     await loadOrders();
   }
 

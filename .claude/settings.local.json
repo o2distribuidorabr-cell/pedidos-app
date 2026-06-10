@@ -13,7 +13,21 @@
       "PowerShell($result = & { Push-Location \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\"; $out = npx tsc --noEmit 2>&1; Pop-Location; $out }; if \\($result\\) { $result | Select-Object -First 60 } else { \"sem erros\" })",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\o2-pedidos\\\\app\" -Force)",
       "Bash(dir \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\api\" /s /b)",
-      "Bash(node -e \"require\\('@netlify/functions'\\)\")"
+      "Bash(node -e \"require\\('@netlify/functions'\\)\")",
+      "Bash(mkdir \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\api\\\\simulador\")",
+      "Bash(mkdir \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\api\\\\simulador\\\\stock\")",
+      "Bash(mkdir \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\portal\\\\simulador-compras\" 2>nul; echo ok)",
+      "Bash(mkdir \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\adm\\\\simulador-compras\" 2>nul; echo ok)",
+      "Bash(py sync_movimentacao.py --dias 7)",
+      "Bash(where supabase *)",
+      "Bash(supabase --version)",
+      "Bash(py sync_movimentacao.py --dias 30)",
+      "Bash(dir /s /b \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\portal\")",
+      "Bash(findstr \"page.tsx\")",
+      "Bash(py scripts/add_page_views.py)",
+      "Bash(py -c ' *)",
+      "Bash(dir /s /b \"C:\\\\Users\\\\Pedro Andrade\\\\Documents\\\\ab-portal\\\\app\\\\*.tsx\")",
+      "Bash(findstr /i \"login auth reset password\")"
     ]
   }
 }

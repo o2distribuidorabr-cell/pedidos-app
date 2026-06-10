@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { PageHeader, Card, Button, Input, Badge, Table } from "@/app/components/ui";
+import * as XLSX from "xlsx";
 
 type EmitterRow = {
   id: string;
@@ -286,6 +287,19 @@ export default function AdmEmitentesPage() {
     }
   }
 
+  function exportXLS() {
+    const rows = emitters.map((e) => ({
+      "Razão Social": e.legal_name,
+      "CNPJ": fmtCNPJ(e.cnpj),
+      "Nome Fantasia": e.name,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws["!cols"] = [{ wch: 50 }, { wch: 20 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Emitentes");
+    XLSX.writeFile(wb, "emitentes.xlsx");
+  }
+
   if (loading) return <Card>Carregando...</Card>;
 
   const rows = emitters.map((row) => [
@@ -320,6 +334,7 @@ export default function AdmEmitentesPage() {
         subtitle="Cadastro das empresas emissoras de NF-e"
         right={
           <div className="flex gap-2">
+            <Button onClick={exportXLS}>Exportar XLS</Button>
             <Button onClick={resetForm}>Novo emitente</Button>
             <Button onClick={() => router.push("/adm/pedidos")}>Voltar</Button>
           </div>

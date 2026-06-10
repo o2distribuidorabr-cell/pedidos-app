@@ -122,6 +122,7 @@ export const handler: Handler = async (event) => {
       can_emitters: !!permissions.can_emitters,
       can_financial: !!permissions.can_financial,
       can_credit: !!permissions.can_credit,
+      can_stock: !!permissions.can_stock,
     };
 
     const { data: created, error: createError } = await admin.auth.admin.createUser({

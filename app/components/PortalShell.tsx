@@ -130,6 +130,7 @@ const routePermissionMap: RoutePermissionRule[] = [
   { prefix: "/adm/emitentes", permission: "can_emitters" },
   { prefix: "/adm/financeiro", permission: "can_financial" },
   { prefix: "/adm/credito", permission: "can_credit" },
+  { prefix: "/adm/estoque", permission: "can_stock" },
   { prefix: "/adm/pedidos", permission: "can_orders" },
   { prefix: "/adm/dashboard", permission: "can_dashboard" },
 ];
@@ -266,7 +267,8 @@ export default function PortalShell({
             can_products,
             can_emitters,
             can_financial,
-            can_credit
+            can_credit,
+            can_stock
           `)
           .eq("user_id", user.id)
           .maybeSingle();
@@ -374,6 +376,10 @@ export default function PortalShell({
     { label: "Emitentes", href: "/adm/emitentes", allowed: (p) => p.can_emitters },
     { label: "Financeiro", href: "/adm/financeiro", allowed: (p) => p.can_financial },
     { label: "Extrato de crédito", href: "/adm/credito", allowed: (p) => p.can_credit },
+    { label: "Estoque", href: "/adm/estoque", allowed: (p) => p.can_stock },
+    { label: "Entrada de estoque", href: "/adm/estoque/entrada", allowed: (p) => p.can_stock },
+    { label: "Inventário", href: "/adm/estoque/inventario", allowed: (p) => p.can_stock },
+    { label: "Relatório de margem", href: "/adm/estoque/relatorio", allowed: (p) => p.can_stock },
   ];
 
   const franchiseeItems = [

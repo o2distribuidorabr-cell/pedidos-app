@@ -13,6 +13,7 @@ export type AdminPermissions = {
   can_emitters: boolean;
   can_financial: boolean;
   can_credit: boolean;
+  can_stock: boolean;
 };
 
 export const EMPTY_ADMIN_PERMISSIONS: AdminPermissions = {
@@ -30,6 +31,7 @@ export const EMPTY_ADMIN_PERMISSIONS: AdminPermissions = {
   can_emitters: false,
   can_financial: false,
   can_credit: false,
+  can_stock: false,
 };
 
 export const FULL_ADMIN_PERMISSIONS: AdminPermissions = {
@@ -47,6 +49,7 @@ export const FULL_ADMIN_PERMISSIONS: AdminPermissions = {
   can_emitters: true,
   can_financial: true,
   can_credit: true,
+  can_stock: true,
 };
 
 export const ADMIN_PERMISSION_FIELDS: Array<{
@@ -68,6 +71,7 @@ export const ADMIN_PERMISSION_FIELDS: Array<{
   { key: "can_emitters", label: "Emitentes", group: "Cadastros" },
   { key: "can_financial", label: "Financeiro", group: "Financeiro" },
   { key: "can_credit", label: "Extrato de crédito", group: "Financeiro" },
+  { key: "can_stock", label: "Estoque", group: "Estoque" },
 ];
 
 export function clonePermissions(source?: Partial<AdminPermissions> | null): AdminPermissions {
