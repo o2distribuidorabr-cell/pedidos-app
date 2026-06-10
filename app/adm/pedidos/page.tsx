@@ -391,17 +391,30 @@ export default function AdmPedidosPage() {
     }
 
     // Para outros campos, atualiza diretamente
+    const prevOrder = orders.find((o) => o.id === id);
     const { error } = await supabase.from("orders").update(patch).eq("id", id);
     if (error) { console.error("updateOrder error:", error); return; }
     setOrders((prev) => prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o)));
 
-    // Baixa automática no estoque quando pedido é aprovado
-    if (patch.status === "approved") {
-      fetch("/api/estoque/baixa-pedido", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: id }),
-      }).catch((e) => console.error("[baixa-pedido]", e));
+    if (patch.status !== undefined) {
+      const wasApproved = prevOrder?.status === "approved";
+      const nowApproved = patch.status === "approved";
+
+      if (nowApproved && !wasApproved) {
+        // Aprovando: dá baixa no estoque
+        fetch("/api/estoque/baixa-pedido", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: id }),
+        }).catch((e) => console.error("[baixa-pedido]", e));
+      } else if (wasApproved && !nowApproved) {
+        // Voltando de aprovado: estorna a baixa
+        fetch("/api/estoque/estorno-pedido", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: id }),
+        }).catch((e) => console.error("[estorno-pedido]", e));
+      }
     }
 
     await loadOrders();
