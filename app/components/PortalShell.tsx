@@ -382,6 +382,8 @@ export default function PortalShell({
     { label: "Inventário", href: "/adm/estoque/inventario", allowed: (p) => p.can_stock },
     { label: "Movimentação", href: "/adm/estoque/movimentacao", allowed: (p) => p.can_stock },
     { label: "Relatório de margem", href: "/adm/estoque/relatorio", allowed: (p) => p.can_stock },
+    { label: "Planejamento de compras", href: "/adm/estoque/compras", allowed: (p) => p.can_stock },
+    { label: "Gerar XML de pedidos", href: "/adm/estoque/xml-pedido", allowed: (p) => p.can_stock },
   ];
 
   const franchiseeItems = [

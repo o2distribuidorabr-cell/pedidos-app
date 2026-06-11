@@ -41,6 +41,141 @@ type TotalsRow = {
 
 type StoreRow = { id: string; name: string };
 
+type StoreXml = {
+  name: string | null; legal_name: string | null; cnpj: string | null;
+  ie: string | null; ind_ie_dest: string | null;
+  address_zip: string | null; address_street: string | null;
+  address_number: string | null; address_complement: string | null;
+  address_neighborhood: string | null; city: string | null; state: string | null;
+};
+
+type EmitterXml = {
+  name: string; legal_name: string; cnpj: string; ie: string | null;
+  address_zip: string | null; address_street: string | null;
+  address_number: string | null; address_complement: string | null;
+  address_neighborhood: string | null; city: string | null; state: string | null;
+};
+
+// ─── XML helpers ─────────────────────────────────────────────────────────────
+function _esc(s: string | null | undefined) {
+  return (s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function _pad(n: number, w = 2) { return String(n).padStart(w, "0"); }
+function _nfeDate(iso: string) {
+  const d = new Date(new Date(iso).getTime() - 3*3600000); // UTC→-03:00
+  return `${d.getUTCFullYear()}-${_pad(d.getUTCMonth()+1)}-${_pad(d.getUTCDate())}T${_pad(d.getUTCHours())}:${_pad(d.getUTCMinutes())}:${_pad(d.getUTCSeconds())}-03:00`;
+}
+function _cMun(city: string | null, state: string | null): string {
+  const MAP: Record<string,string> = {
+    "BELO HORIZONTE":"3106200","CONTAGEM":"3118601","BETIM":"3106705",
+    "IPATINGA":"3131307","RIBEIRAO DAS NEVES":"3154606","JUIZ DE FORA":"3136702",
+    "UBERLANDIA":"3170206","MONTES CLAROS":"3143302","GOVERNADOR VALADARES":"3127701",
+    "SANTA LUZIA":"3157807","VESPASIANO":"3171501","SAO PAULO":"3550308",
+    "CAMPINAS":"3509502","GUARULHOS":"3518800","SAO BERNARDO DO CAMPO":"3548708",
+    "RIO DE JANEIRO":"3304557","NITEROI":"3303302","BRASILIA":"5300108",
+  };
+  const key = (city ?? "").toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/\s+/g," ").trim();
+  return MAP[key] ?? "0000000";
+}
+function _cUF(state: string | null): string {
+  const MAP: Record<string,string> = {
+    "MG":"31","SP":"35","RJ":"33","ES":"32","BA":"29","GO":"52","DF":"53",
+    "MT":"51","MS":"50","PR":"41","SC":"42","RS":"43","PE":"26","CE":"23",
+    "AM":"13","PA":"15","MA":"21","PI":"22","RN":"24","PB":"25","AL":"27",
+    "SE":"28","TO":"17","RO":"11","AC":"12","RR":"14","AP":"16",
+  };
+  return MAP[(state ?? "").toUpperCase()] ?? "31";
+}
+function _buildNFeXml(
+  orderId: string, createdAt: string,
+  emit: EmitterXml, dest: StoreXml,
+  items: Array<{ sku: string|null; name: string|null; unit: string|null; qty: number; unit_cost: number }>,
+  freight: number
+): { xml: string; filename: string } {
+  const date   = _nfeDate(createdAt);
+  const aamm   = `${String(new Date(createdAt).getUTCFullYear()).slice(2)}${_pad(new Date(createdAt).getUTCMonth()+1)}`;
+  const cnpj14 = emit.cnpj.replace(/\D/g,"").padStart(14,"0");
+  const nNF    = String((parseInt(orderId.replace(/-/g,"").slice(0,8),16)%999999998)+1).padStart(9,"0");
+  const cNF    = String(Math.floor(Math.random()*99999998)+1).padStart(8,"0");
+  const emitCUF = _cUF(emit.state);
+  const chave  = `${emitCUF}${aamm}${cnpj14}55001${nNF}1${cNF}0`;
+
+  const destCnpj = (dest.cnpj ?? "").replace(/\D/g,"").padStart(14,"0");
+  const total = items.reduce((a,i)=>a+i.qty*i.unit_cost,0);
+
+  const dets = items.map((item,idx)=>{
+    const qty=Number(item.qty)||0, vUn=Number(item.unit_cost)||0;
+    const unit=_esc(item.unit||"UN").slice(0,6);
+    return `<det nItem="${idx+1}"><prod><cProd>${_esc(item.sku||"SEM-SKU")}</cProd><cEAN>SEM GTIN</cEAN><xProd>${_esc(item.name||"")}</xProd><NCM>00000000</NCM><CFOP>5102</CFOP><uCom>${unit}</uCom><qCom>${qty.toFixed(4)}</qCom><vUnCom>${vUn.toFixed(4)}</vUnCom><vProd>${(qty*vUn).toFixed(2)}</vProd><cEANTrib>SEM GTIN</cEANTrib><uTrib>${unit}</uTrib><qTrib>${qty.toFixed(4)}</qTrib><vUnTrib>${vUn.toFixed(4)}</vUnTrib><indTot>1</indTot></prod><imposto><vTotTrib>0.00</vTotTrib><ICMS><ICMS40><orig>0</orig><CST>41</CST></ICMS40></ICMS><IPI><cEnq>999</cEnq><IPINT><CST>53</CST></IPINT></IPI><PIS><PISAliq><CST>07</CST><vBC>0.00</vBC><pPIS>0.0000</pPIS><vPIS>0.00</vPIS></PISAliq></PIS><COFINS><COFINSAliq><CST>07</CST><vBC>0.00</vBC><pCOFINS>0.0000</pCOFINS><vCOFINS>0.00</vCOFINS></COFINSAliq></COFINS></imposto></det>`;
+  }).join("");
+
+  const xml =
+    `<?xml version="1.0" encoding="UTF-8"?>`+
+    `<nfeProc versao="4.00" xmlns="http://www.portalfiscal.inf.br/nfe">`+
+    `<NFe xmlns="http://www.portalfiscal.inf.br/nfe">`+
+    `<infNFe versao="4.00" Id="NFe${chave}">`+
+      `<ide><cUF>${emitCUF}</cUF><cNF>${cNF}</cNF>`+
+      `<natOp>VENDA DE MERCADORIA ADQUIRIDA OU RECEBIDA DE TERCEIROS</natOp>`+
+      `<mod>55</mod><serie>1</serie><nNF>${parseInt(nNF,10)}</nNF>`+
+      `<dhEmi>${date}</dhEmi><dhSaiEnt>${date}</dhSaiEnt>`+
+      `<tpNF>1</tpNF><idDest>1</idDest>`+
+      `<cMunFG>${_cMun(emit.city, emit.state)}</cMunFG>`+
+      `<tpImp>1</tpImp><tpEmis>1</tpEmis><cDV>0</cDV><tpAmb>1</tpAmb>`+
+      `<finNFe>1</finNFe><indFinal>0</indFinal><indPres>9</indPres>`+
+      `<indIntermed>0</indIntermed><procEmi>0</procEmi><verProc>PORTAL-O2</verProc></ide>`+
+      `<emit>`+
+        `<CNPJ>${cnpj14}</CNPJ>`+
+        `<xNome>${_esc(emit.legal_name)}</xNome>`+
+        `<xFant>${_esc(emit.name)}</xFant>`+
+        `<enderEmit>`+
+          `<xLgr>${_esc(emit.address_street)}</xLgr>`+
+          `<nro>${_esc(emit.address_number)}</nro>`+
+          (emit.address_complement?`<xCpl>${_esc(emit.address_complement)}</xCpl>`:``)+
+          `<xBairro>${_esc(emit.address_neighborhood)}</xBairro>`+
+          `<cMun>${_cMun(emit.city,emit.state)}</cMun>`+
+          `<xMun>${_esc(emit.city)}</xMun>`+
+          `<UF>${(emit.state||"MG").toUpperCase()}</UF>`+
+          `<CEP>${(emit.address_zip||"").replace(/\D/g,"")}</CEP>`+
+          `<cPais>1058</cPais><xPais>BRASIL</xPais>`+
+        `</enderEmit>`+
+        `<IE>${emit.ie||"ISENTO"}</IE>`+
+        `<CRT>3</CRT>`+
+      `</emit>`+
+      `<dest>`+
+        `<CNPJ>${destCnpj}</CNPJ>`+
+        `<xNome>${_esc(dest.legal_name||dest.name||"DESTINATARIO")}</xNome>`+
+        `<enderDest>`+
+          `<xLgr>${_esc(dest.address_street||"")}</xLgr>`+
+          `<nro>${_esc(dest.address_number||"S/N")}</nro>`+
+          (dest.address_complement?`<xCpl>${_esc(dest.address_complement)}</xCpl>`:``)+
+          `<xBairro>${_esc(dest.address_neighborhood||"")}</xBairro>`+
+          `<cMun>${_cMun(dest.city,dest.state)}</cMun>`+
+          `<xMun>${_esc(dest.city||"")}</xMun>`+
+          `<UF>${(dest.state||"MG").toUpperCase()}</UF>`+
+          `<CEP>${(dest.address_zip||"").replace(/\D/g,"")}</CEP>`+
+          `<cPais>1058</cPais><xPais>BRASIL</xPais>`+
+        `</enderDest>`+
+        `<indIEDest>${dest.ind_ie_dest||"9"}</indIEDest>`+
+        (dest.ie?`<IE>${_esc(dest.ie)}</IE>`:``)+
+      `</dest>`+
+      dets+
+      `<total><ICMSTot>`+
+        `<vBC>0.00</vBC><vICMS>0.00</vICMS><vICMSDeson>0.00</vICMSDeson>`+
+        `<vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST>`+
+        `<vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet>`+
+        `<vProd>${total.toFixed(2)}</vProd>`+
+        `<vFrete>${freight.toFixed(2)}</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc>`+
+        `<vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol>`+
+        `<vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro>`+
+        `<vNF>${(total+freight).toFixed(2)}</vNF><vTotTrib>0.00</vTotTrib>`+
+      `</ICMSTot></total>`+
+      `<transp><modFrete>9</modFrete></transp>`+
+      `<pag><detPag><indPag>0</indPag><tPag>90</tPag><vPag>0.00</vPag></detPag></pag>`+
+    `</infNFe></NFe></nfeProc>`;
+
+  return { xml, filename: `${chave}.xml` };
+}
+
 type CreditBalanceRow = {
   store_id: string;
   balance: number | null;
@@ -321,9 +456,13 @@ function TopInfoCard({
 function MobileOrderCard({
   order,
   onOpen,
+  onGenerateXml,
+  generatingXml,
 }: {
   order: OrderUi;
   onOpen: () => void;
+  onGenerateXml?: () => void;
+  generatingXml?: boolean;
 }) {
   const freteTxt =
     order.delivery_mode === "FRETE"
@@ -423,6 +562,19 @@ function MobileOrderCard({
           </div>
         </div>
       </div>
+
+      {onGenerateXml ? (
+        <div className="mt-3" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            disabled={generatingXml}
+            onClick={onGenerateXml}
+            className="w-full rounded-xl border border-slate-200 bg-white py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+          >
+            {generatingXml ? "Gerando XML..." : "Gerar XML"}
+          </button>
+        </div>
+      ) : null}
     </button>
   );
 }
@@ -440,6 +592,10 @@ export default function HistoricoPedidosPage() {
 
   const [creditBalance, setCreditBalance] = useState<number>(0);
   const [orders, setOrders] = useState<OrderUi[]>([]);
+
+  const [defaultEmitter, setDefaultEmitter] = useState<EmitterXml | null>(null);
+  const [storeXmlData, setStoreXmlData] = useState<StoreXml | null>(null);
+  const [generatingXmlIds, setGeneratingXmlIds] = useState<Set<string>>(new Set());
 
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -538,7 +694,7 @@ export default function HistoricoPedidosPage() {
 
       const { data: store, error: sErr } = await supabase
         .from("stores")
-        .select("id, name")
+        .select("id,name,legal_name,cnpj,ie,ind_ie_dest,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state")
         .eq("id", sId)
         .maybeSingle();
 
@@ -548,8 +704,17 @@ export default function HistoricoPedidosPage() {
         return;
       }
 
-      const st = (store ?? null) as StoreRow | null;
+      const st = (store ?? null) as (StoreRow & StoreXml) | null;
       setStoreName(st?.name ?? "-");
+      if (st) setStoreXmlData(st as StoreXml);
+
+      const { data: emitter } = await supabase
+        .from("emitters")
+        .select("name,legal_name,cnpj,ie,address_zip,address_street,address_number,address_complement,address_neighborhood,city,state")
+        .eq("is_default", true)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (emitter) setDefaultEmitter(emitter as EmitterXml);
 
       await Promise.all([loadCreditBalance(sId), loadOrders(sId)]);
       setLoading(false);
@@ -626,6 +791,53 @@ export default function HistoricoPedidosPage() {
     });
 
     setOrders(ui);
+  }
+
+  async function generateOrderXml(order: OrderUi) {
+    if (!defaultEmitter) { alert("Emitente padrão não cadastrado."); return; }
+    if (!storeXmlData)    { alert("Dados da loja não carregados.");   return; }
+    if (!storeXmlData.cnpj) { alert("Loja sem CNPJ cadastrado — não é possível gerar XML."); return; }
+
+    setGeneratingXmlIds((s) => new Set(s).add(order.id));
+    try {
+      const { data: rawItems, error: iErr } = await supabase
+        .from("order_items")
+        .select("qty, unit_cost, product_id, products(sku, name, unit)")
+        .eq("order_id", order.id);
+
+      if (iErr) { alert("Erro ao carregar itens: " + iErr.message); return; }
+
+      const items = (rawItems ?? []).map((row: any) => ({
+        sku:       row.products?.sku  ?? null,
+        name:      row.products?.name ?? null,
+        unit:      row.products?.unit ?? "UN",
+        qty:       Number(row.qty)       || 0,
+        unit_cost: Number(row.unit_cost) || 0,
+      }));
+
+      if (items.length === 0) { alert("Pedido sem itens."); return; }
+
+      const freight = order.delivery_mode === "FRETE" ? (Number(order.freight_fee) || 0) : 0;
+
+      const { xml, filename } = _buildNFeXml(
+        order.id,
+        order.created_at ?? new Date().toISOString(),
+        defaultEmitter,
+        storeXmlData,
+        items,
+        freight
+      );
+
+      const blob = new Blob([xml], { type: "application/xml" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setGeneratingXmlIds((s) => { const n = new Set(s); n.delete(order.id); return n; });
+    }
   }
 
   async function refresh() {
@@ -860,6 +1072,7 @@ export default function HistoricoPedidosPage() {
                           <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3 text-right">
                             A pagar
                           </th>
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3"></th>
                         </tr>
                       </thead>
 
@@ -966,6 +1179,18 @@ export default function HistoricoPedidosPage() {
                               <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top text-right font-semibold text-slate-900">
                                 {money(Number(o.amount_due ?? 0) || 0)}
                               </td>
+                              <td
+                                className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  disabled={generatingXmlIds.has(o.id)}
+                                  onClick={() => generateOrderXml(o)}
+                                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+                                >
+                                  {generatingXmlIds.has(o.id) ? "Gerando..." : "XML"}
+                                </button>
+                              </td>
                             </tr>
                           );
                         })}
@@ -983,6 +1208,8 @@ export default function HistoricoPedidosPage() {
                         key={o.id}
                         order={o}
                         onOpen={() => router.push(`/pedidos/${o.id}`)}
+                        onGenerateXml={() => generateOrderXml(o)}
+                        generatingXml={generatingXmlIds.has(o.id)}
                       />
                     ))}
 
