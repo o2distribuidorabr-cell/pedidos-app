@@ -213,18 +213,34 @@ export default function InventarioPage() {
 
   async function closeInventory() {
     if (!active) return;
-    const unadjusted = items.filter((i) => i.counted_qty === null);
-    if (unadjusted.length > 0) {
-      const ok = confirm(`${unadjusted.length} produto(s) sem contagem. Prosseguir mesmo assim?`);
-      if (!ok) return;
-    }
     setSaving(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
       const userId = auth?.user?.id;
 
-      const movements = items
-        .filter((i) => i.counted_qty !== null && i.counted_qty !== i.system_qty)
+      // Relê os itens do banco para garantir que todos os counted_qty salvos via onBlur
+      // estejam refletidos — evita condição de corrida com o estado React
+      const { data: freshData, error: freshErr } = await supabase
+        .from("stock_inventory_items")
+        .select("id,inventory_id,product_id,system_qty,counted_qty,unit_cost,notes,products(sku,name,unit)")
+        .eq("inventory_id", active.id);
+      if (freshErr) throw new Error(freshErr.message);
+
+      const freshItems: InventoryItem[] = (freshData ?? []).map((r: any) => ({
+        ...r,
+        sku: r.products?.sku ?? null,
+        name: r.products?.name ?? null,
+        unit: r.products?.unit ?? null,
+      }));
+
+      const unadjusted = freshItems.filter((i) => i.counted_qty === null);
+      if (unadjusted.length > 0) {
+        const ok = confirm(`${unadjusted.length} produto(s) sem contagem. Prosseguir mesmo assim?`);
+        if (!ok) { setSaving(false); return; }
+      }
+
+      const movements = freshItems
+        .filter((i) => i.counted_qty !== null && Number(i.counted_qty) !== Number(i.system_qty))
         .map((i) => ({
           product_id: i.product_id,
           movement_type: "INVENTORY_ADJUSTMENT",
