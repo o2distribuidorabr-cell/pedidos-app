@@ -747,6 +747,14 @@ export default function AdmPedidoDetalhePage() {
     }
 
     // Para outros campos, atualiza diretamente
+    const prevStatus = order.status;
+
+    if (patch.status === "approved" && prevStatus !== "approved") {
+      patch = { ...patch, approved_at: new Date().toISOString() };
+    } else if (patch.status && patch.status !== "approved") {
+      patch = { ...patch, approved_at: null };
+    }
+
     const { data, error } = await supabase
       .from("orders")
       .update(patch)
@@ -767,6 +775,26 @@ export default function AdmPedidoDetalhePage() {
     setOriginalItems((ord.original_items ?? null) as any);
 
     if (ord.store_id) await loadCreditBalance(ord.store_id);
+
+    // Baixa / estorno de estoque ao mudar status
+    if (patch.status !== undefined) {
+      const wasApproved = prevStatus === "approved";
+      const nowApproved = ord.status === "approved";
+
+      if (nowApproved && !wasApproved) {
+        fetch("/api/estoque/baixa-pedido", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: ord.id }),
+        }).catch((e) => console.error("[baixa-pedido]", e));
+      } else if (wasApproved && !nowApproved) {
+        fetch("/api/estoque/estorno-pedido", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: ord.id }),
+        }).catch((e) => console.error("[estorno-pedido]", e));
+      }
+    }
 
     setSaving(false);
   }

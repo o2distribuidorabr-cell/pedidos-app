@@ -392,6 +392,11 @@ export default function AdmPedidosPage() {
 
     // Para outros campos, atualiza diretamente
     const prevOrder = orders.find((o) => o.id === id);
+    if (patch.status === "approved" && prevOrder?.status !== "approved") {
+      patch = { ...patch, approved_at: new Date().toISOString() };
+    } else if (patch.status && patch.status !== "approved") {
+      patch = { ...patch, approved_at: null };
+    }
     const { error } = await supabase.from("orders").update(patch).eq("id", id);
     if (error) { console.error("updateOrder error:", error); return; }
     setOrders((prev) => prev.map((o) => (o.id === id ? ({ ...o, ...patch } as OrderRow) : o)));

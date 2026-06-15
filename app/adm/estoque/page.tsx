@@ -216,6 +216,9 @@ export default function EstoquePage() {
             <Link href="/adm/estoque/xml-pedido" className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition">
               Gerar XML
             </Link>
+            <Link href="/adm/estoque/baixa-retroativa" className="inline-flex h-10 items-center gap-2 rounded-[14px] border border-red-200 bg-red-50 px-4 text-sm font-semibold text-red-700 hover:bg-red-100 transition">
+              Baixa retroativa
+            </Link>
           </div>
         }
       />
