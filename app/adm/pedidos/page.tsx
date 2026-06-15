@@ -20,6 +20,7 @@ type OrderRow = {
   id: string;
   created_at: string;
   status: string;
+  approved_at: string | null;
   logistic_status: UnifiedLogisticStatus | null;
   is_paid: boolean | null;
   paid_at: string | null;
