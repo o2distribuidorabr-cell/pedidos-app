@@ -26,7 +26,6 @@ type OrderRow = {
 };
 
 type TotalsRow = { order_id: string; store_id: string; total_cost: number | null };
-type OrderItemRow = { order_id: string; qty: number | null; unit_cost: number | null };
 type CreditBalRow = { store_id: string; balance: number | null };
 type PixProvider = "MP" | "ASAAS" | "SANTANDER";
 
@@ -123,7 +122,7 @@ function statusTone(s: string) {
 }
 function toISOStart(d: string) { const [y, m, dd] = d.split("-").map(Number); return new Date(y, m - 1, dd, 0, 0, 0).toISOString(); }
 function toISOEnd(d: string) { const [y, m, dd] = d.split("-").map(Number); return new Date(y, m - 1, dd, 23, 59, 59).toISOString(); }
-function near(a: number, b: number, eps = 0.01) { return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= eps; }
+
 function clampPercent(n: number) { return Number.isFinite(n) ? Math.max(0, Math.min(n, 1000)) : 0; }
 function parsePercentInput(v: string) { const s = String(v ?? "").trim().replace("%", "").replace(/\s/g, ""); const n = Number(s.replace(",", ".")); return Number.isFinite(n) ? n : 0; }
 function normalizeProvider(v?: string | null): PixProvider { const p = String(v || "MP").toUpperCase(); if (p === "ASAAS") return "ASAAS"; if (p === "SANTANDER") return "SANTANDER"; return "MP"; }
@@ -829,20 +828,14 @@ export default function AdmFinanceiroPage() {
     const orderIds = orders.map((o) => o.id);
     const storeIdsUnique = Array.from(new Set(orders.map((o) => o.store_id)));
 
-    const [totsRes, itemsRes, balsRes, paymentsRes] = await Promise.all([
+    const [totsRes, balsRes, paymentsRes] = await Promise.all([
       supabase.from("v_order_totals").select("order_id,total_cost").in("order_id", orderIds),
-      supabase.from("order_items").select("order_id,qty,unit_cost").in("order_id", orderIds),
       supabase.from("v_store_credit_balance").select("store_id,balance").in("store_id", storeIdsUnique),
       supabase.from("order_payments").select("order_id,gateway").in("order_id", orderIds).order("created_at", { ascending: false }),
     ]);
 
     const totalsMap = new Map<string, number>();
     for (const r of (totsRes.data ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
-
-    const itemsCalcMap = new Map<string, number>();
-    for (const r of (itemsRes.data ?? []) as OrderItemRow[]) {
-      itemsCalcMap.set(r.order_id, (itemsCalcMap.get(r.order_id) ?? 0) + (Number(r.qty) || 0) * (Number(r.unit_cost) || 0));
-    }
 
     const balMap = new Map<string, number>();
     for (const r of (balsRes.data ?? []) as CreditBalRow[]) balMap.set(r.store_id, Number(r.balance) || 0);
@@ -860,20 +853,10 @@ export default function AdmFinanceiroPage() {
 
     const calcUse = calc ?? calcParamsFromCurrentState();
     const { aplicar, multaPct, jurosDiaPct } = calcUse;
-    const itemsRaw = itemsRes.data;
 
     let ui: RowUi[] = orders.map((o) => {
       const frete = o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) : 0;
-      const viewTotal = totalsMap.get(o.id) ?? 0;
-      const itemsCalc = itemsCalcMap.get(o.id) ?? 0;
-      let mercadoria = viewTotal;
-      if (frete > 0 && itemsRaw) {
-        if (near(viewTotal, itemsCalc + frete)) mercadoria = Math.max(viewTotal - frete, 0);
-        else if (near(viewTotal, itemsCalc)) mercadoria = viewTotal;
-        else if (!near(itemsCalc, 0)) mercadoria = itemsCalc;
-      } else {
-        if (itemsRaw && !near(viewTotal, itemsCalc)) mercadoria = itemsCalc;
-      }
+      const mercadoria = totalsMap.get(o.id) ?? 0;
       const total = mercadoria + frete;
       const credit = Number(o.credit_applied ?? 0);
       const a_pagar_base = Math.max(total - credit, 0);
