@@ -16,6 +16,7 @@ type ProductRow = {
   pack_qty: number | null;
   pack_unit: string | null;
   active: boolean | null;
+  cod_mat?: number | null;
 
   ncm?: string | null;
   cest?: string | null;
@@ -220,6 +221,7 @@ export default function AdmProdutosPage() {
   const [stepQty, setStepQty] = useState("1");
   const [packQty, setPackQty] = useState("");
   const [packUnit, setPackUnit] = useState("cx");
+  const [codMat, setCodMat] = useState("");
   const [active, setActive] = useState(true);
 
   const [ncm, setNcm] = useState("");
@@ -412,6 +414,7 @@ export default function AdmProdutosPage() {
     setIcmsCst("");
     setPisCst("");
     setCofinsCst("");
+    setCodMat("");
   }
 
   function startEdit(p: ProductRow) {
@@ -434,6 +437,7 @@ export default function AdmProdutosPage() {
     setIcmsCst(p.icms_cst ?? "");
     setPisCst(p.pis_cst ?? "");
     setCofinsCst(p.cofins_cst ?? "");
+    setCodMat(p.cod_mat != null ? String(p.cod_mat) : "");
   }
 
   async function saveProduct() {
@@ -500,6 +504,7 @@ export default function AdmProdutosPage() {
       icms_cst: (icmsCst || "").trim() || null,
       pis_cst: (pisCst || "").trim() || null,
       cofins_cst: (cofinsCst || "").trim() || null,
+      cod_mat: codMat.trim() ? parseInt(codMat.trim(), 10) || null : null,
     };
 
     if (editingId) {
@@ -732,7 +737,10 @@ export default function AdmProdutosPage() {
 
           <div className="mt-6 grid gap-4">
             <Input label="SKU" value={sku} onChange={setSku} placeholder="Ex.: AB-001" />
-            <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Pão Brioche" />
+            <div className="grid gap-4 md:grid-cols-2">
+              <Input label="Nome" value={name} onChange={setName} placeholder="Ex.: Pão Brioche" />
+              <Input label="Cód. Eclética (cod_mat)" value={codMat} onChange={setCodMat} placeholder="Ex.: 42 — código do material no Eclética" />
+            </div>
 
             <div className="grid gap-4 md:grid-cols-2">
               <Input label="Unidade" value={unit} onChange={setUnit} placeholder="un / cx / kg" />

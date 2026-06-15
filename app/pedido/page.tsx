@@ -277,6 +277,13 @@ export default function PedidoPage() {
 
   const [search, setSearch] = useState("");
 
+  const [suggestions,   setSuggestions]   = useState<Record<string, number>>({});
+  const [dailyAvg,      setDailyAvg]      = useState<Record<string, number>>({});
+  const [suggPeriod,    setSuggPeriod]    = useState("14");
+  const [suggCoverage,  setSuggCoverage]  = useState("7");
+  const [suggMargin,    setSuggMargin]    = useState("0");
+  const [suggLoading,   setSuggLoading]   = useState(false);
+
   const itemsTotal = useMemo(() => {
     return Object.values(cart).reduce((acc, it) => acc + it.qty * it.unit_cost, 0);
   }, [cart]);
@@ -357,9 +364,9 @@ export default function PedidoPage() {
       setFreightFee(Number(st.freight_fee ?? 0) || 0);
 
       // ── CORRIGIDO: inclui step_qty e pack_qty na query ──────────────────────
-      const selectOld = "id, sku, name, unit, unit_price, step_qty, pack_qty, active";
+      const selectOld = "id, sku, name, unit, unit_price, step_qty, pack_qty, active, cod_mat";
       const selectNew =
-        "id, sku, name, unit, unit_price, step_qty, pack_qty, active, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
+        "id, sku, name, unit, unit_price, step_qty, pack_qty, active, cod_mat, ncm, cest, cfop, ean, origin, icms_cst, pis_cst, cofins_cst";
       // ────────────────────────────────────────────────────────────────────────
 
       const prodTry = await supabase
@@ -428,8 +435,9 @@ export default function PedidoPage() {
           name: String(p.name ?? ""),
           unit: (p.unit ?? "un") as string,
           unit_cost: Number(effective) || 0,
-          step_qty: p.step_qty != null ? Math.max(0.001, Number(p.step_qty)) : 1,  // ← aceita decimais
-          pack_qty: p.pack_qty != null ? Math.max(0.001, Number(p.pack_qty)) : 1,  // ← aceita decimais
+          step_qty: p.step_qty != null ? Math.max(0.001, Number(p.step_qty)) : 1,
+          pack_qty: p.pack_qty != null ? Math.max(0.001, Number(p.pack_qty)) : 1,
+          cod_mat:  p.cod_mat != null ? Number(p.cod_mat) : null,
           base_price: base,
           override_price: ov ?? null,
           ncm: (p.ncm ?? null) as any,
@@ -446,9 +454,17 @@ export default function PedidoPage() {
 
       setProducts(merged);
       setLoading(false);
+      loadSuggestions(sId, merged, parseInt(suggPeriod), parseInt(suggCoverage), parseInt(suggMargin));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (storeId && products.length) {
+      loadSuggestions(storeId, products, parseInt(suggPeriod), parseInt(suggCoverage), parseInt(suggMargin));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggPeriod, suggCoverage, suggMargin]);
 
   async function loadOverdues(sId: string) {
     setOverdueLoading(true);
@@ -474,6 +490,68 @@ export default function PedidoPage() {
       setOverdues((data ?? []) as OverdueOrderRow[]);
     } finally {
       setOverdueLoading(false);
+    }
+  }
+
+  async function loadSuggestions(
+    sId: string,
+    prods: Product[],
+    pDays: number,
+    cDays: number,
+    margin: number = 0,
+  ) {
+    if (!sId || !prods.length) return;
+    setSuggLoading(true);
+    try {
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - pDays);
+      const startStr = startDate.toISOString().slice(0, 10);
+      const endStr   = new Date().toISOString().slice(0, 10);
+
+      // Filtra só pelos cod_mat dos produtos O2 (evita limite de 1000 linhas do Supabase)
+      const codMatsO2 = prods
+        .map(p => Number((p as any).cod_mat))
+        .filter(cm => cm > 0);
+
+      if (!codMatsO2.length) { setSuggestions({}); setDailyAvg({}); return; }
+
+      const { data: consumption } = await supabase
+        .from("material_consumption")
+        .select("cod_mat, quantity")
+        .eq("store_id", sId)
+        .in("cod_mat", codMatsO2)
+        .gte("consumption_date", startStr)
+        .lte("consumption_date", endStr);
+
+      if (!consumption?.length) { setSuggestions({}); setDailyAvg({}); return; }
+
+      // Agrega consumo total por cod_mat
+      const totals: Record<number, number> = {};
+      for (const row of consumption as any[]) {
+        const cm = Number(row.cod_mat);
+        totals[cm] = (totals[cm] ?? 0) + Number(row.quantity ?? 0);
+      }
+
+      // Mapeia cod_mat -> produto pelo campo cod_mat dos produtos
+      const result: Record<string, number> = {};
+      const avgs:   Record<string, number> = {};
+      for (const p of prods) {
+        const cm = Number((p as any).cod_mat);
+        if (!cm) continue;
+        const total = totals[cm];
+        if (!total) continue;
+        const daily = total / pDays;
+        const step  = Math.max(0.001, Number(p.step_qty ?? 1));
+        const sugg  = Math.ceil(((cDays + margin) * daily) / step) * step;
+        if (sugg > 0) {
+          result[p.id] = Math.round(sugg * 1000) / 1000;
+          avgs[p.id]   = Math.round(total * 100) / 100;
+        }
+      }
+      setSuggestions(result);
+      setDailyAvg(avgs);
+    } finally {
+      setSuggLoading(false);
     }
   }
 
@@ -716,6 +794,83 @@ export default function PedidoPage() {
               </div>
 
               <div className="rounded-[30px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+                {/* ── Sugestão de compras ───────────────────────────────────── */}
+                <div className="mb-5 rounded-[22px] border border-cyan-100 bg-cyan-50/60 p-4">
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wide text-cyan-700">
+                        Sugestão de compras
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">
+                        Baseado no histórico de pedidos aprovados
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-3">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                          Analisar
+                        </label>
+                        <select
+                          value={suggPeriod}
+                          onChange={(e) => setSuggPeriod(e.target.value)}
+                          className="h-9 rounded-[14px] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                        >
+                          <option value="7">Últimos 7 dias</option>
+                          <option value="14">Últimos 14 dias</option>
+                          <option value="30">Últimos 30 dias</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                          Cobrir
+                        </label>
+                        <select
+                          value={suggCoverage}
+                          onChange={(e) => setSuggCoverage(e.target.value)}
+                          className="h-9 rounded-[14px] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                        >
+                          <option value="7">7 dias</option>
+                          <option value="14">14 dias</option>
+                          <option value="30">30 dias</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-[11px] font-semibold text-slate-600">
+                          Margem de segurança
+                        </label>
+                        <select
+                          value={suggMargin}
+                          onChange={(e) => setSuggMargin(e.target.value)}
+                          className="h-9 rounded-[14px] border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100"
+                        >
+                          <option value="0">Sem margem</option>
+                          <option value="1">+1 dia</option>
+                          <option value="2">+2 dias</option>
+                          <option value="3">+3 dias</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={hasOverdue || suggLoading || Object.keys(suggestions).length === 0}
+                      onClick={() => {
+                        for (const p of products) {
+                          const sugg = suggestions[p.id];
+                          if (sugg && sugg > 0) setQty(p, sugg);
+                        }
+                      }}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-[14px] bg-cyan-600 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {suggLoading ? "Calculando..." : "↑ Aplicar todas as sugestões"}
+                    </button>
+                  </div>
+                </div>
+                {/* ─────────────────────────────────────────────────────────── */}
+
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                   <div>
                     <div className="text-sm font-semibold text-slate-900">
@@ -752,6 +907,8 @@ export default function PedidoPage() {
                       const step = getStep(p);  // ← CORRIGIDO: passa o objeto p
                       const lineTotal = qty * unit_cost;
                       const selected = qty > 0;
+                      const sugg = suggestions[p.id] ?? 0;
+                      const avg  = dailyAvg[p.id] ?? 0;
 
                       return (
                         <div
@@ -784,6 +941,26 @@ export default function PedidoPage() {
                                   {money(unit_cost)}
                                 </span>
                               </div>
+
+                              {sugg > 0 ? (
+                                <div className="mt-2 flex flex-wrap items-center gap-3">
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-sm font-bold text-cyan-700">
+                                    ✦ Sugestão: {sugg} {unit}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-sm font-semibold text-slate-600">
+                                    Consumo ({suggPeriod}d): {avg} {unit}
+                                  </span>
+                                  {!hasOverdue && qty !== sugg ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setQty(p, sugg)}
+                                      className="text-xs font-semibold text-cyan-600 underline-offset-2 hover:underline"
+                                    >
+                                      Usar
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ) : null}
                             </div>
 
                             <div className="flex flex-col gap-3 xl:items-end">

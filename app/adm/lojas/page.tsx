@@ -33,6 +33,7 @@ type StoreRow = {
   billing_email?: string | null;
   billing_phone?: string | null;
   asaas_customer_id?: string | null;
+  ecletica_cod_loja?: string | null;
 
   default_payment_method?: "PIX" | "CARTAO" | "BOLETO" | null;
   default_payment_days?: number | null;
@@ -393,6 +394,7 @@ export default function AdmLojasPage() {
   const [billingEmail, setBillingEmail] = useState("");
   const [billingPhone, setBillingPhone] = useState("");
   const [asaasCustomerId, setAsaasCustomerId] = useState("");
+  const [ecleticaCodLoja, setEcleticaCodLoja] = useState("");
 
   const [defaultPaymentMethod, setDefaultPaymentMethod] = useState<"PIX" | "CARTAO" | "BOLETO" | "">("");
   const [defaultPaymentDays, setDefaultPaymentDays] = useState<string>("");
@@ -458,7 +460,7 @@ export default function AdmLojasPage() {
 
     const baseSelect = "id,name,city,state,active,freight_fee,code";
     const fullSelect =
-      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id,default_payment_method,default_payment_days,credit_card_provider";
+      "id,name,city,state,active,freight_fee,code,legal_name,cnpj,address_zip,address_street,address_number,address_complement,address_neighborhood,ie,email_nf,phone_nf,billing_email,billing_phone,asaas_customer_id,default_payment_method,default_payment_days,credit_card_provider,ecletica_cod_loja";
 
     let data: any[] | null = null;
 
@@ -574,6 +576,7 @@ export default function AdmLojasPage() {
     setBillingEmail("");
     setBillingPhone("");
     setAsaasCustomerId("");
+    setEcleticaCodLoja("");
 
     setDefaultPaymentMethod("");
     setDefaultPaymentDays("");
@@ -607,6 +610,7 @@ export default function AdmLojasPage() {
     setBillingEmail(s.billing_email ?? "");
     setBillingPhone(s.billing_phone ?? "");
     setAsaasCustomerId(s.asaas_customer_id ?? "");
+    setEcleticaCodLoja(s.ecletica_cod_loja ?? "");
 
     setDefaultPaymentMethod((s.default_payment_method ?? "") as any);
     setDefaultPaymentDays(s.default_payment_days != null ? String(s.default_payment_days) : "");
@@ -827,6 +831,7 @@ export default function AdmLojasPage() {
       billing_email: (billingEmail || "").trim() || null,
       billing_phone: (billingPhone || "").trim() || null,
       asaas_customer_id: (asaasCustomerId || "").trim() || null,
+      ecletica_cod_loja: (ecleticaCodLoja || "").trim() || null,
 
       default_payment_method: (defaultPaymentMethod || null) as "PIX" | "CARTAO" | "BOLETO" | null,
       default_payment_days: defaultPaymentDays.trim() !== "" ? Number(defaultPaymentDays) : null,
@@ -1175,6 +1180,13 @@ export default function AdmLojasPage() {
                     value={asaasCustomerId}
                     onChange={setAsaasCustomerId}
                     placeholder="Será preenchido pelo sistema quando existir"
+                  />
+
+                  <Input
+                    label="Código Eclética (cod_loja)"
+                    value={ecleticaCodLoja}
+                    onChange={setEcleticaCodLoja}
+                    placeholder="Ex: 3 — código da loja no sistema Eclética"
                   />
                 </div>
               </FormSection>
