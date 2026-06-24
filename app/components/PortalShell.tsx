@@ -19,6 +19,7 @@ type AdminMenuItem = {
   label: string;
   href: string;
   allowed: (permissions: AdminPermissions) => boolean;
+  exact?: boolean;
 };
 
 type RoutePermissionRule = {
@@ -63,14 +64,16 @@ function LogoutIcon() {
 function NavItem({
   href,
   label,
+  exact,
   onNavigate,
 }: {
   href: string;
   label: string;
+  exact?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const active = pathname === href || pathname.startsWith(href + "/");
+  const active = exact ? pathname === href : (pathname === href || pathname.startsWith(href + "/"));
 
   return (
     <Link
@@ -376,7 +379,8 @@ export default function PortalShell({
     { label: "Produtos", href: "/adm/produtos", allowed: (p) => p.can_products },
     { label: "Emitentes", href: "/adm/emitentes", allowed: (p) => p.can_emitters },
     { label: "Financeiro", href: "/adm/financeiro", allowed: (p) => p.can_financial },
-    { label: "Extrato de crédito", href: "/adm/credito", allowed: (p) => p.can_credit },
+    { label: "Extrato de crédito", href: "/adm/credito", allowed: (p) => p.can_credit, exact: true },
+    { label: "Estorno de crédito", href: "/adm/credito/estorno", allowed: (p) => p.can_credit },
     { label: "Estoque", href: "/adm/estoque", allowed: (p) => p.can_stock },
     { label: "Entrada de estoque", href: "/adm/estoque/entrada", allowed: (p) => p.can_stock },
     { label: "Inventário", href: "/adm/estoque/inventario", allowed: (p) => p.can_stock },
@@ -440,6 +444,7 @@ export default function PortalShell({
                   key={it.href}
                   href={it.href}
                   label={it.label}
+                  exact={"exact" in it ? it.exact : undefined}
                   onNavigate={() => setMenuOpen(false)}
                 />
               ))}

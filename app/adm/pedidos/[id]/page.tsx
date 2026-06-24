@@ -1049,6 +1049,50 @@ export default function AdmPedidoDetalhePage() {
       }
 
       const newOrderId = String(data ?? "");
+
+      // Se o pedido original tinha crédito aplicado, redistribui proporcionalmente
+      if (newOrderId && (order.credit_applied ?? 0) > 0) {
+        const totalCredito = Number(order.credit_applied);
+
+        // Busca os totais de itens dos dois pedidos
+        const { data: totais } = await supabase
+          .from("v_order_totals")
+          .select("order_id,total_cost")
+          .in("order_id", [order.id, newOrderId]);
+
+        if (totais && totais.length === 2) {
+          const parentTotais = (totais as any[]).find((t) => t.order_id === order.id);
+          const childTotais  = (totais as any[]).find((t) => t.order_id === newOrderId);
+
+          const { data: parentOrder } = await supabase
+            .from("orders")
+            .select("freight_fee")
+            .eq("id", order.id)
+            .maybeSingle();
+          const { data: childOrder } = await supabase
+            .from("orders")
+            .select("freight_fee")
+            .eq("id", newOrderId)
+            .maybeSingle();
+
+          const parentTotal = (Number(parentTotais?.total_cost) || 0) + (Number(parentOrder?.freight_fee) || 0);
+          const childTotal  = (Number(childTotais?.total_cost)  || 0) + (Number(childOrder?.freight_fee)  || 0);
+
+          // Crédito do pedido original: cobre o quanto precisar (sem exceder o total)
+          const parentCredit = Math.min(totalCredito, parentTotal);
+          const childCredit  = Math.max(0, totalCredito - parentCredit);
+
+          await supabase.from("orders").update({ credit_applied: parentCredit }).eq("id", order.id);
+
+          if (childCredit > 0) {
+            await supabase.from("orders").update({
+              credit_applied: childCredit,
+              payment_method: "PREPAGO",
+            }).eq("id", newOrderId);
+          }
+        }
+      }
+
       setSplitCreating(false);
       setSplitModalOpen(false);
 

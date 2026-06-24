@@ -305,6 +305,9 @@ export default function AdmCreditoExtratoPage() {
         subtitle="Histórico de lançamentos de crédito pré-pago"
         right={
           <div className="flex flex-wrap gap-2">
+            <SecondaryActionButton onClick={() => router.push("/adm/credito/estorno")}>
+              Estorno
+            </SecondaryActionButton>
             <SecondaryActionButton onClick={() => router.push("/adm/lojas")}>
               Lojas
             </SecondaryActionButton>
