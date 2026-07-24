@@ -1,0 +1,8 @@
+[build.environment]
+  # supabase/migrations/add_trigger_saiu_para_entrega.sql contém o valor de
+  # INTERNAL_TRIGGER_SECRET em texto puro, de propósito — é um script SQL
+  # rodado manualmente no editor do Supabase, nunca servido pela aplicação
+  # Next.js. O scanner de segredos do Netlify não sabe disso e bloqueia o
+  # build por engano; essa exclusão resolve sem precisar mudar como o
+  # segredo é usado no gatilho.
+  SECRETS_SCAN_OMIT_PATHS = "supabase/migrations/**"
