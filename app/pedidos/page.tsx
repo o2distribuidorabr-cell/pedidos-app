@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
+import JSZip from "jszip";
+
 import PortalShell from "@/app/components/PortalShell";
 import { PageHeader, Card, Badge } from "@/app/components/ui";
 
@@ -458,11 +460,15 @@ function MobileOrderCard({
   onOpen,
   onGenerateXml,
   generatingXml,
+  selected,
+  onToggleSelect,
 }: {
   order: OrderUi;
   onOpen: () => void;
   onGenerateXml?: () => void;
   generatingXml?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const freteTxt =
     order.delivery_mode === "FRETE"
@@ -479,13 +485,24 @@ function MobileOrderCard({
       className="w-full rounded-[22px] border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="font-mono text-[11px] text-slate-500 break-all">{order.id}</div>
-          {isEdited ? (
-            <div className="mt-2">
-              <Badge tone="blue">Editado</Badge>
-            </div>
+        <div className="flex min-w-0 items-start gap-2">
+          {onToggleSelect ? (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onChange={onToggleSelect}
+              onClick={(e) => e.stopPropagation()}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300"
+            />
           ) : null}
+          <div className="min-w-0">
+            <div className="font-mono text-[11px] text-slate-500 break-all">{order.id}</div>
+            {isEdited ? (
+              <div className="mt-2">
+                <Badge tone="blue">Editado</Badge>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="shrink-0 text-right">
@@ -596,6 +613,9 @@ export default function HistoricoPedidosPage() {
   const [defaultEmitter, setDefaultEmitter] = useState<EmitterXml | null>(null);
   const [storeXmlData, setStoreXmlData] = useState<StoreXml | null>(null);
   const [generatingXmlIds, setGeneratingXmlIds] = useState<Set<string>>(new Set());
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -793,40 +813,44 @@ export default function HistoricoPedidosPage() {
     setOrders(ui);
   }
 
-  async function generateOrderXml(order: OrderUi) {
-    if (!defaultEmitter) { alert("Emitente padrão não cadastrado."); return; }
-    if (!storeXmlData)    { alert("Dados da loja não carregados.");   return; }
-    if (!storeXmlData.cnpj) { alert("Loja sem CNPJ cadastrado — não é possível gerar XML."); return; }
+  async function buildXmlForOrder(order: OrderUi): Promise<{ xml: string; filename: string }> {
+    if (!defaultEmitter) throw new Error("Emitente padrão não cadastrado.");
+    if (!storeXmlData) throw new Error("Dados da loja não carregados.");
+    if (!storeXmlData.cnpj) throw new Error("Loja sem CNPJ cadastrado — não é possível gerar XML.");
 
+    const { data: rawItems, error: iErr } = await supabase
+      .from("order_items")
+      .select("qty, unit_cost, product_id, products(sku, name, unit)")
+      .eq("order_id", order.id);
+
+    if (iErr) throw new Error(`Erro ao carregar itens do pedido ${order.id}: ${iErr.message}`);
+
+    const items = (rawItems ?? []).map((row: any) => ({
+      sku:       row.products?.sku  ?? null,
+      name:      row.products?.name ?? null,
+      unit:      row.products?.unit ?? "UN",
+      qty:       Number(row.qty)       || 0,
+      unit_cost: Number(row.unit_cost) || 0,
+    }));
+
+    if (items.length === 0) throw new Error(`Pedido ${order.id} sem itens.`);
+
+    const freight = order.delivery_mode === "FRETE" ? (Number(order.freight_fee) || 0) : 0;
+
+    return _buildNFeXml(
+      order.id,
+      order.created_at ?? new Date().toISOString(),
+      defaultEmitter,
+      storeXmlData,
+      items,
+      freight
+    );
+  }
+
+  async function generateOrderXml(order: OrderUi) {
     setGeneratingXmlIds((s) => new Set(s).add(order.id));
     try {
-      const { data: rawItems, error: iErr } = await supabase
-        .from("order_items")
-        .select("qty, unit_cost, product_id, products(sku, name, unit)")
-        .eq("order_id", order.id);
-
-      if (iErr) { alert("Erro ao carregar itens: " + iErr.message); return; }
-
-      const items = (rawItems ?? []).map((row: any) => ({
-        sku:       row.products?.sku  ?? null,
-        name:      row.products?.name ?? null,
-        unit:      row.products?.unit ?? "UN",
-        qty:       Number(row.qty)       || 0,
-        unit_cost: Number(row.unit_cost) || 0,
-      }));
-
-      if (items.length === 0) { alert("Pedido sem itens."); return; }
-
-      const freight = order.delivery_mode === "FRETE" ? (Number(order.freight_fee) || 0) : 0;
-
-      const { xml, filename } = _buildNFeXml(
-        order.id,
-        order.created_at ?? new Date().toISOString(),
-        defaultEmitter,
-        storeXmlData,
-        items,
-        freight
-      );
+      const { xml, filename } = await buildXmlForOrder(order);
 
       const blob = new Blob([xml], { type: "application/xml" });
       const url  = URL.createObjectURL(blob);
@@ -835,8 +859,69 @@ export default function HistoricoPedidosPage() {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+    } catch (e: any) {
+      alert(e?.message || "Erro ao gerar XML.");
     } finally {
       setGeneratingXmlIds((s) => { const n = new Set(s); n.delete(order.id); return n; });
+    }
+  }
+
+  function toggleSelectOrder(id: string) {
+    setSelectedIds((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+
+  function toggleSelectAllFiltered() {
+    setSelectedIds((s) => {
+      const allSelected = filtered.length > 0 && filtered.every((o) => s.has(o.id));
+      if (allSelected) return new Set();
+      return new Set(filtered.map((o) => o.id));
+    });
+  }
+
+  async function downloadSelectedXmlZip() {
+    const ordersToZip = orders.filter((o) => selectedIds.has(o.id));
+    if (ordersToZip.length === 0) return;
+
+    setDownloadingZip(true);
+    try {
+      const zip = new JSZip();
+      const errors: string[] = [];
+
+      for (const order of ordersToZip) {
+        try {
+          const { xml, filename } = await buildXmlForOrder(order);
+          zip.file(filename, xml);
+        } catch (e: any) {
+          errors.push(e?.message || `Erro ao gerar XML do pedido ${order.id}.`);
+        }
+      }
+
+      if (Object.keys(zip.files).length === 0) {
+        alert("Nenhum XML pôde ser gerado.\n" + errors.join("\n"));
+        return;
+      }
+
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `xmls-pedidos-${todayYMD()}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      if (errors.length > 0) {
+        alert(
+          `ZIP gerado com ${Object.keys(zip.files).length} de ${ordersToZip.length} XML(s) selecionado(s).\n\nFalharam:\n` +
+            errors.join("\n")
+        );
+      }
+    } finally {
+      setDownloadingZip(false);
     }
   }
 
@@ -1016,8 +1101,32 @@ export default function HistoricoPedidosPage() {
                 <div>
                   <div className="text-sm font-semibold text-slate-900">Pedidos</div>
                   <div className="mt-1 text-sm text-slate-600">
-                    {loading ? "Carregando..." : `${filtered.length} pedido(s) no filtro`}
+                    {loading
+                      ? "Carregando..."
+                      : `${filtered.length} pedido(s) no filtro · ${selectedIds.size} selecionado(s)`}
                   </div>
+                </div>
+
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
+                  <SecondaryActionButton
+                    onClick={toggleSelectAllFiltered}
+                    disabled={loading || filtered.length === 0}
+                    fullWidth
+                  >
+                    {filtered.length > 0 && filtered.every((o) => selectedIds.has(o.id))
+                      ? "Desmarcar todos"
+                      : "Selecionar todos"}
+                  </SecondaryActionButton>
+
+                  <PrimaryActionButton
+                    onClick={downloadSelectedXmlZip}
+                    disabled={downloadingZip || selectedIds.size === 0}
+                    fullWidth
+                  >
+                    {downloadingZip
+                      ? "Gerando ZIP..."
+                      : `Baixar XML (.zip)${selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}`}
+                  </PrimaryActionButton>
                 </div>
               </div>
 
@@ -1033,6 +1142,15 @@ export default function HistoricoPedidosPage() {
                     <table className="w-full border-separate border-spacing-0">
                       <thead>
                         <tr className="text-left text-xs text-slate-600">
+                          <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={filtered.length > 0 && filtered.every((o) => selectedIds.has(o.id))}
+                              onChange={toggleSelectAllFiltered}
+                              className="h-4 w-4 rounded border-slate-300"
+                              aria-label="Selecionar todos os pedidos filtrados"
+                            />
+                          </th>
                           <th className="whitespace-nowrap border-b border-slate-200 bg-slate-50 px-4 py-3">
                             Pedido
                           </th>
@@ -1093,6 +1211,18 @@ export default function HistoricoPedidosPage() {
                               onClick={() => router.push(`/pedidos/${o.id}`)}
                               title="Abrir pedido"
                             >
+                              <td
+                                className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedIds.has(o.id)}
+                                  onChange={() => toggleSelectOrder(o.id)}
+                                  className="h-4 w-4 rounded border-slate-300"
+                                  aria-label={`Selecionar pedido ${o.id}`}
+                                />
+                              </td>
                               <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 align-top">
                                 <div className="flex items-center gap-2">
                                   <div className="font-mono text-xs text-slate-600">{o.id}</div>
@@ -1210,6 +1340,8 @@ export default function HistoricoPedidosPage() {
                         onOpen={() => router.push(`/pedidos/${o.id}`)}
                         onGenerateXml={() => generateOrderXml(o)}
                         generatingXml={generatingXmlIds.has(o.id)}
+                        selected={selectedIds.has(o.id)}
+                        onToggleSelect={() => toggleSelectOrder(o.id)}
                       />
                     ))}
 
