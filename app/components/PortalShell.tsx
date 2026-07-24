@@ -391,7 +391,7 @@ export default function PortalShell({
     { label: "Baixa retroativa", href: "/adm/estoque/baixa-retroativa", allowed: (p) => p.can_stock },
   ];
 
-  const franchiseeItems = [
+  const franchiseeItems: { label: string; href: string; exact?: boolean }[] = [
     { label: "Dashboard", href: "/dashboard" },
     { label: "Pedidos e entregas", href: "/pedidos" },
     { label: "Novo pedido", href: "/pedido" },
@@ -402,7 +402,7 @@ export default function PortalShell({
   const items = isAdminMode
     ? adminItems
         .filter((it) => it.allowed(adminPermissions))
-        .map((it) => ({ label: it.label, href: it.href }))
+        .map((it) => ({ label: it.label, href: it.href, exact: it.exact }))
     : franchiseeItems;
 
   if (!mode) return <div className="min-h-screen bg-slate-50" />;
@@ -444,7 +444,7 @@ export default function PortalShell({
                   key={it.href}
                   href={it.href}
                   label={it.label}
-                  exact={"exact" in it ? it.exact : undefined}
+                  exact={it.exact}
                   onNavigate={() => setMenuOpen(false)}
                 />
               ))}
