@@ -1637,7 +1637,9 @@ export default function AdmPedidoDetalhePage() {
               <div>
                 <div className="print-title">PEDIDO</div>
                 <div className="print-value">{storeInfo?.name ?? "-"}</div>
-                {storeInfo?.legal_name ? <div className="print-subtitle">{storeInfo.legal_name}</div> : null}
+                {storeInfo?.legal_name && storeInfo.legal_name !== storeInfo?.name ? (
+                  <div className="print-subtitle">{storeInfo.legal_name}</div>
+                ) : null}
               </div>
               <div className="text-right">
                 <div className="print-label">Nº do pedido</div>
