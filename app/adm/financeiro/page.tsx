@@ -186,7 +186,8 @@ function payMethodTone(m: OrderRow["payment_method"]): "green" | "blue" | "yello
 function activeFilterCount(p: {
   storeSelected: string[]; searchTerm: string; paidFilter: string; statusFilter: string;
   logisticFilter: string; deliveryFilter: string; dateFrom: string; dateTo: string;
-  payMethodFilter: string; dueFilter: string; dueFrom: string; dueTo: string;
+  payMethodFilter: string; gatewayFilter: string; dueFilter: string; dueFrom: string; dueTo: string;
+  paidFrom: string; paidTo: string;
   amountMin: string; amountMax: string; withCreditFilter: string; sortBy: string;
 }) {
   let n = 0;
@@ -199,14 +200,27 @@ function activeFilterCount(p: {
   if (p.dateFrom) n++;
   if (p.dateTo) n++;
   if (p.payMethodFilter !== "all") n++;
+  if (p.gatewayFilter !== "all") n++;
   if (p.dueFilter !== "all") n++;
   if (p.dueFrom) n++;
   if (p.dueTo) n++;
+  if (p.paidFrom) n++;
+  if (p.paidTo) n++;
   if (p.amountMin) n++;
   if (p.amountMax) n++;
   if (p.withCreditFilter !== "all") n++;
   if (p.sortBy !== "created_desc") n++;
   return n;
+}
+
+// classifica o gateway bruto (order_payments.gateway) num dos 3 grupos
+function gatewayGroup(g: string | null): "MP" | "ASAAS" | "SANTANDER" | "" {
+  const u = String(g || "").toUpperCase();
+  if (!u) return "";
+  if (u === "MP" || u.includes("MERCADO")) return "MP";
+  if (u.includes("ASAAS")) return "ASAAS";
+  if (u === "SANTANDER") return "SANTANDER";
+  return "";
 }
 
 function SectionBlock({ title, subtitle, right, children }: { title: string; subtitle?: string; right?: React.ReactNode; children: React.ReactNode }) {
@@ -679,9 +693,12 @@ export default function AdmFinanceiroPage() {
   const [dateFrom, setDateFrom] = useState<string>(() => savedOr("dateFrom", ""));
   const [dateTo, setDateTo] = useState<string>(() => savedOr("dateTo", ""));
   const [payMethodFilter, setPayMethodFilter] = useState<string>(() => savedOr("payMethodFilter", "all"));
+  const [gatewayFilter, setGatewayFilter] = useState<string>(() => savedOr("gatewayFilter", "all"));
   const [dueFilter, setDueFilter] = useState<string>(() => savedOr("dueFilter", "all"));
   const [dueFrom, setDueFrom] = useState<string>(() => savedOr("dueFrom", ""));
   const [dueTo, setDueTo] = useState<string>(() => savedOr("dueTo", ""));
+  const [paidFrom, setPaidFrom] = useState<string>(() => savedOr("paidFrom", ""));
+  const [paidTo, setPaidTo] = useState<string>(() => savedOr("paidTo", ""));
   const [amountMin, setAmountMin] = useState<string>(() => savedOr("amountMin", ""));
   const [amountMax, setAmountMax] = useState<string>(() => savedOr("amountMax", ""));
   const [withCreditFilter, setWithCreditFilter] = useState<string>(() => savedOr("withCreditFilter", "all"));
@@ -719,14 +736,14 @@ export default function AdmFinanceiroPage() {
     try {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
         page, searchTerm, paidFilter, statusFilter, logisticFilter,
-        deliveryFilter, dateFrom, dateTo, payMethodFilter, dueFilter,
-        dueFrom, dueTo, amountMin, amountMax, withCreditFilter,
+        deliveryFilter, dateFrom, dateTo, payMethodFilter, gatewayFilter, dueFilter,
+        dueFrom, dueTo, paidFrom, paidTo, amountMin, amountMax, withCreditFilter,
         sortBy, viewMode, storeSelected,
       }));
     } catch { /* ignora */ }
   }, [page, searchTerm, paidFilter, statusFilter, logisticFilter,
-      deliveryFilter, dateFrom, dateTo, payMethodFilter, dueFilter,
-      dueFrom, dueTo, amountMin, amountMax, withCreditFilter,
+      deliveryFilter, dateFrom, dateTo, payMethodFilter, gatewayFilter, dueFilter,
+      dueFrom, dueTo, paidFrom, paidTo, amountMin, amountMax, withCreditFilter,
       sortBy, viewMode, storeSelected]);
 
   useEffect(() => {
@@ -810,8 +827,8 @@ export default function AdmFinanceiroPage() {
 
   function resetAllFilters() {
     setSearchTerm(""); setPaidFilter("all"); setStatusFilter("all"); setLogisticFilter("all");
-    setDeliveryFilter("all"); setDateFrom(""); setDateTo(""); setPayMethodFilter("all");
-    setDueFilter("all"); setDueFrom(""); setDueTo(""); setAmountMin(""); setAmountMax("");
+    setDeliveryFilter("all"); setDateFrom(""); setDateTo(""); setPayMethodFilter("all"); setGatewayFilter("all");
+    setDueFilter("all"); setDueFrom(""); setDueTo(""); setPaidFrom(""); setPaidTo(""); setAmountMin(""); setAmountMax("");
     setWithCreditFilter("all"); setSortBy("created_desc"); clearStores(); setPage(1);
     try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignora */ }
   }
@@ -826,7 +843,7 @@ export default function AdmFinanceiroPage() {
 
     // Sem filtro de período explícito, não puxamos o histórico inteiro: apenas os
     // últimos RECENT_PAID_DAYS dias OU qualquer pedido ainda não pago.
-    const useDefaultWindow = !dateFrom && !dateTo && !dueFrom && !dueTo;
+    const useDefaultWindow = !dateFrom && !dateTo && !dueFrom && !dueTo && !paidFrom && !paidTo;
     setWindowActive(useDefaultWindow);
     if (useDefaultWindow) {
       q = q.or(`created_at.gte.${addDaysYMD(-RECENT_PAID_DAYS)},is_paid.is.null,is_paid.eq.false`);
@@ -844,6 +861,9 @@ export default function AdmFinanceiroPage() {
     if (dueFrom) q = q.gte("due_date", dueFrom);
     if (dueTo) q = q.lte("due_date", dueTo);
     if (dueFilter === "no_due") q = q.is("due_date", null);
+    // data de pagamento (paid_at): filtrar já exclui os não pagos (paid_at null)
+    if (paidFrom) q = q.gte("paid_at", toISOStart(paidFrom));
+    if (paidTo) q = q.lte("paid_at", toISOEnd(paidTo));
 
     const { data: ords, error: oErr } = await q;
     if (oErr) { setMsg(oErr.message); setRows([]); return; }
@@ -941,6 +961,15 @@ export default function AdmFinanceiroPage() {
     if (withCreditFilter === "yes") ui = ui.filter((r) => r.credit_applied > 0);
     else if (withCreditFilter === "no") ui = ui.filter((r) => r.credit_applied <= 0);
 
+    // Plataforma de pagamento (gateway) — vem de order_payments, filtro no cliente
+    if (gatewayFilter !== "all") {
+      ui = ui.filter((r) =>
+        gatewayFilter === "none"
+          ? gatewayGroup(r.gateway) === ""
+          : gatewayGroup(r.gateway) === gatewayFilter,
+      );
+    }
+
     const min = amountMin ? parseMoneyInput(amountMin) : null;
     const max = amountMax ? parseMoneyInput(amountMax) : null;
     if (min !== null) ui = ui.filter((r) => r.a_pagar_exib >= min);
@@ -951,6 +980,8 @@ export default function AdmFinanceiroPage() {
       if (sortBy === "created_desc") return dateToTs(b.created_at) - dateToTs(a.created_at);
       if (sortBy === "due_asc") return dateToTs(a.due_date) - dateToTs(b.due_date);
       if (sortBy === "due_desc") return dateToTs(b.due_date) - dateToTs(a.due_date);
+      if (sortBy === "paid_asc") return dateToTs(a.paid_at) - dateToTs(b.paid_at);
+      if (sortBy === "paid_desc") return dateToTs(b.paid_at) - dateToTs(a.paid_at);
       if (sortBy === "amount_asc") return a.a_pagar_exib - b.a_pagar_exib;
       if (sortBy === "amount_desc") return b.a_pagar_exib - a.a_pagar_exib;
       if (sortBy === "store_asc") return a.store_name.localeCompare(b.store_name, "pt-BR");
@@ -1002,7 +1033,7 @@ export default function AdmFinanceiroPage() {
     return stores.filter((s) => `${s.name ?? ""} ${s.id}`.toLowerCase().includes(q));
   }, [stores, storeSearch]);
 
-  const filtrosAtivos = activeFilterCount({ storeSelected, searchTerm, paidFilter, statusFilter, logisticFilter, deliveryFilter, dateFrom, dateTo, payMethodFilter, dueFilter, dueFrom, dueTo, amountMin, amountMax, withCreditFilter, sortBy });
+  const filtrosAtivos = activeFilterCount({ storeSelected, searchTerm, paidFilter, statusFilter, logisticFilter, deliveryFilter, dateFrom, dateTo, payMethodFilter, gatewayFilter, dueFilter, dueFrom, dueTo, paidFrom, paidTo, amountMin, amountMax, withCreditFilter, sortBy });
 
   return (
     <div className="space-y-6">
@@ -1114,6 +1145,8 @@ export default function AdmFinanceiroPage() {
               options={[{ value: "all", label: "Todos" }, { value: "paid", label: "Somente pagos" }, { value: "unpaid", label: "Somente em aberto" }]} />
             <Select label="Forma de pagamento" value={payMethodFilter} onChange={setPayMethodFilter}
               options={[{ value: "all", label: "Todas" }, { value: "PIX", label: "PIX" }, { value: "CARTAO", label: "Cartão" }, { value: "BOLETO", label: "Boleto" }]} />
+            <Select label="Plataforma de pagamento" value={gatewayFilter} onChange={setGatewayFilter}
+              options={[{ value: "all", label: "Todas" }, { value: "SANTANDER", label: "Santander" }, { value: "ASAAS", label: "Asaas" }, { value: "MP", label: "Mercado Pago" }, { value: "none", label: "Sem registro" }]} />
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
             <Select label="Status do pedido" value={statusFilter} onChange={setStatusFilter}
@@ -1127,13 +1160,15 @@ export default function AdmFinanceiroPage() {
             <Select label="Usou crédito?" value={withCreditFilter} onChange={setWithCreditFilter}
               options={[{ value: "all", label: "Todos" }, { value: "yes", label: "Com crédito" }, { value: "no", label: "Sem crédito" }]} />
             <Select label="Ordenar por" value={sortBy} onChange={setSortBy}
-              options={[{ value: "created_desc", label: "Criação (mais recente)" }, { value: "created_asc", label: "Criação (mais antiga)" }, { value: "due_asc", label: "Vencimento (mais próximo)" }, { value: "due_desc", label: "Vencimento (mais distante)" }, { value: "amount_desc", label: "A pagar (maior)" }, { value: "amount_asc", label: "A pagar (menor)" }, { value: "store_asc", label: "Loja (A-Z)" }, { value: "store_desc", label: "Loja (Z-A)" }]} />
+              options={[{ value: "created_desc", label: "Criação (mais recente)" }, { value: "created_asc", label: "Criação (mais antiga)" }, { value: "due_asc", label: "Vencimento (mais próximo)" }, { value: "due_desc", label: "Vencimento (mais distante)" }, { value: "paid_desc", label: "Pagamento (mais recente)" }, { value: "paid_asc", label: "Pagamento (mais antigo)" }, { value: "amount_desc", label: "A pagar (maior)" }, { value: "amount_asc", label: "A pagar (menor)" }, { value: "store_asc", label: "Loja (A-Z)" }, { value: "store_desc", label: "Loja (Z-A)" }]} />
           </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
             <Input label="Criado de" type="date" value={dateFrom} onChange={setDateFrom} />
             <Input label="Criado até" type="date" value={dateTo} onChange={setDateTo} />
             <Input label="Vencimento de" type="date" value={dueFrom} onChange={setDueFrom} />
             <Input label="Vencimento até" type="date" value={dueTo} onChange={setDueTo} />
+            <Input label="Pago de" type="date" value={paidFrom} onChange={setPaidFrom} />
+            <Input label="Pago até" type="date" value={paidTo} onChange={setPaidTo} />
             <Input label="A pagar mín." value={amountMin} onChange={setAmountMin} placeholder="Ex.: 100" />
             <Input label="A pagar máx." value={amountMax} onChange={setAmountMax} placeholder="Ex.: 5000" />
           </div>
@@ -1141,6 +1176,8 @@ export default function AdmFinanceiroPage() {
             <FilterChip onClick={() => { const h = ymdToday(); setDateFrom(h); setDateTo(h); }}>Criados hoje</FilterChip>
             <FilterChip onClick={() => { setDateFrom(addDaysYMD(-7)); setDateTo(ymdToday()); }}>Últimos 7 dias</FilterChip>
             <FilterChip onClick={() => { setDateFrom(addDaysYMD(-30)); setDateTo(ymdToday()); }}>Últimos 30 dias</FilterChip>
+            <FilterChip onClick={() => { const h = ymdToday(); setPaidFrom(h); setPaidTo(h); setPaidFilter("paid"); }}>Pagos hoje</FilterChip>
+            <FilterChip onClick={() => { setPaidFrom(addDaysYMD(-7)); setPaidTo(ymdToday()); setPaidFilter("paid"); }}>Pagos últimos 7 dias</FilterChip>
             <FilterChip onClick={() => { setDueFilter("overdue"); setPaidFilter("unpaid"); }}>Em aberto vencidos</FilterChip>
             <FilterChip onClick={() => { setDueFilter("due_soon"); setPaidFilter("unpaid"); }}>A vencer</FilterChip>
             <FilterChip onClick={() => setPaidFilter("paid")}>Somente pagos</FilterChip>
