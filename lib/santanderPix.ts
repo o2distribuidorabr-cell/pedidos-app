@@ -206,23 +206,50 @@ export async function getCobByTxid(agent: https.Agent, token: string, txid: stri
 export type CobInfo = {
   status: string;
   paid: boolean;
-  paidAmount: number | null;
+  paidAmount: number | null; // valor LÍQUIDO (recebido − devolvido)
   paidAt: string | null;
   e2eId: string | null;
+  grossAmount: number | null; // valor bruto recebido
+  refundedAmount: number | null; // total devolvido (DEVOLVIDO + EM_PROCESSAMENTO)
+  fullyRefunded: boolean; // recebeu e o valor voltou todo
 };
+
+function toNum(v: unknown): number {
+  const n = Number(String(v ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
 
 export function interpretCob(cob: any): CobInfo {
   const status = String(cob?.status || "").toUpperCase();
-  const pixList = Array.isArray(cob?.pix) ? cob.pix : [];
+  const pixList: any[] = Array.isArray(cob?.pix) ? cob.pix : [];
   const first = pixList[0] || null;
+  const hasPix = pixList.length > 0;
 
-  // Só é "pago" se a cobrança está CONCLUIDA E existe pelo menos um pix recebido.
-  const paid = status === "CONCLUIDA" && pixList.length > 0;
+  // valor bruto efetivamente recebido
+  const gross = pixList.reduce((acc, p) => acc + toNum(p?.valor), 0);
+
+  // devoluções: conta as concluídas (DEVOLVIDO) e as em andamento
+  // (EM_PROCESSAMENTO) — dinheiro saindo. NAO_REALIZADO não conta; se um
+  // estorno falhar, a próxima passada da conciliação reavalia e pode confirmar.
+  let refunded = 0;
+  for (const p of pixList) {
+    const devs: any[] = Array.isArray(p?.devolucoes) ? p.devolucoes : [];
+    for (const d of devs) {
+      const st = String(d?.status || "").toUpperCase();
+      if (st === "DEVOLVIDO" || st === "EM_PROCESSAMENTO") refunded += toNum(d?.valor);
+    }
+  }
+
+  const net = Math.max(gross - refunded, 0);
+  const fullyRefunded = hasPix && refunded > 0 && net <= 0.009; // tolerância de 1 centavo
+
+  // Pago só se: CONCLUIDA + houve pix recebido + o valor NÃO voltou todo.
+  const paid = status === "CONCLUIDA" && hasPix && !fullyRefunded;
 
   let paidAmount: number | null = null;
   if (paid) {
-    const v = Number(first?.valor ?? cob?.valor?.original ?? 0);
-    paidAmount = Number.isFinite(v) && v > 0 ? v : null;
+    const v = net > 0 ? net : toNum(cob?.valor?.original);
+    paidAmount = v > 0 ? Number(v.toFixed(2)) : null;
   }
 
   const horario = first?.horario ? String(first.horario) : null;
@@ -238,6 +265,9 @@ export function interpretCob(cob: any): CobInfo {
     paidAmount,
     paidAt,
     e2eId: first?.endToEndId ? String(first.endToEndId) : null,
+    grossAmount: gross > 0 ? Number(gross.toFixed(2)) : null,
+    refundedAmount: refunded > 0 ? Number(refunded.toFixed(2)) : null,
+    fullyRefunded,
   };
 }
 
@@ -249,6 +279,8 @@ export type ReconcileResult = {
   paid: boolean;
   alreadyPaid: boolean;
   amount: number | null;
+  refunded: number | null;
+  note?: string;
 };
 
 async function resolveOrderByTxid(
@@ -295,8 +327,23 @@ export async function reconcileTxid(params: {
   const cob = await getCobByTxid(agent, token, txid);
   const info = interpretCob(cob);
 
+  // "CONCLUIDA" no log, mas anota se o valor foi devolvido.
+  const logStatus = info.fullyRefunded ? "DEVOLVIDO" : info.status;
+  const refundNote = info.fullyRefunded
+    ? `pagamento estornado (recebido ${info.grossAmount}, devolvido ${info.refundedAmount}) — pedido NÃO baixado`
+    : undefined;
+
   if (!order) {
-    return { txid, orderId: null, status: info.status, paid: info.paid, alreadyPaid: false, amount: info.paidAmount };
+    return {
+      txid,
+      orderId: null,
+      status: logStatus,
+      paid: info.paid,
+      alreadyPaid: false,
+      amount: info.paidAmount,
+      refunded: info.refundedAmount,
+      note: refundNote,
+    };
   }
 
   // log (idempotente por gateway + payment_id) — dá o selo "Santander" no financeiro
@@ -306,8 +353,8 @@ export async function reconcileTxid(params: {
       store_id: order.store_id,
       gateway: "SANTANDER",
       payment_id: txid,
-      status: info.status,
-      amount: info.paidAmount,
+      status: logStatus,
+      amount: info.paidAmount ?? info.grossAmount,
       external_reference: order.id,
       raw_response: cob,
     },
@@ -315,12 +362,29 @@ export async function reconcileTxid(params: {
   );
 
   if (!info.paid) {
-    return { txid, orderId: order.id, status: info.status, paid: false, alreadyPaid: false, amount: null };
+    return {
+      txid,
+      orderId: order.id,
+      status: logStatus,
+      paid: false,
+      alreadyPaid: false,
+      amount: null,
+      refunded: info.refundedAmount,
+      note: refundNote,
+    };
   }
 
   const { data: cur } = await supabase.from("orders").select("is_paid").eq("id", order.id).maybeSingle();
   if ((cur as any)?.is_paid) {
-    return { txid, orderId: order.id, status: info.status, paid: true, alreadyPaid: true, amount: info.paidAmount };
+    return {
+      txid,
+      orderId: order.id,
+      status: logStatus,
+      paid: true,
+      alreadyPaid: true,
+      amount: info.paidAmount,
+      refunded: info.refundedAmount,
+    };
   }
 
   const payload: Record<string, any> = {
@@ -333,5 +397,13 @@ export async function reconcileTxid(params: {
   const { error } = await supabase.from("orders").update(payload).eq("id", order.id);
   if (error) throw new Error(`Falha ao baixar pedido ${order.id}: ${error.message}`);
 
-  return { txid, orderId: order.id, status: info.status, paid: true, alreadyPaid: false, amount: info.paidAmount };
+  return {
+    txid,
+    orderId: order.id,
+    status: logStatus,
+    paid: true,
+    alreadyPaid: false,
+    amount: info.paidAmount,
+    refunded: info.refundedAmount,
+  };
 }
