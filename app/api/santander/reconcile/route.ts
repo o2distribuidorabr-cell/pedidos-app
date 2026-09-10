@@ -16,7 +16,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { buildHttpsAgent, getAdminSupabase, getToken, reconcileTxid } from "@/lib/santanderPix";
+import {
+  buildHttpsAgent,
+  ensureWebhookRegistered,
+  getAdminSupabase,
+  getToken,
+  reconcileTxid,
+} from "@/lib/santanderPix";
 
 export const runtime = "nodejs";
 
@@ -53,9 +59,6 @@ export async function POST(req: NextRequest) {
 
   const { data: orders, error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  if (!orders || orders.length === 0) {
-    return NextResponse.json({ ok: true, checked: 0, paid: 0, results: [] });
-  }
 
   let agent: Awaited<ReturnType<typeof buildHttpsAgent>>;
   let token: string;
@@ -64,6 +67,20 @@ export async function POST(req: NextRequest) {
     token = await getToken(agent);
   } catch (e: any) {
     return NextResponse.json({ error: `setup Santander falhou: ${String(e?.message || e)}` }, { status: 500 });
+  }
+
+  // Auto-configura o "aviso automático" do Santander (webhook) na 1ª vez que
+  // conseguir. Idempotente; se falhar, a conciliação abaixo ainda cobre tudo.
+  // Roda mesmo sem pedidos pendentes — é assim que o webhook se registra sozinho.
+  let webhook;
+  try {
+    webhook = await ensureWebhookRegistered({ agent, token });
+  } catch (e: any) {
+    webhook = { ok: false, action: "error" as const, detail: String(e?.message || e) };
+  }
+
+  if (!orders || orders.length === 0) {
+    return NextResponse.json({ ok: true, webhook, checked: 0, paid: 0, results: [] });
   }
 
   const results: any[] = [];
@@ -87,7 +104,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, checked: results.length, paid, results });
+  return NextResponse.json({ ok: true, webhook, checked: results.length, paid, results });
 }
 
 export async function GET() {

@@ -106,6 +106,90 @@ export async function getToken(agent: https.Agent): Promise<string> {
   return String(token);
 }
 
+// ── Registro do webhook (auto-configuração) ────────────────────────────────
+export function webhookUrlFromEnv(): string | null {
+  const base = String(process.env.URL || process.env.NEXT_PUBLIC_APP_URL || "")
+    .trim()
+    .replace(/\/$/, "");
+  return base ? `${base}/api/santander/webhook` : null;
+}
+
+// cache em memória: uma vez confirmado nesta instância, não reconsulta.
+let _webhookEnsured: string | null = null;
+
+export type EnsureWebhookResult = {
+  ok: boolean;
+  action: "noop" | "registered" | "updated" | "skipped" | "error";
+  current?: string | null;
+  detail?: string;
+};
+
+/**
+ * Garante que o webhook PIX da nossa chave aponta para a nossa URL.
+ * Idempotente e barato: consulta o registro atual e só faz PUT se estiver
+ * diferente. Nunca lança — devolve o resultado pra quem chamou logar.
+ */
+export async function ensureWebhookRegistered(params: {
+  agent: https.Agent;
+  token: string;
+  desiredUrl?: string | null;
+}): Promise<EnsureWebhookResult> {
+  const { agent, token } = params;
+  const desired = String(params.desiredUrl || webhookUrlFromEnv() || "").trim();
+  if (!desired) {
+    return { ok: false, action: "skipped", detail: "sem URL base (env URL / NEXT_PUBLIC_APP_URL)" };
+  }
+  if (_webhookEnsured === desired) return { ok: true, action: "noop", current: desired };
+
+  const chave = String(process.env.SANTANDER_PIX_KEY || "").trim();
+  if (!chave) return { ok: false, action: "skipped", detail: "SANTANDER_PIX_KEY não configurada" };
+
+  const path = `/api/v1/webhook/${encodeURIComponent(chave)}`;
+
+  let current: string | null = null;
+  try {
+    const g = await axios.get(`${PIX_BASE}${path}`, {
+      httpsAgent: agent,
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      timeout: 30000,
+      validateStatus: () => true,
+    });
+    if (g.status >= 200 && g.status < 300) {
+      current = String(g.data?.webhookUrl || "").trim() || null;
+    }
+  } catch {
+    // sem registro / erro de consulta — segue pro PUT
+  }
+
+  if (current === desired) {
+    _webhookEnsured = desired;
+    return { ok: true, action: "noop", current };
+  }
+
+  const p = await axios.put(
+    `${PIX_BASE}${path}`,
+    { webhookUrl: desired },
+    {
+      httpsAgent: agent,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      timeout: 30000,
+      validateStatus: () => true,
+    },
+  );
+
+  if (p.status >= 200 && p.status < 300) {
+    _webhookEnsured = desired;
+    return { ok: true, action: current ? "updated" : "registered", current: desired };
+  }
+
+  const raw = typeof p.data === "string" ? p.data : JSON.stringify(p.data);
+  return { ok: false, action: "error", current, detail: `HTTP ${p.status} | ${raw}` };
+}
+
 export async function getCobByTxid(agent: https.Agent, token: string, txid: string): Promise<any> {
   const res = await axios.get(`${PIX_BASE}/api/v1/cob/${encodeURIComponent(txid)}`, {
     httpsAgent: agent,
