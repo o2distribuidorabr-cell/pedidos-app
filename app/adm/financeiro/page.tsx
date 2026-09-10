@@ -74,6 +74,36 @@ type RowUi = {
 
 const PAGE_SIZE = 50;
 
+// Janela padrão de carregamento: sem filtro de período, só puxamos os últimos
+// RECENT_PAID_DAYS dias de pedidos + TODOS os pedidos ainda em aberto (recebível
+// não some da tela só porque é antigo). Histórico completo = preencher "Criado de".
+const RECENT_PAID_DAYS = 90;
+// Teto de segurança da consulta principal (o PostgREST corta em 1000 por padrão).
+const MAX_ORDERS = 5000;
+// Tamanho do lote para consultas .in(...): o PostgREST recusa URLs muito longas
+// (HTTP 414) e corta respostas grandes quando a lista tem centenas de ids.
+const IN_CHUNK = 150;
+
+// Executa uma consulta .in(...) em lotes e junta os resultados, preservando a
+// ordem dos lotes. Devolve o primeiro erro encontrado (se houver).
+async function fetchInChunks<T>(
+  values: string[],
+  run: (chunk: string[]) => PromiseLike<{ data: any[] | null; error: any }>,
+): Promise<{ data: T[]; error: any }> {
+  const uniq = Array.from(new Set(values.filter(Boolean)));
+  if (uniq.length === 0) return { data: [], error: null };
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniq.length; i += IN_CHUNK) chunks.push(uniq.slice(i, i + IN_CHUNK));
+  const results = await Promise.all(chunks.map((c) => run(c)));
+  const out: T[] = [];
+  let error: any = null;
+  for (const r of results) {
+    if (r.error) error = r.error;
+    if (Array.isArray(r.data)) out.push(...(r.data as T[]));
+  }
+  return { data: out, error };
+}
+
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -625,6 +655,7 @@ export default function AdmFinanceiroPage() {
   }
 
   const [page, setPage] = useState(() => savedOr("page", 1));
+  const [windowActive, setWindowActive] = useState(true);
 
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -790,7 +821,16 @@ export default function AdmFinanceiroPage() {
     let q = supabase.from("orders")
       .select("id,store_id,status,created_at,is_paid,paid_at,payment_method,paid_amount,logistic_status,delivery_mode,freight_fee,credit_applied,due_date,delivery_finished_at")
       .neq("status", "awaiting_payment")
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(MAX_ORDERS);
+
+    // Sem filtro de período explícito, não puxamos o histórico inteiro: apenas os
+    // últimos RECENT_PAID_DAYS dias OU qualquer pedido ainda não pago.
+    const useDefaultWindow = !dateFrom && !dateTo && !dueFrom && !dueTo;
+    setWindowActive(useDefaultWindow);
+    if (useDefaultWindow) {
+      q = q.or(`created_at.gte.${addDaysYMD(-RECENT_PAID_DAYS)},is_paid.is.null,is_paid.eq.false`);
+    }
 
     if (storeSelected.length > 0) q = q.in("store_id", storeSelected);
     if (statusFilter !== "all") q = q.eq("status", statusFilter);
@@ -807,6 +847,10 @@ export default function AdmFinanceiroPage() {
 
     const { data: ords, error: oErr } = await q;
     if (oErr) { setMsg(oErr.message); setRows([]); return; }
+
+    if ((ords ?? []).length >= MAX_ORDERS) {
+      setMsg(`Foram carregados ${MAX_ORDERS} pedidos (limite). Estreite o filtro de datas para garantir que todos entrem nos totais.`);
+    }
 
     let orders = (ords ?? []) as OrderRow[];
     const today = ymdToday();
@@ -831,20 +875,28 @@ export default function AdmFinanceiroPage() {
     const storeIdsUnique = Array.from(new Set(orders.map((o) => o.store_id)));
 
     const [totsRes, balsRes, paymentsRes] = await Promise.all([
-      supabase.from("v_order_totals").select("order_id,total_cost").in("order_id", orderIds),
-      supabase.from("v_store_credit_balance").select("store_id,balance").in("store_id", storeIdsUnique),
-      supabase.from("order_payments").select("order_id,gateway").in("order_id", orderIds).order("created_at", { ascending: false }),
+      fetchInChunks<TotalsRow>(orderIds, (c) =>
+        supabase.from("v_order_totals").select("order_id,total_cost").in("order_id", c)),
+      fetchInChunks<CreditBalRow>(storeIdsUnique, (c) =>
+        supabase.from("v_store_credit_balance").select("store_id,balance").in("store_id", c)),
+      fetchInChunks<{ order_id: string; gateway: string | null }>(orderIds, (c) =>
+        supabase.from("order_payments").select("order_id,gateway").in("order_id", c).order("created_at", { ascending: false })),
     ]);
 
+    if (totsRes.error || balsRes.error || paymentsRes.error) {
+      console.warn("loadFinance lookups:", totsRes.error ?? balsRes.error ?? paymentsRes.error);
+      setMsg("Alguns valores podem não ter carregado corretamente. Recarregue a página ou aplique um filtro de período.");
+    }
+
     const totalsMap = new Map<string, number>();
-    for (const r of (totsRes.data ?? []) as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
+    for (const r of totsRes.data as TotalsRow[]) totalsMap.set(r.order_id, Number(r.total_cost) || 0);
 
     const balMap = new Map<string, number>();
-    for (const r of (balsRes.data ?? []) as CreditBalRow[]) balMap.set(r.store_id, Number(r.balance) || 0);
+    for (const r of balsRes.data as CreditBalRow[]) balMap.set(r.store_id, Number(r.balance) || 0);
 
     // gateway: pega o mais recente por pedido (já vem ordenado por created_at desc)
     const gatewayMap = new Map<string, string | null>();
-    for (const p of (paymentsRes.data ?? []) as any[]) {
+    for (const p of paymentsRes.data as Array<{ order_id: string; gateway: string | null }>) {
       if (p.order_id && !gatewayMap.has(p.order_id)) {
         gatewayMap.set(p.order_id, p.gateway ?? null);
       }
@@ -982,6 +1034,13 @@ export default function AdmFinanceiroPage() {
         <AlertPanel tone="yellow" title="A vencer" value={resumo.qtdAVencer} subtitle={`${money(resumo.valorAVencer)} próximos 3 dias`} />
         <AlertPanel tone="blue" title="Em aberto" value={money(resumo.totalAberto)} subtitle="Total exibido no filtro" />
       </div>
+
+      {windowActive ? (
+        <div className="rounded-[16px] border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+          Exibindo os últimos <b>{RECENT_PAID_DAYS} dias</b> de pedidos + <b>todos os pedidos em aberto</b> (qualquer data).
+          Para consultar o histórico completo, preencha <b>&ldquo;Criado de&rdquo;</b> nos filtros.
+        </div>
+      ) : null}
 
       <SectionBlock title="Configurações de cobrança" subtitle="Essas regras afetam o valor exibido após vencimento e o provedor PIX ativo."
         right={
