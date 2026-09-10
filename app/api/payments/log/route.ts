@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 type Body = {
   orderId: string;
   storeId: string;
-  gateway: "MP" | "ASAAS";
+  gateway: "MP" | "ASAAS" | "SANTANDER";
   paymentId: string;
   status?: string | null;
   amount?: number | null;
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
 
     const orderId = clean(body.orderId);
     const storeId = clean(body.storeId);
-    const gateway = clean(body.gateway) as "MP" | "ASAAS" | null;
+    const gateway = clean(body.gateway) as "MP" | "ASAAS" | "SANTANDER" | null;
     const paymentId = clean(body.paymentId);
 
     if (!orderId) {
@@ -53,7 +53,7 @@ export async function POST(req: Request) {
     if (!storeId) {
       return NextResponse.json({ error: "storeId é obrigatório." }, { status: 400 });
     }
-    if (!gateway || (gateway !== "MP" && gateway !== "ASAAS")) {
+    if (!gateway || (gateway !== "MP" && gateway !== "ASAAS" && gateway !== "SANTANDER")) {
       return NextResponse.json({ error: "gateway inválido." }, { status: 400 });
     }
     if (!paymentId) {

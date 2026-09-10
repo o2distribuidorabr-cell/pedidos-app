@@ -9,10 +9,16 @@
  * Protegido por Bearer INTERNAL_TRIGGER_SECRET (mesmo padrão das outras
  * rotas internas). Idempotente: pedido já pago é ignorado.
  *
+ * Também faz um "backfill" do selo Santander: pedidos JÁ pagos (pela tela do
+ * cliente) que não têm registro em order_payments com gateway SANTANDER —
+ * até agora a tela do cliente não conseguia logar Santander, então esses
+ * pedidos apareciam no financeiro com a plataforma errada (Asaas antigo).
+ *
  * Body (opcional):
- *   { days?: number (default 30, máx 180),
+ *   { days?: number (default 30, máx 180) — janela de pendentes,
  *     limit?: number (default 200, máx 500),
- *     orderId?: string  // concilia só esse pedido, ignora days }
+ *     backfillDays?: number (default 14, máx 90) — janela do backfill de pagos,
+ *     orderId?: string  // concilia só esse pedido, ignora days/backfill }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -39,6 +45,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any));
   const days = Math.min(180, Math.max(1, Number(body?.days) || 30));
   const limit = Math.min(500, Math.max(1, Number(body?.limit) || 200));
+  const backfillDays = Math.min(90, Math.max(1, Number(body?.backfillDays) || 14));
   const onlyOrderId = String(body?.orderId || "").trim();
 
   const supabase = getAdminSupabase();
@@ -79,14 +86,11 @@ export async function POST(req: NextRequest) {
     webhook = { ok: false, action: "error" as const, detail: String(e?.message || e) };
   }
 
-  if (!orders || orders.length === 0) {
-    return NextResponse.json({ ok: true, webhook, checked: 0, paid: 0, results: [] });
-  }
-
   const results: any[] = [];
   let paid = 0;
 
-  for (const o of orders as any[]) {
+  // ── Fase 1: pedidos pendentes ────────────────────────────────────────────
+  for (const o of (orders ?? []) as any[]) {
     const txid = String(o.santander_txid || "").trim();
     if (!txid) continue;
     try {
@@ -98,13 +102,62 @@ export async function POST(req: NextRequest) {
         order: { id: o.id, store_id: o.store_id ?? null },
       });
       if (r.paid && !r.alreadyPaid) paid++;
-      results.push({ ...r, ok: true });
+      results.push({ ...r, ok: true, phase: "pendente" });
     } catch (e: any) {
-      results.push({ txid, orderId: o.id, ok: false, reason: String(e?.message || e) });
+      results.push({ txid, orderId: o.id, ok: false, phase: "pendente", reason: String(e?.message || e) });
     }
   }
 
-  return NextResponse.json({ ok: true, webhook, checked: results.length, paid, results });
+  // ── Fase 2: backfill do selo Santander em pedidos já pagos sem registro ──
+  let backfilled = 0;
+  if (!onlyOrderId) {
+    try {
+      const paidSince = new Date(Date.now() - backfillDays * 86400000).toISOString();
+      const { data: paidOrders } = await supabase
+        .from("orders")
+        .select("id,store_id,santander_txid,paid_at")
+        .not("santander_txid", "is", null)
+        .eq("is_paid", true)
+        .gte("paid_at", paidSince)
+        .order("paid_at", { ascending: false })
+        .limit(200);
+
+      const paidList = (paidOrders ?? []) as any[];
+      const txids = paidList.map((o) => String(o.santander_txid || "").trim()).filter(Boolean);
+
+      const have = new Set<string>();
+      if (txids.length) {
+        const { data: existing } = await supabase
+          .from("order_payments")
+          .select("payment_id")
+          .eq("gateway", "SANTANDER")
+          .in("payment_id", txids);
+        for (const r of (existing ?? []) as any[]) have.add(String(r.payment_id));
+      }
+
+      for (const o of paidList) {
+        const txid = String(o.santander_txid || "").trim();
+        if (!txid || have.has(txid)) continue;
+        try {
+          const r = await reconcileTxid({
+            supabase,
+            agent,
+            token,
+            txid,
+            order: { id: o.id, store_id: o.store_id ?? null },
+          });
+          backfilled++;
+          results.push({ ...r, ok: true, phase: "backfill" });
+        } catch (e: any) {
+          results.push({ txid, orderId: o.id, ok: false, phase: "backfill", reason: String(e?.message || e) });
+        }
+      }
+    } catch (e: any) {
+      results.push({ ok: false, phase: "backfill", reason: String(e?.message || e) });
+    }
+  }
+
+  return NextResponse.json({ ok: true, webhook, checked: results.length, paid, backfilled, results });
 }
 
 export async function GET() {

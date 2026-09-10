@@ -346,20 +346,28 @@ export async function reconcileTxid(params: {
     };
   }
 
-  // log (idempotente por gateway + payment_id) — dá o selo "Santander" no financeiro
-  await supabase.from("order_payments").upsert(
-    {
-      order_id: order.id,
-      store_id: order.store_id,
-      gateway: "SANTANDER",
-      payment_id: txid,
-      status: logStatus,
-      amount: info.paidAmount ?? info.grossAmount,
-      external_reference: order.id,
-      raw_response: cob,
-    },
-    { onConflict: "gateway,payment_id" },
-  );
+  // log (idempotente por gateway + payment_id) — dá o selo "Santander" no
+  // financeiro. Best-effort: se a constraint do banco ainda não aceitar
+  // 'SANTANDER' (migration add_santander_gateway.sql), NÃO trava a baixa do
+  // pedido — só perde o rótulo da plataforma até a migration rodar.
+  try {
+    const { error: logErr } = await supabase.from("order_payments").upsert(
+      {
+        order_id: order.id,
+        store_id: order.store_id,
+        gateway: "SANTANDER",
+        payment_id: txid,
+        status: logStatus,
+        amount: info.paidAmount ?? info.grossAmount,
+        external_reference: order.id,
+        raw_response: cob,
+      },
+      { onConflict: "gateway,payment_id" },
+    );
+    if (logErr) console.warn(`order_payments SANTANDER (pedido ${order.id}):`, logErr.message);
+  } catch (e) {
+    console.warn(`order_payments SANTANDER (pedido ${order.id}):`, e);
+  }
 
   if (!info.paid) {
     return {
