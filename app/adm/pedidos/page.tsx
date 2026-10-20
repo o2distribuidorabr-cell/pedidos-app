@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { submitManualPayment, type ManualPaymentPatch } from "@/lib/manualPayment";
+import ManualPaymentModal from "@/app/components/ManualPaymentModal";
 
 import { PageHeader, Card, Input, Select, Badge, StatCard } from "@/app/components/ui";
 
@@ -270,6 +272,9 @@ export default function AdmPedidosPage() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [payTarget, setPayTarget] = useState<{ id: string; patch: ManualPaymentPatch } | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState("");
 
   async function loadOrders() {
     setLoading(true);
@@ -423,6 +428,23 @@ export default function AdmPedidosPage() {
       }
     }
 
+    await loadOrders();
+  }
+
+  async function confirmPayment(password: string) {
+    if (!payTarget) return;
+    setPayBusy(true);
+    setPayError("");
+
+    const result = await submitManualPayment(payTarget.id, password, payTarget.patch);
+    setPayBusy(false);
+
+    if (!result.ok) {
+      setPayError(result.message);
+      return;
+    }
+
+    setPayTarget(null);
     await loadOrders();
   }
 
@@ -742,12 +764,16 @@ export default function AdmPedidosPage() {
                   <div className="w-full">
                     <PrimaryActionButton
                       fullWidth
-                      onClick={() =>
-                        updateOrder(o.id, {
-                          is_paid: !o.is_paid,
-                          paid_at: !o.is_paid ? new Date().toISOString() : null,
-                        })
-                      }
+                      onClick={() => {
+                        setPayError("");
+                        setPayTarget({
+                          id: o.id,
+                          patch: {
+                            is_paid: !o.is_paid,
+                            paid_at: !o.is_paid ? new Date().toISOString() : null,
+                          },
+                        });
+                      }}
                     >
                       {o.is_paid ? "Pago" : "Marcar pago"}
                     </PrimaryActionButton>
@@ -783,6 +809,14 @@ export default function AdmPedidosPage() {
           })}
         </div>
       ) : null}
+      <ManualPaymentModal
+        open={payTarget !== null}
+        markingPaid={!!payTarget?.patch.is_paid}
+        busy={payBusy}
+        error={payError}
+        onConfirm={confirmPayment}
+        onCancel={() => setPayTarget(null)}
+      />
       {/* Modal: dispatch chooser */}
       {dispatchOrder ? (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center">

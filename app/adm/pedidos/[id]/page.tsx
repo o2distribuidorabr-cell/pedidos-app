@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { submitManualPayment, type ManualPaymentPatch } from "@/lib/manualPayment";
+import ManualPaymentModal from "@/app/components/ManualPaymentModal";
 
 import {
   PageHeader,
@@ -480,6 +482,9 @@ export default function AdmPedidoDetalhePage() {
   const [originalItems, setOriginalItems] = useState<OriginalItem[] | null>(null);
   const [itemEdits, setItemEdits] = useState<Record<string, ItemEdit>>({});
 
+  const [payPatch, setPayPatch] = useState<ManualPaymentPatch | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState("");
   const [creditModalOpen, setCreditModalOpen] = useState(false);
   const [creditAmount, setCreditAmount] = useState<string>("");
   const [creditNote, setCreditNote] = useState<string>("");
@@ -804,14 +809,41 @@ export default function AdmPedidoDetalhePage() {
     const paid = !!order.is_paid;
 
     if (paid) {
-      await updateOrder({ is_paid: false, paid_at: null });
+      askPaymentPassword({ is_paid: false, paid_at: null });
     } else {
-      await updateOrder({
+      askPaymentPassword({
         is_paid: true,
         paid_at: new Date().toISOString(),
         payment_method: order.payment_method ?? "PIX",
       });
     }
+  }
+
+  // Toda baixa manual (ou desfazer) exige a senha — confirmada no servidor.
+  function askPaymentPassword(patch: ManualPaymentPatch) {
+    setPayError("");
+    setPayPatch(patch);
+  }
+
+  async function confirmPayment(password: string) {
+    if (!order || !payPatch) return;
+    setPayBusy(true);
+    setPayError("");
+
+    const result = await submitManualPayment(order.id, password, payPatch);
+    setPayBusy(false);
+
+    if (!result.ok) {
+      setPayError(result.message);
+      return;
+    }
+
+    setOrder((prev) =>
+      prev
+        ? { ...prev, is_paid: result.order.is_paid, paid_at: result.order.paid_at, payment_method: result.order.payment_method as any }
+        : prev
+    );
+    setPayPatch(null);
   }
 
   function openCreditModal() {
@@ -1914,9 +1946,10 @@ export default function AdmPedidoDetalhePage() {
                   type="date"
                   value={isoToDateInput(order.paid_at)}
                   onChange={(v) =>
-                    updateOrder({
+                    askPaymentPassword({
                       paid_at: v ? dateInputToISO(v) : null,
                       is_paid: v ? true : false,
+                      payment_method: order.payment_method ?? "PIX",
                     })
                   }
                 />
@@ -2246,6 +2279,15 @@ export default function AdmPedidoDetalhePage() {
           </div>
         </div>
       ) : null}
+
+      <ManualPaymentModal
+        open={payPatch !== null}
+        markingPaid={!!payPatch?.is_paid}
+        busy={payBusy}
+        error={payError}
+        onConfirm={confirmPayment}
+        onCancel={() => setPayPatch(null)}
+      />
 
       {creditModalOpen ? (
         <div className="no-print fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={closeCreditModal}>
