@@ -39,15 +39,15 @@ export default function ManualPaymentModal({ open, markingPaid, busy, error, onC
         </div>
         <div className="mt-1 text-sm text-slate-600">
           {markingPaid
-            ? "Este pedido será marcado como pago manualmente. Digite a senha para confirmar."
-            : "Este pedido voltará a ficar como não pago. Digite a senha para confirmar."}
+            ? "Este pedido será marcado como pago manualmente. Digite a sua senha de login para confirmar."
+            : "Este pedido voltará a ficar como não pago. Digite a sua senha de login para confirmar."}
         </div>
 
         <input
           type="password"
           autoFocus
           autoComplete="off"
-          placeholder="Senha"
+          placeholder="Sua senha de login"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           disabled={busy}

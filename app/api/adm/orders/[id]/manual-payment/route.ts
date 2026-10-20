@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createHash, timingSafeEqual } from "crypto";
+import { createClient } from "@supabase/supabase-js";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export const runtime = "nodejs";
@@ -7,9 +7,9 @@ export const runtime = "nodejs";
 /**
  * Baixa manual de pagamento (marcar pago / marcar como não pago) protegida por senha.
  *
- * A senha vem da variável de ambiente MANUAL_PAYMENT_PASSWORD (Netlify).
- * Sem a variável configurada a rota recusa tudo (falha fechada) — assim uma
- * baixa manual nunca passa sem senha por esquecimento de configuração.
+ * A senha pedida é a do próprio login do admin que está logado: o servidor
+ * confere e-mail + senha no Supabase Auth. Não existe senha extra para criar
+ * e o log mostra quem fez a baixa.
  *
  * Só quem está logado como admin pode chamar (Bearer = access token do Supabase).
  * Os pagamentos automáticos (webhook/conciliação Santander, cartão) NÃO passam
@@ -23,25 +23,19 @@ type Body = {
   payment_method?: string | null;
 };
 
-function sha(value: string) {
-  return createHash("sha256").update(value).digest();
-}
-
-function passwordMatches(given: string, expected: string) {
-  return timingSafeEqual(sha(given), sha(expected));
-}
-
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function isAdminRequest(request: Request) {
+type AdminUser = { id: string; email: string };
+
+async function getAdminUser(request: Request): Promise<AdminUser | null> {
   const auth = request.headers.get("authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (!token) return false;
+  if (!token) return null;
 
   const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error || !data.user) return false;
+  if (error || !data.user || !data.user.email) return null;
 
   const { data: profile } = await supabaseAdmin
     .from("profiles")
@@ -50,7 +44,21 @@ async function isAdminRequest(request: Request) {
     .maybeSingle();
 
   const p = profile as { role?: string | null; approved?: boolean | null; is_admin?: boolean | null } | null;
-  return !!p && (p.is_admin === true || (p.role === "admin" && p.approved === true));
+  const isAdmin = !!p && (p.is_admin === true || (p.role === "admin" && p.approved === true));
+  return isAdmin ? { id: data.user.id, email: data.user.email } : null;
+}
+
+/** Confere a senha de login sem mexer na sessão de ninguém (cliente descartável). */
+async function loginPasswordMatches(email: string, password: string) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new Error("Supabase não configurado.");
+
+  const checker = createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { data, error } = await checker.auth.signInWithPassword({ email, password });
+  return !error && !!data.session;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -60,21 +68,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ ok: false, message: "Pedido inválido." }, { status: 400 });
     }
 
-    if (!(await isAdminRequest(request))) {
+    const admin = await getAdminUser(request);
+    if (!admin) {
       return NextResponse.json({ ok: false, message: "Acesso negado." }, { status: 403 });
-    }
-
-    const expected = process.env.MANUAL_PAYMENT_PASSWORD;
-    if (!expected) {
-      return NextResponse.json(
-        { ok: false, message: "A senha da baixa manual ainda não foi configurada no servidor (MANUAL_PAYMENT_PASSWORD)." },
-        { status: 503 }
-      );
     }
 
     const body = (await request.json()) as Body;
 
-    if (typeof body.password !== "string" || !body.password || !passwordMatches(body.password, expected)) {
+    if (typeof body.password !== "string" || !body.password || !(await loginPasswordMatches(admin.email, body.password))) {
       await sleep(800); // freia tentativa em sequência
       return NextResponse.json({ ok: false, message: "Senha incorreta." }, { status: 401 });
     }
@@ -109,7 +110,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
     }
 
-    console.log(`[manual-payment] pedido ${id} -> is_paid=${body.is_paid}`);
+    console.log(`[manual-payment] pedido ${id} -> is_paid=${body.is_paid} por ${admin.email}`);
     return NextResponse.json({ ok: true, order: data });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao registrar baixa manual.";
