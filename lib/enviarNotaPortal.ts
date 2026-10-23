@@ -62,10 +62,32 @@ function cNFFromId(id: string) {
 type OrderRow = {
   id: string; created_at: string;
   store_name: string | null; store_legal_name: string | null; store_cnpj: string | null;
+  /** Frete cobrado do pedido (orders.freight_fee) — só vale quando delivery_mode = FRETE. */
+  freight: number;
 };
 type Item = { sku: string | null; name: string | null; unit: string | null; qty: number; unit_cost: number };
 
-function buildXml(order: OrderRow, items: Item[]): { xml: string; filename: string } {
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Rateia o frete do pedido entre os itens, proporcional ao valor de cada um —
+ * numa NF-e de verdade o vFrete do cabeçalho é a soma do vFrete de cada item,
+ * e o ab-portal lê o frete por item. A diferença de centavos do arredondamento
+ * fica no item de maior valor, pra soma fechar exatamente no frete cobrado.
+ */
+function ratearFrete(valoresItens: number[], frete: number): number[] {
+  if (frete <= 0 || !valoresItens.length) return valoresItens.map(() => 0);
+  const base = valoresItens.reduce((a, v) => a + v, 0);
+  const partes = valoresItens.map(v => round2(base > 0 ? (frete * v) / base : frete / valoresItens.length));
+  const diferenca = round2(frete - partes.reduce((a, v) => a + v, 0));
+  if (diferenca !== 0) {
+    const iMaior = valoresItens.reduce((m, v, i, arr) => (v > arr[m] ? i : m), 0);
+    partes[iMaior] = round2(partes[iMaior] + diferenca);
+  }
+  return partes;
+}
+
+export function buildXml(order: OrderRow, items: Item[]): { xml: string; filename: string } {
   const date = formatNFeDate(order.created_at);
   const aamm = `${String(new Date(order.created_at).getUTCFullYear()).slice(2)}${pad(new Date(order.created_at).getUTCMonth() + 1)}`;
   const cnpj14 = DEFAULT_EMIT.cnpj.replace(/\D/g, "").padStart(14, "0");
@@ -78,6 +100,8 @@ function buildXml(order: OrderRow, items: Item[]): { xml: string; filename: stri
   const destNome = esc(order.store_legal_name || order.store_name || "DESTINATARIO");
 
   const total = items.reduce((a, i) => a + i.qty * i.unit_cost, 0);
+  const frete = round2(Math.max(Number(order.freight) || 0, 0));
+  const fretePorItem = ratearFrete(items.map(i => (Number(i.qty) || 0) * (Number(i.unit_cost) || 0)), frete);
 
   const dets = items.map((item, idx) => {
     const qty = Number(item.qty) || 0;
@@ -102,6 +126,7 @@ function buildXml(order: OrderRow, items: Item[]): { xml: string; filename: stri
           `<uTrib>${unit}</uTrib>` +
           `<qTrib>${qty.toFixed(4)}</qTrib>` +
           `<vUnTrib>${vUn.toFixed(4)}</vUnTrib>` +
+          (fretePorItem[idx] > 0 ? `<vFrete>${fretePorItem[idx].toFixed(2)}</vFrete>` : "") +
           `<indTot>1</indTot>` +
         `</prod>` +
         `<imposto>` +
@@ -163,12 +188,13 @@ function buildXml(order: OrderRow, items: Item[]): { xml: string; filename: stri
         `<vFCP>0.00</vFCP><vBCST>0.00</vBCST><vST>0.00</vST>` +
         `<vFCPST>0.00</vFCPST><vFCPSTRet>0.00</vFCPSTRet>` +
         `<vProd>${total.toFixed(2)}</vProd>` +
-        `<vFrete>0.00</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc>` +
+        `<vFrete>${frete.toFixed(2)}</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc>` +
         `<vII>0.00</vII><vIPI>0.00</vIPI><vIPIDevol>0.00</vIPIDevol>` +
         `<vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>0.00</vOutro>` +
-        `<vNF>${total.toFixed(2)}</vNF><vTotTrib>0.00</vTotTrib>` +
+        `<vNF>${(total + frete).toFixed(2)}</vNF><vTotTrib>0.00</vTotTrib>` +
       `</ICMSTot></total>` +
-      `<transp><modFrete>9</modFrete></transp>` +
+      // 0 = frete por conta do remetente (cobrado na nota); 9 = sem frete.
+      `<transp><modFrete>${frete > 0 ? 0 : 9}</modFrete></transp>` +
       `<pag><detPag><indPag>0</indPag><tPag>90</tPag><vPag>0.00</vPag></detPag></pag>` +
     `</infNFe></NFe></nfeProc>`;
 
@@ -188,12 +214,13 @@ export type ResultadoEnvioNota =
 export async function enviarNotaParaPortal(orderId: string): Promise<ResultadoEnvioNota> {
   const { data: order, error: eOrder } = await supabaseAdmin
     .from("orders")
-    .select("id, created_at, store_id, stores(name, legal_name, cnpj, ecletica_cod_loja)")
+    .select("id, created_at, store_id, delivery_mode, freight_fee, stores(name, legal_name, cnpj, ecletica_cod_loja)")
     .eq("id", orderId)
     .maybeSingle();
   if (eOrder || !order) {
     return { ok: false, orderId, error: `Pedido não encontrado: ${eOrder?.message ?? orderId}` };
   }
+  const o = order as unknown as { delivery_mode: string | null; freight_fee: number | null };
 
   const store = (order as unknown as { stores: { name: string | null; legal_name: string | null; cnpj: string | null; ecletica_cod_loja: string | null } | null }).stores;
   if (!store?.ecletica_cod_loja) {
@@ -223,6 +250,8 @@ export async function enviarNotaParaPortal(orderId: string): Promise<ResultadoEn
   const orderRow: OrderRow = {
     id: order.id, created_at: order.created_at,
     store_name: store.name, store_legal_name: store.legal_name, store_cnpj: store.cnpj,
+    // Mesma regra do restante do o2-pedidos (cobrança PIX/cartão): frete só conta em entrega.
+    freight: o.delivery_mode === "FRETE" ? Number(o.freight_fee ?? 0) || 0 : 0,
   };
   const { xml, filename } = buildXml(orderRow, items);
 
