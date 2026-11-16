@@ -1,7 +1,7 @@
 -- add_protect_integration_paid_orders.sql
 --
--- 1) TRAVA: um pedido que foi pago por integração (Asaas PIX, cartão de crédito,
---    Mercado Pago, Santander) NÃO pode mais voltar para "não pago" por quem está
+-- 1) TRAVA: um pedido que foi pago por integração (Asaas PIX, cartão de crédito
+--    pelo Mercado Pago ou Asaas, Santander) NÃO pode mais voltar para "não pago" por quem está
 --    logado no navegador (papel authenticated/anon), nem mexendo direto na API.
 --    Só passa quem usa a rota do servidor com senha
 --    (/api/adm/orders/[id]/manual-payment, que roda como service_role) ou quem
@@ -50,16 +50,28 @@ BEGIN
 
   v_role := coalesce(v_role, nullif(current_setting('request.jwt.claim.role', true), ''), session_user);
 
-  -- Trava: pago por integração -> não pago, fora do servidor
+  -- Trava: pago por integração -> não pago, fora do servidor.
+  -- "Pago por integração" não pode depender só de order_payments: os pagamentos
+  -- de cartão (Mercado Pago) não deixam linha lá. Por isso vale qualquer um destes sinais:
+  --   * linha confirmada em order_payments (Asaas, Santander, Mercado Pago);
+  --   * forma de pagamento CARTAO (só é paga por integração);
+  --   * Mercado Pago marcou o pedido como approved;
+  --   * valor pago gravado pelo webhook (paid_amount), exceto pedido pago com crédito (PREPAGO),
+  --     que continua podendo ser estornado em /adm/credito/estorno.
   IF OLD.is_paid IS TRUE
      AND NEW.is_paid IS NOT TRUE
      AND v_role NOT IN ('service_role', 'postgres', 'supabase_admin')
-     AND EXISTS (
-       SELECT 1
-       FROM public.order_payments op
-       WHERE op.order_id = OLD.id
-         AND upper(coalesce(op.status, '')) IN
-             ('RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'APPROVED', 'CONCLUIDA', 'PAID')
+     AND (
+       EXISTS (
+         SELECT 1
+         FROM public.order_payments op
+         WHERE op.order_id = OLD.id
+           AND upper(coalesce(op.status, '')) IN
+               ('RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'APPROVED', 'CONCLUIDA', 'PAID')
+       )
+       OR upper(coalesce(OLD.payment_method, '')) = 'CARTAO'
+       OR lower(coalesce(OLD.mp_status, '')) = 'approved'
+       OR (OLD.paid_amount IS NOT NULL AND upper(coalesce(OLD.payment_method, '')) <> 'PREPAGO')
      )
   THEN
     RAISE EXCEPTION 'Pedido pago por integracao (Asaas/cartao/PIX). So pode ser desfeito com senha, pela tela do pedido.'
