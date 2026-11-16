@@ -99,6 +99,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       patch.paid_at = null;
     }
 
+    const { data: before } = await supabaseAdmin
+      .from("orders")
+      .select("is_paid,paid_at")
+      .eq("id", id)
+      .maybeSingle();
+
     const { data, error } = await supabaseAdmin
       .from("orders")
       .update(patch)
@@ -109,6 +115,19 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (error) {
       return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
     }
+
+    // Histórico de quem confirmou com a senha. Best-effort: se a tabela
+    // order_paid_audit ainda não existir, a baixa continua valendo.
+    const { error: auditError } = await supabaseAdmin.from("order_paid_audit").insert({
+      order_id: id,
+      source: "portal-senha",
+      actor: admin.email,
+      old_is_paid: before?.is_paid ?? null,
+      new_is_paid: data.is_paid,
+      old_paid_at: before?.paid_at ?? null,
+      new_paid_at: data.paid_at,
+    });
+    if (auditError) console.warn("[manual-payment] histórico não gravado:", auditError.message);
 
     console.log(`[manual-payment] pedido ${id} -> is_paid=${body.is_paid} por ${admin.email}`);
     return NextResponse.json({ ok: true, order: data });
