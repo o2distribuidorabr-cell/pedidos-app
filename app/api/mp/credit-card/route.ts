@@ -40,6 +40,15 @@ function roundTo(n: number, decimals = 2) {
   return Math.round(n * factor) / factor;
 }
 
+// Prazo máximo para pagar o cartão (minutos). Mantenha igual ao de expire-card-pending.
+const CARD_PAYMENT_WINDOW_MIN = 15;
+
+// Data no formato que o Mercado Pago exige: ISO 8601 com fuso (Brasil, -03:00).
+function mpDate(d: Date) {
+  const local = new Date(d.getTime() - 3 * 3600_000);
+  return local.toISOString().replace("Z", "-03:00");
+}
+
 function near(a: number, b: number, eps = 0.01) {
   return Math.abs((Number(a) || 0) - (Number(b) || 0)) <= eps;
 }
@@ -161,6 +170,11 @@ async function createMpCreditCardPreference(body: CreditCardBody) {
       },
     ],
     external_reference: body.orderId,
+    // O link de pagamento expira em 15 minutos. Depois disso o pedido é
+    // cancelado automaticamente (/api/orders/expire-card-pending) e o crédito volta.
+    expires: true,
+    expiration_date_from: mpDate(new Date()),
+    expiration_date_to: mpDate(new Date(Date.now() + CARD_PAYMENT_WINDOW_MIN * 60_000)),
     payment_methods: {
       // Aceita somente cartão de crédito
       excluded_payment_types: [
@@ -236,7 +250,7 @@ async function createMpCreditCardPreference(body: CreditCardBody) {
       {
         order_id: body.orderId,
         store_id: storeId,
-        gateway: "MERCADOPAGO",
+        gateway: "MP", // o CHECK de order_payments só aceita MP, ASAAS e SANTANDER
         payment_id: prefId,
         billing_type: "CREDIT_CARD",
         status: "PENDING",

@@ -86,7 +86,7 @@ export async function POST(req: Request) {
         {
           order_id: orderId,
           store_id: storeId,
-          gateway: "MERCADOPAGO",
+          gateway: "MP", // o CHECK de order_payments só aceita MP, ASAAS e SANTANDER
           payment_id: paymentId,
           billing_type: "CREDIT_CARD",
           status: status.toUpperCase(),
