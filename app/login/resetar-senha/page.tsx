@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 import { Card, PageHeader, Input, Button } from "@/app/components/ui";
+import {
+  clearPasswordResetPending,
+  markPasswordResetPending,
+} from "@/lib/passwordRecovery";
 
 export default function ResetarSenhaPage() {
   const router = useRouter();
@@ -30,12 +34,16 @@ export default function ResetarSenhaPage() {
         const refreshToken = hashParams.get("refresh_token");
 
         if (type === "recovery" && accessToken && refreshToken) {
+          // Já logado pelo link: só libera o portal depois de salvar a nova senha.
+          markPasswordResetPending();
+
           const { error } = await supabase.auth.setSession({
             access_token: accessToken,
             refresh_token: refreshToken,
           });
 
           if (error) {
+            clearPasswordResetPending();
             if (mounted) {
               setRecoveryOk(false);
               setMsg("Link inválido ou expirado. Solicite uma nova redefinição de senha.");
@@ -66,6 +74,7 @@ export default function ResetarSenhaPage() {
           return;
         }
 
+        clearPasswordResetPending();
         if (mounted) {
           setRecoveryOk(false);
           setMsg("Link inválido ou expirado. Solicite uma nova redefinição de senha.");
@@ -117,6 +126,7 @@ export default function ResetarSenhaPage() {
         return;
       }
 
+      clearPasswordResetPending();
       setMsg("Senha atualizada com sucesso. Redirecionando para o login...");
 
       setTimeout(async () => {
@@ -169,10 +179,15 @@ export default function ResetarSenhaPage() {
 
                 <Button
                   variant="secondary"
-                  onClick={() => router.push("/login")}
+                  onClick={async () => {
+                    // Sair do portal sem definir a senha: encerra a sessão aberta pelo link.
+                    await supabase.auth.signOut();
+                    clearPasswordResetPending();
+                    router.push("/login");
+                  }}
                   disabled={loading}
                 >
-                  Voltar
+                  Sair sem definir senha
                 </Button>
               </div>
             </div>
