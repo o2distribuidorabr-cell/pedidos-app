@@ -536,7 +536,10 @@ export default function ConfirmarPedidoPage() {
     }
 
     // ── 3. Debita crédito pré-pago (se usado) ──────────────────────────────
-    if (creditToApply > 0) {
+    // Com cartão (e crédito parcial), o débito só acontece DEPOIS que a cobrança
+    // do cartão foi criada com sucesso (passo 4b). Assim, se a cobrança falhar,
+    // o crédito da loja não é consumido por um pedido que nunca foi pago.
+    const debitCreditNow = async (): Promise<boolean> => {
       const { error: creditError } = await supabase.rpc("remove_store_credit", {
         p_store_id: storeId,
         p_amount: creditToApply,
@@ -545,13 +548,21 @@ export default function ConfirmarPedidoPage() {
 
       if (creditError) {
         // Tenta reverter o pedido
+        await supabase.from("order_payments").delete().eq("order_id", order_id);
         await supabase.from("order_items").delete().eq("order_id", order_id);
         await supabase.from("orders").delete().eq("id", order_id);
         setSending(false);
         setPayingWithCard(false);
         setMsg("Saldo de crédito insuficiente ou erro ao debitar. Tente novamente.");
-        return;
+        return false;
       }
+      return true;
+    };
+
+    const deferCreditDebitToCard = isCreditCard && !fullyPaidByCredit && creditToApply > 0;
+
+    if (creditToApply > 0 && !deferCreditDebitToCard) {
+      if (!(await debitCreditNow())) return;
     }
 
     // ── 4a. Pedido totalmente coberto pelo crédito ─────────────────────────
@@ -584,10 +595,20 @@ export default function ConfirmarPedidoPage() {
         const data = await res.json();
 
         if (!res.ok || !data.ok || !data.invoiceUrl) {
-          setMsg(data.details || data.error || "Erro ao gerar cobrança com cartão. Tente novamente.");
+          // Cobrança não foi criada: o crédito ainda não foi debitado, então não há
+          // nada a devolver. Remove o pedido que ficou pendente para não acumular lixo.
+          await supabase.from("order_payments").delete().eq("order_id", order_id);
+          await supabase.from("order_items").delete().eq("order_id", order_id);
+          await supabase.from("orders").delete().eq("id", order_id);
+          setMsg(data.details || data.error || "Erro ao gerar cobrança com cartão. Tente novamente. Seu crédito não foi utilizado.");
           setSending(false);
           setPayingWithCard(false);
           return;
+        }
+
+        // Cobrança criada → agora sim debita o crédito pré-pago
+        if (deferCreditDebitToCard) {
+          if (!(await debitCreditNow())) return;
         }
 
         localStorage.removeItem("cart_items");
@@ -595,7 +616,10 @@ export default function ConfirmarPedidoPage() {
         window.location.href = data.invoiceUrl;
         return;
       } catch {
-        setMsg("Erro de conexão ao criar cobrança. Tente novamente.");
+        await supabase.from("order_payments").delete().eq("order_id", order_id);
+        await supabase.from("order_items").delete().eq("order_id", order_id);
+        await supabase.from("orders").delete().eq("id", order_id);
+        setMsg("Erro de conexão ao criar cobrança. Tente novamente. Seu crédito não foi utilizado.");
         setSending(false);
         setPayingWithCard(false);
         return;
